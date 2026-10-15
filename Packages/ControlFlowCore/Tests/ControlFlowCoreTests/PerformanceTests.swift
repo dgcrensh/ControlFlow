@@ -337,6 +337,49 @@ final class PerformanceTests: XCTestCase {
         }
     }
 
+    // MARK: Presenting
+
+    /// Playing a one-keyframe sequence that animates 50 shapes of the stress drawing:
+    /// every layer moves (a transform), even shapes change color and odd shapes change
+    /// shape (their points move). Each frame interpolates the scene and rebuilds the art,
+    /// which tessellates the reshaped shapes again (10 frames).
+    func testPlaybackFrames() {
+        var opening = drawing
+        opening.layers = Array(opening.layers.prefix(max(1, 50 / StressDrawing.shapesPerLayer)))
+        var end = opening
+        for l in end.layers.indices {
+            end.layers[l].transform.position = end.layers[l].transform.position + Vec2(120, -40)
+            for s in end.layers[l].shapes.indices {
+                if s % 2 == 0 {
+                    end.layers[l].shapes[s].fill = RGBAColor(hex: "#2B7BE0FF")
+                } else {
+                    for p in end.layers[l].shapes[s].path.points.indices {
+                        end.layers[l].shapes[s].path.points[p].position = end.layers[l].shapes[s].path.points[p].position * 1.1
+                    }
+                }
+            }
+        }
+        var timeline = Timeline(Presentation(opening: opening))
+        let keyframe = timeline.insertKeyframe(after: 0, transition: Transition(duration: 1, curve: .easeInOut))
+        timeline.record(end, at: 1)
+        XCTAssertEqual(timeline.presentation.keyframe(keyframe)?.changes.isEmpty, false)
+        var presenter = Presenter(presentation: timeline.presentation)
+        var builder = ArtBuilder()
+        _ = builder.build(presenter.scene(at: 0), isolatedLayer: nil, tolerance: 0.5)
+        presenter.advance()
+        _ = presenter.scene(at: 0)
+        var frame = 0
+        measure {
+            for _ in 0..<10 {
+                frame += 1
+                // 120 Hz frames, wrapping before the end so the sequence keeps playing.
+                let scene = presenter.scene(at: Double(frame % 110 + 1) / 120)
+                _ = builder.build(scene, isolatedLayer: nil, tolerance: 0.5)
+            }
+        }
+        XCTAssertTrue(presenter.isPlaying)
+    }
+
     // MARK: Workloads
 
     /// Times `workload` on the stress drawing, `calls` calls per `measure` run. The same

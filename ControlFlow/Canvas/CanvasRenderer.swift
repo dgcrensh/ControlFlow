@@ -259,8 +259,11 @@ final class CanvasRenderer {
     /// Draws one frame. Returns false when the system had no drawable to give (it
     /// does that under load), so the caller draws again instead of leaving the last
     /// edit, such as a released anchor drag, undrawn until the next touch.
+    ///
+    /// When `presenting`, only the viewport's art shows, letterboxed in black: no
+    /// references, onion skin or overlay.
     @discardableResult
-    func render(session: CanvasSession, viewSize: CGSize, scale: CGFloat, darkMode: Bool) -> Bool {
+    func render(session: CanvasSession, viewSize: CGSize, scale: CGFloat, darkMode: Bool, presenting: Bool = false) -> Bool {
         guard let layer, viewSize.width > 0, viewSize.height > 0 else { return true }
         let frameInterval = Signposts.canvas.beginInterval("Frame")
         defer { Signposts.canvas.endInterval("Frame", frameInterval) }
@@ -317,9 +320,9 @@ final class CanvasRenderer {
         let stage = viewport.bounds.corners
         drawSolid([stage[0], stage[1], stage[2], stage[0], stage[2], stage[3]],
                   color: PaintUniforms.vector(viewport.background), encoder: encoder, uniforms: &uniforms)
-        drawReferences(of: shown, encoder: encoder, uniforms: &uniforms)
+        if !presenting { drawReferences(of: shown, encoder: encoder, uniforms: &uniforms) }
         if !editor.outlineView {
-            if editor.preview == nil, let onion = editor.onionSkin {
+            if !presenting, editor.preview == nil, let onion = editor.onionSkin {
                 updateOnion(onion, revision: editor.onionRevision)
                 Signposts.canvas.withIntervalSignpost("Onion draw") {
                     drawArt(onionSteps, segments: onionSegments, buffers: onionBuffers, encoder: encoder, uniforms: &uniforms,
@@ -334,10 +337,19 @@ final class CanvasRenderer {
                         viewRect: Rect(points: screen))
             }
         }
-        // Everything outside the viewport is dimmed toward the canvas background.
+        // Everything outside the viewport is dimmed toward the canvas background, or
+        // black when presenting.
         let bg = uniforms.background
         drawSolid(viewport.veilTriangles(covering: Rect(points: screen)),
-                  color: SIMD4(bg.x, bg.y, bg.z, Self.veilOpacity), encoder: encoder, uniforms: &uniforms)
+                  color: presenting ? SIMD4<Float>(0, 0, 0, 1) : SIMD4(bg.x, bg.y, bg.z, Self.veilOpacity),
+                  encoder: encoder, uniforms: &uniforms)
+        if presenting {
+            encoder.endEncoding()
+            commandBuffer.present(drawable)
+            commandBuffer.commit()
+            Signposts.canvas.endInterval("Encode", encodeInterval)
+            return true
+        }
 
         // The live strokes keep their committed segments and add only what is new. The
         // overlay keeps its costly layers until what they show changes and builds the

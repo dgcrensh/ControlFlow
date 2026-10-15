@@ -142,6 +142,8 @@ final class CanvasStore {
     /// Called with the document's new contents after each finished change, which
     /// marks the document edited so it autosaves.
     var onDocumentChange: ((PresentationPackage) -> Void)?
+    /// Starts presentation mode, which the document's view owns.
+    var onPresent: (() -> Void)?
     /// Encoded pixels (PNG or JPEG, as saved) for reference images, by id. Kept for
     /// the session so undo can bring a deleted reference back.
     private var referenceData: [Int: Data]
@@ -614,6 +616,9 @@ final class CanvasStore {
         playback = playing
         if session.editor.playPreview(playing.range, at: time - start) { stopPlaying() }
     }
+
+    /// Present: presentation mode, from the opening state.
+    func present() { onPresent?() }
 
     func stopPlaying() {
         guard playback != nil else { return }
