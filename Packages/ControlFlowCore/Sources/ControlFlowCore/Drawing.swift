@@ -451,6 +451,39 @@ public struct Drawing: Hashable, Sendable, Codable {
 
     public var shapeCount: Int { layers.reduce(0) { $0 + $1.shapes.count } }
 
+    /// Gives a fresh id to every vertex without one (0), with an id from outside this
+    /// drawing's range, or with an id an earlier vertex in draw order already has (a
+    /// copied point). Vertices that already have a unique id keep it.
+    public mutating func assignVertexIDs() {
+        var seen = [Bool](repeating: false, count: max(nextID, 1))
+        for l in layers.indices {
+            for s in layers[l].shapes.indices {
+                let points = layers[l].shapes[s].path.points
+                for i in points.indices {
+                    let id = points[i].id
+                    if id > 0, id < seen.count, !seen[id] {
+                        seen[id] = true
+                    } else {
+                        layers[l].shapes[s].path.points[i].id = makeID()
+                    }
+                }
+            }
+        }
+    }
+
+    /// True when every vertex has an id and no two share one.
+    public var vertexIDsAreValid: Bool {
+        var seen = Set<Int>()
+        for layer in layers {
+            for shape in layer.shapes {
+                for point in shape.path.points where point.id <= 0 || point.id >= nextID || !seen.insert(point.id).inserted {
+                    return false
+                }
+            }
+        }
+        return true
+    }
+
     public func layerIndex(_ id: Int) -> Int? { layers.firstIndex { $0.id == id } }
 
     public func indices(layer: Int, shape: Int) -> (Int, Int)? {

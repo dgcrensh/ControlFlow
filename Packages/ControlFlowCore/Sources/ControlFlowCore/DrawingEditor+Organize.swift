@@ -398,6 +398,7 @@ extension DrawingEditor {
             for s in indices {
                 var copy = layer.shapes[s]
                 copy.id = drawing.makeID()
+                copy.path.clearVertexIDs()
                 copy.apply(shift)
                 if let g = copy.group, let id = fresh[g] { copy.group = id }
                 drawing.layers[p].shapes.insert(copy, at: insertAt)
@@ -542,6 +543,7 @@ extension DrawingEditor {
                                      globals: [Int: GlobalColor]) -> VectorShape {
         var copy = shape
         copy.id = drawing.makeID()
+        copy.path.clearVertexIDs()
         copy.apply(shift)
         copy.isHidden = false
         copy.isLocked = false

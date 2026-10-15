@@ -106,6 +106,7 @@ extension DrawingEditor {
     mutating func mirrorImage(of shape: VectorShape) -> VectorShape {
         var copy = shape
         copy.id = drawing.makeID()
+        copy.path.clearVertexIDs()
         copy.apply(symmetry.transform)
         return copy
     }
@@ -258,6 +259,7 @@ extension Drawing {
         }
         for s in layer.shapes.indices {
             layer.shapes[s].id = makeID()
+            layer.shapes[s].path.clearVertexIDs()
             layer.shapes[s].group = layer.shapes[s].group.flatMap { fresh[$0] }
         }
     }

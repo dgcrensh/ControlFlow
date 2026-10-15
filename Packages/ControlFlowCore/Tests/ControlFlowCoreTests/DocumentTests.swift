@@ -105,6 +105,7 @@ final class CharacterFormatTests: XCTestCase {
         XCTAssertEqual(d.name, "Robo")
         XCTAssertEqual(d.layers.map(\.name), ["Torso", "Head", "Antenna"])
         XCTAssertEqual(d.layers.map(\.shapes.count), [4, 4, 2])
+        XCTAssertTrue(d.vertexIDsAreValid, "vertices get ids as they are read")
         XCTAssertEqual(d.layers[0].pivot, Vec2(0, -40))
         XCTAssertEqual(d.palette, [RGBAColor(hex: "#FFFFFF80")!])
         XCTAssertEqual(d.globalColors.map(\.name), ["Skin", "Body", "Ink"])

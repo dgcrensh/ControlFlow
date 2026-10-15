@@ -328,6 +328,7 @@ public enum CharacterFormat {
         }
         // A group whose shapes aren't together is read as one group per run; unused groups go.
         if !drawing.groupsAreValid { drawing.repairGroups() }
+        drawing.assignVertexIDs()
 
         var files: [Int: String] = [:]
         for node in try root.field("references")?.array() ?? [] {

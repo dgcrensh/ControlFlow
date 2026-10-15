@@ -234,6 +234,8 @@ public struct DrawingEditor: Sendable {
 
     /// An editor for an opened document, with empty undo history.
     public init(drawing: Drawing) {
+        var drawing = drawing
+        drawing.assignVertexIDs()
         self.drawing = drawing
     }
 
@@ -1497,6 +1499,8 @@ public struct DrawingEditor: Sendable {
         if key == nil { recentColorSource = nil }
         // Groups stay whole: no empty groups, and each one's shapes together.
         if !drawing.groupsAreValid { drawing.repairGroups() }
+        // New points get ids, and copied points fresh ones.
+        drawing.assignVertexIDs()
         guard before != drawing else { return }
         undoStack.record(before, coalescingKey: key)
     }
