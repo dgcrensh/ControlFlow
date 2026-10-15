@@ -6,7 +6,7 @@
 	<array>
 		<dict>
 			<key>CFBundleTypeName</key>
-			<string>Character Studio Character</string>
+			<string>ControlFlow Document</string>
 			<key>CFBundleTypeRole</key>
 			<string>Editor</string>
 			<key>LSHandlerRank</key>
@@ -25,7 +25,7 @@
 			<key>UTTypeIdentifier</key>
 			<string>com.dgcrensh.characterstudio.character</string>
 			<key>UTTypeDescription</key>
-			<string>Character Studio Character</string>
+			<string>ControlFlow Document</string>
 			<key>UTTypeConformsTo</key>
 			<array>
 				<string>com.apple.package</string>

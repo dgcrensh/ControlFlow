@@ -7,12 +7,12 @@ on:
 
 jobs:
   core-tests:
-    name: CharacterCore tests (Linux)
+    name: ControlFlowCore tests (Linux)
     runs-on: ubuntu-latest
     container: swift:6.1
     steps:
       - uses: actions/checkout@v4
-      - run: swift test --package-path Packages/CharacterCore
+      - run: swift test --package-path Packages/ControlFlowCore
 
   schema:
     name: File format schema
@@ -35,7 +35,7 @@ jobs:
       - name: Build
         run: |
           xcodebuild build \
-            -project CharacterStudio.xcodeproj \
-            -scheme CharacterStudio \
+            -project ControlFlow.xcodeproj \
+            -scheme ControlFlow \
             -destination 'generic/platform=iOS Simulator' \
             CODE_SIGNING_ALLOWED=NO

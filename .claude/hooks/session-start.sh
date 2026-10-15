@@ -1,6 +1,6 @@
 #!/bin/bash
-# Installs a Swift toolchain in Claude Code cloud sessions so the CharacterCore
-# tests can run (`swift test --package-path Packages/CharacterCore`).
+# Installs a Swift toolchain in Claude Code cloud sessions so the ControlFlowCore
+# tests can run (`swift test --package-path Packages/ControlFlowCore`).
 #
 # download.swift.org is not reachable from the cloud sandbox, but Docker Hub is,
 # so this takes the toolchain layer from the official `swift` image (the same

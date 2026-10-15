@@ -9,8 +9,8 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 core() {
-  echo "==> CharacterCore tests"
-  swift test --package-path Packages/CharacterCore
+  echo "==> ControlFlowCore tests"
+  swift test --package-path Packages/ControlFlowCore
 }
 
 schema() {
@@ -26,8 +26,8 @@ schema() {
 app() {
   echo "==> App build (iPad Simulator)"
   xcodebuild build \
-    -project CharacterStudio.xcodeproj \
-    -scheme CharacterStudio \
+    -project ControlFlow.xcodeproj \
+    -scheme ControlFlow \
     -destination 'generic/platform=iOS Simulator' \
     CODE_SIGNING_ALLOWED=NO \
     -quiet
