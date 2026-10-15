@@ -125,6 +125,13 @@ final class EditorUIState {
     var changedObjects: Set<Int> = []
     /// What the current keyframe keys on the selection (see `DrawingEditor.keyedProperties`).
     var keyedProperties: Set<String> = []
+    /// The style new text is set in, or the selected text's.
+    var textStyle = TextContent()
+    /// The selection holds a text, so the context bar shows its style.
+    var selectionHasText = false
+    /// Text is being typed into on the canvas.
+    var isEditingText = false
+    var canConvertToOutlines = false
 }
 
 /// Owns the canvas session and connects SwiftUI controls to the Metal view.
@@ -184,6 +191,7 @@ final class CanvasStore {
         handOff = DocumentHandOff(revision: session.editor.revision)
         sentDocuments = [package]
         refresh()
+        noteMissingFonts(package.presentation)
     }
 
     /// The pixels for a reference image, decoded on first use.
@@ -259,6 +267,7 @@ final class CanvasStore {
             referenceData[new] = package.referenceImages[old]
         }
         edit { $0.editor.replacePresentation(presentation) }
+        noteMissingFonts(presentation)
     }
 
     /// Copies editor state into `ui` and redraws. The values read from the whole
@@ -352,6 +361,10 @@ final class CanvasStore {
             scheduleThumbnails()
         }
         update(\.keyedProperties, session.editor.keyedProperties())
+        update(\.textStyle, editor.textStyle)
+        update(\.selectionHasText, editor.selectionHasText)
+        update(\.isEditingText, editor.textEdit != nil)
+        update(\.canConvertToOutlines, editor.canConvertToOutlines)
         update(\.isAtKeyframe, editor.currentKeyframe != nil)
         update(\.showsOnionSkin, editor.showsOnionSkin)
         update(\.activeLayer, editor.activeLayer)
@@ -433,6 +446,61 @@ final class CanvasStore {
     // MARK: Tools and commands
 
     func setTool(_ tool: Tool) { edit { $0.editor.tool = tool } }
+
+    // MARK: Text
+
+    /// The text being typed into, for the canvas's text view.
+    var textEdit: TextEditState? { session.editor.textEdit }
+    var editedString: String? { session.editor.editedString }
+
+    /// The text view's words and selection after the user typed, deleted, pasted,
+    /// dictated or moved the caret.
+    func setEditedText(_ string: String, selection: Range<Int>) {
+        edit { $0.editor.setEditedText(string, selection: selection) }
+    }
+
+    func setTextSelection(_ range: Range<Int>) { edit { $0.editor.setTextSelection(range) } }
+    func endTextEdit() { edit { $0.editor.endTextEdit() } }
+    /// Starts typing into text `ref` (Scribble writing into it).
+    func beginTextEdit(_ ref: ShapeRef) { edit { $0.editor.beginTextEdit(ref) } }
+    func setTextFont(_ name: String) { edit { $0.editor.setTextFont(name) } }
+    func setTextSize(_ size: Double) { edit { $0.editor.setTextSize(size) } }
+    func setTextWeight(_ weight: Int) { edit { $0.editor.setTextWeight(weight) } }
+    func setTextItalic(_ italic: Bool) { edit { $0.editor.setTextItalic(italic) } }
+    func setTextAlignment(_ align: TextAlignment) { edit { $0.editor.setTextAlignment(align) } }
+    func setTextLineHeight(_ lineHeight: Double) { edit { $0.editor.setTextLineHeight(lineHeight) } }
+    func setTextTracking(_ tracking: Double) { edit { $0.editor.setTextTracking(tracking) } }
+    func convertTextToOutlines() { edit { $0.editor.convertTextToOutlines() } }
+
+    /// The text shapes on the canvas with their boxes in world space (four corners), for
+    /// Scribble.
+    func textFrames() -> [(ref: ShapeRef, frame: [Vec2])] {
+        let drawing = session.editor.drawing
+        var out: [(ref: ShapeRef, frame: [Vec2])] = []
+        for layer in drawing.layers {
+            for (s, shape) in layer.shapes.enumerated() where shape.text != nil && layer.isEditable(s) {
+                guard let frame = layer.worldShape(s).textFrame else { continue }
+                out.append((ShapeRef(layer: layer.id, shape: shape.id), frame))
+            }
+        }
+        return out
+    }
+
+    /// Says once when a presentation uses fonts this iPad doesn't have.
+    private func noteMissingFonts(_ presentation: Presentation) {
+        var timeline = Timeline(presentation)
+        var missing = Set<String>()
+        for index in 0..<timeline.count {
+            for layer in timeline.state(at: index).layers {
+                for shape in layer.shapes {
+                    if let text = shape.text, !TextShaping.hasFont(text) { missing.insert(text.font) }
+                }
+            }
+        }
+        guard !missing.isEmpty else { return }
+        let names = missing.sorted().joined(separator: ", ")
+        showToast("Not installed: \(names). Shown in the system font.")
+    }
     func undo() { edit { $0.undo() } }
     func redo() { edit { $0.redo() } }
     func deleteSelection() { edit { $0.editor.deleteSelection() } }
@@ -756,18 +824,42 @@ final class CanvasStore {
     /// Puts the selection on the pasteboard as document JSON, under the app's own type
     /// and as plain JSON, so it pastes into any document (and reads anywhere).
     func copy() {
+        if session.editor.textEdit != nil {
+            if let words = selectedWords { UIPasteboard.general.string = words }
+            return
+        }
         guard let text = session.editor.copySelection() else { return }
         Self.putOnPasteboard(text)
     }
 
     func cut() {
+        if session.editor.textEdit != nil {
+            guard let words = selectedWords else { return }
+            UIPasteboard.general.string = words
+            edit { $0.editor.typeText("") }
+            return
+        }
         var text: String?
         edit { text = $0.editor.cutSelection() }
         if let text { Self.putOnPasteboard(text) }
     }
 
+    /// The words selected in the text being typed into, if any.
+    private var selectedWords: String? {
+        guard let edit = session.editor.textEdit, !edit.selection.isEmpty,
+              let string = session.editor.editedString else { return nil }
+        let units = Array(string.utf16)
+        let range = min(edit.selection.lowerBound, units.count)..<min(edit.selection.upperBound, units.count)
+        return String(decoding: units[range], as: UTF16.self)
+    }
+
     func paste() {
         let board = UIPasteboard.general
+        if session.editor.textEdit != nil {
+            // Into the text being typed into, as words.
+            if let words = board.string { edit { $0.editor.typeText(words) } }
+            return
+        }
         let data = board.data(forPasteboardType: DrawingEditor.clipboardType)
             ?? board.data(forPasteboardType: UTType.json.identifier)
         guard let text = data.flatMap({ String(data: $0, encoding: .utf8) }) ?? board.string else { return }

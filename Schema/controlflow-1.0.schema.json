@@ -143,7 +143,7 @@
         "opacity": { "description": "Multiplies the alpha of the fill and of the outline (each on its own). Defaults to 1.", "type": "number", "minimum": 0, "maximum": 1 },
         "clipped": { "description": "The shape draws only where the nearest unclipped shape below it in the same layer (and group) draws. Defaults to false.", "type": "boolean" },
         "transform": { "description": "The shape's transform, in its group (or layer). Its points are before it.", "$ref": "#/$defs/transform" },
-        "text": { "description": "Makes the shape a text (format 1.1): the words are laid out in the shape's space and drawn with the shape's fill, opacity, transform and clipping. A text has no stroke or gradient, and its points are empty; readers that ignore text draw nothing for it.", "$ref": "#/$defs/text" },
+        "text": { "description": "Makes the shape a text (format 1.1): the words are laid out in the shape's space and drawn with the shape's fill, opacity, transform and clipping. Its points are empty, and a stroke on it is not drawn (outlines on text come later); readers that ignore text draw nothing for it.", "$ref": "#/$defs/text" },
         "hidden": { "description": "Editor hint, not keyed. Defaults to false.", "type": "boolean" },
         "locked": { "description": "Editor hint, not keyed. Defaults to false.", "type": "boolean" },
         "points": {

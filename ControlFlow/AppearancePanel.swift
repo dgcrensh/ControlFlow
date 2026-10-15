@@ -28,7 +28,12 @@ struct AppearancePanel: View {
                 Section { Text("Select shapes to change their opacity, gradient and clipping.").foregroundStyle(.secondary) }
             }
 
+            // Text is filled only: outlines on text come later.
             OutlineSection(store: store, ui: ui, canAlign: ui.appearance?.isClosed ?? true)
+                .disabled(ui.selectionHasText)
+            if ui.selectionHasText {
+                Section { Text("Text has no outline yet. Convert it to outlines (Edit menu) to give its letters one.").foregroundStyle(.secondary) }
+            }
 
             Section("Width Along the Outline") {
                 Toggle("Pencil Pressure Sets Width", isOn: Binding(get: { ui.pressureWidth }, set: { store.setPressureWidth($0) }))

@@ -34,6 +34,15 @@ final class MetalCanvasView: UIView {
     /// Recognizers on views above the canvas that it switched off, to switch back on
     /// when the canvas leaves the window.
     private var disabledAncestorRecognizers: [UIGestureRecognizer] = []
+    /// The keyboard's way into a text on the canvas: an invisible text view holding the
+    /// words being edited, so the software and hardware keyboards, dictation, marked
+    /// text and autocorrect all work. The canvas draws the text, caret and selection.
+    private let textInput = TextInputView()
+    /// The edit session and revision `textInput` was last copied from.
+    private var syncedTextEdit: (session: Int, revision: Int)?
+    /// True while copying the editor's words into `textInput`, so its delegate calls
+    /// aren't sent back.
+    private var copyingTextEdit = false
 
     init(store: CanvasStore) {
         self.store = store
@@ -51,7 +60,15 @@ final class MetalCanvasView: UIView {
         addInteraction(pencil)
         isOpaque = true
         backgroundColor = .systemBackground
-        store.onChange = { [weak self] in self?.setNeedsRender() }
+        store.onChange = { [weak self] in
+            self?.setNeedsRender()
+            self?.syncTextInput()
+        }
+        textInput.delegate = self
+        textInput.onEscape = { [weak store] in store?.endTextEdit() }
+        addSubview(textInput)
+        // Scribble: writing into a text with the Pencil while the text tool is chosen.
+        addInteraction(UIIndirectScribbleInteraction(delegate: self))
         registerForTraitChanges([UITraitUserInterfaceStyle.self]) { (view: MetalCanvasView, _: UITraitCollection) in
             view.setNeedsRender()
         }
@@ -222,7 +239,8 @@ final class MetalCanvasView: UIView {
         // Touching the canvas stops Play Sequence, so the Pencil can draw at once.
         if store.isPlaying { store.stopPlaying() }
         disableAncestorPinches()
-        if !isFirstResponder { becomeFirstResponder() }
+        // While a text is being typed into, the keyboard stays with it.
+        if !isFirstResponder, !textInput.isFirstResponder { becomeFirstResponder() }
         for touch in touches {
             guard let touchKind = kind(of: touch) else { continue }
             let id = nextTouchID
@@ -323,6 +341,129 @@ final class MetalCanvasView: UIView {
         }
         if !store.session.isDrawing { stopWatchingForQuickShape() }
         store.refresh()
+    }
+}
+
+// MARK: Typing into text
+
+extension MetalCanvasView: UITextViewDelegate {
+    /// Puts the words being edited into the text view and gives it the keyboard, or
+    /// takes the keyboard back when no text is being edited. Called after every change.
+    func syncTextInput() {
+        guard window != nil else { return }
+        guard let edit = store.textEdit, let string = store.editedString else {
+            if syncedTextEdit != nil || textInput.isFirstResponder {
+                syncedTextEdit = nil
+                copyingTextEdit = true
+                textInput.text = ""
+                copyingTextEdit = false
+                if textInput.isFirstResponder { becomeFirstResponder() }
+            }
+            return
+        }
+        // Words and selection the editor changed itself (a tap placing the caret, undo,
+        // a new edit) are copied in; the user's own typing is already there.
+        if syncedTextEdit?.session != edit.session || syncedTextEdit?.revision != edit.revision {
+            syncedTextEdit = (edit.session, edit.revision)
+            copyingTextEdit = true
+            if textInput.text != string { textInput.text = string }
+            textInput.selectedRange = NSRange(location: edit.selection.lowerBound, length: edit.selection.count)
+            copyingTextEdit = false
+        }
+        // The text view sits at the caret, so the system's candidates and dictation
+        // appear next to the words.
+        if let geometry = store.session.editor.textEditGeometry {
+            let camera = store.session.camera
+            let top = camera.toScreen(geometry.caret?.top ?? geometry.frame[0])
+            let bottom = camera.toScreen(geometry.caret?.bottom ?? geometry.frame[3])
+            let height = max(min((bottom - top).length, 400), 8)
+            textInput.frame = CGRect(x: top.x, y: min(top.y, bottom.y), width: 2, height: height)
+        }
+        if !textInput.isFirstResponder { textInput.becomeFirstResponder() }
+    }
+
+    private func selection(of textView: UITextView) -> Range<Int> {
+        let range = textView.selectedRange
+        return range.location..<(range.location + range.length)
+    }
+
+    func textViewDidChange(_ textView: UITextView) {
+        guard !copyingTextEdit, store.textEdit != nil else { return }
+        store.setEditedText(textView.text ?? "", selection: selection(of: textView))
+    }
+
+    func textViewDidChangeSelection(_ textView: UITextView) {
+        guard !copyingTextEdit, store.textEdit != nil, let string = store.editedString,
+              (textView.text ?? "") == string else { return }
+        store.setTextSelection(selection(of: textView))
+    }
+}
+
+/// The canvas's invisible text view (see `MetalCanvasView.textInput`). Escape ends the
+/// edit.
+final class TextInputView: UITextView {
+    var onEscape: (() -> Void)?
+
+    init() {
+        super.init(frame: CGRect(x: 0, y: 0, width: 2, height: 20), textContainer: nil)
+        // Invisible: the canvas draws the words, caret and selection.
+        alpha = 0.02
+        backgroundColor = .clear
+        textColor = .clear
+        tintColor = .clear
+        isScrollEnabled = false
+        isUserInteractionEnabled = false
+        textContainerInset = .zero
+        accessibilityElementsHidden = true
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        if presses.contains(where: { $0.key?.keyCode == .keyboardEscape }) {
+            onEscape?()
+            return
+        }
+        super.pressesBegan(presses, with: event)
+    }
+}
+
+// MARK: Scribble
+
+extension MetalCanvasView: UIIndirectScribbleInteractionDelegate {
+    typealias ElementIdentifier = ShapeRef
+
+    /// The text tool's texts on screen: writing into one with the Pencil types into it.
+    func indirectScribbleInteraction(_ interaction: UIInteraction, requestElementsIn rect: CGRect,
+                                     completion: @escaping ([ShapeRef]) -> Void) {
+        guard store.session.editor.tool == .text else { return completion([]) }
+        completion(store.textFrames().filter { screenFrame($0.frame).intersects(rect) }.map(\.ref))
+    }
+
+    func indirectScribbleInteraction(_ interaction: UIInteraction, isElementFocused elementIdentifier: ShapeRef) -> Bool {
+        store.textEdit?.ref == elementIdentifier && textInput.isFirstResponder
+    }
+
+    func indirectScribbleInteraction(_ interaction: UIInteraction, frameForElement elementIdentifier: ShapeRef) -> CGRect {
+        store.textFrames().first { $0.ref == elementIdentifier }.map { screenFrame($0.frame) } ?? .null
+    }
+
+    func indirectScribbleInteraction(_ interaction: UIInteraction, focusElementIfNeeded elementIdentifier: ShapeRef,
+                                     referencePoint focusReferencePoint: CGPoint,
+                                     completion: @escaping ((UIResponder & UITextInput)?) -> Void) {
+        if store.textEdit?.ref != elementIdentifier { store.beginTextEdit(elementIdentifier) }
+        syncTextInput()
+        completion(store.textEdit?.ref == elementIdentifier ? textInput : nil)
+    }
+
+    /// A text box (four world corners) as the screen rectangle around it.
+    private func screenFrame(_ corners: [Vec2]) -> CGRect {
+        let camera = store.session.camera
+        let points = corners.map { camera.toScreen($0) }
+        guard let minX = points.map(\.x).min(), let maxX = points.map(\.x).max(),
+              let minY = points.map(\.y).min(), let maxY = points.map(\.y).max() else { return .null }
+        return CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
     }
 }
 

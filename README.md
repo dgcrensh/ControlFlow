@@ -118,7 +118,7 @@ From [the plan](docs/plans/animation-app.md#11-milestones):
 
 **Using it**
 
-- **More > Export Web Page** saves a folder named after the presentation, holding `index.html`, `player.js` and `presentation.json` (the same format 1.0 file, without reference images). Put the folder on GitHub Pages or any web server and open `index.html`; it needs no build step and uses only relative paths. Opened straight from disk (`file://`), browsers won't let the page read `presentation.json`, so it says to serve the folder instead (`python3 -m http.server` in the folder works).
+- **More > Export Web Page** saves a folder named after the presentation, holding `index.html`, `player.js` and `presentation.json` (the same file the app saves, without reference images), plus `text.json` with the glyph outlines when there is text, so the page doesn't depend on the viewer's fonts. Put the folder on GitHub Pages or any web server and open `index.html`; it needs no build step and uses only relative paths. Opened straight from disk (`file://`), browsers won't let the page read `presentation.json`, so it says to serve the folder instead (`python3 -m http.server` in the folder works).
 - It plays as presentation mode does: the opening state, then one sequence per Advance, letterboxed in black. Click or tap the right half, swipe left, or press Space, →, ↓, Page Down or Return to advance; click or tap the left half, swipe right, or press ←, ↑, Page Up or Backspace to go back. Home and End jump to the start and the end, and F toggles full screen.
 - The address's hash is the number of sequences played (`index.html#3` opens with three played), and it follows along as you present, so a reload or a shared link opens on the same step.
 - Hidden art is left out, as in presentation mode. Translucent gradient stops may blend slightly differently, since browsers mix gradient colors premultiplied.
@@ -142,6 +142,28 @@ From [the plan](docs/plans/animation-app.md#11-milestones):
 
 - **Presenter** (ControlFlowCore, `Presenter.swift`): the state machine. `advance()`, `back()` and `perform(_:)` move between sequence ends; `scene(at:)` gives the scene at a display time, starting a sequence's clock on its first frame and stopping it on its last keyframe. A sequence with no keyframes has nothing to play and is passed in one Advance. `counter`, `nextSequenceTitle`, `nextEndState()` feed the presenter view, `revision` changes only when the scene jumps, and `Presenter.camera(fitting:in:)` letterboxes the viewport. `PresentationKey` maps the keys to `PresentationAction`s, and `PresentationTouches` turns touches into taps on the halves and the pinch-in. Tests are in `PresenterTests.swift`; `PerformanceTests.testPlaybackFrames` times interpolating and tessellating 50 animating shapes per frame.
 - **App** (`ControlFlow/Presenting/`): `PresentationController` wraps the `Presenter` for the views, and `PresentationHub` holds the presentation being given and whether an external display is connected. `PresentationCanvasView` is a Metal view with a `CanvasSession` of its own that shows each frame's scene with `DrawingEditor.showScene(_:)`; it renders through `CanvasRenderer.render(..., presenting: true)` (art and an opaque black veil only) on its own screen's display link, every refresh while a sequence plays and otherwise only when the scene jumps. With input on, it takes the keys as `UIKeyCommand`s ahead of the system's and turns touches into actions. The external display gets its own scene (`ExternalDisplaySceneDelegate`, given by `AppDelegate` for the non-interactive external display role), which shows `ExternalDisplayView`. The next state's picture is drawn off the main thread with `ThumbnailRenderer`.
+
+## Text notes
+
+The plan is [docs/plans/text.md](docs/plans/text.md).
+
+**Using it**
+
+- **Text tool** (the "Aa" button after Shapes, or T): tap the canvas to start a text there, or drag for a box that wraps at that width. The keyboard comes up and you type straight onto the canvas, at any zoom or rotation; the software and hardware keyboards, dictation, other languages' input and autocorrect all work. With the Pencil, write into a text (Scribble) while the Text tool is chosen.
+- Tap in the text to move the caret. Tapping outside it, pressing Escape, or changing tools ends the edit; a text left empty is deleted. The whole edit is one undo step, and Undo while typing undoes it.
+- Tap another text with the Text tool to edit it, or double-tap a text with Select.
+- **Select** moves, turns and scales a text like any shape (scaling is a transform, so it animates smoothly). On a text box the side handles change where it wraps instead of stretching it. Direct Select selects the text whole.
+- **Context bar** (Text tool, or a text selected with Select): the font (System, or Choose Font for any installed face), size, weight and italic (for the system font), alignment, and More for line height and tracking. They set the style of new text and of the selected texts. The Appearance panel's fill (color, global color, gradient), opacity and clipping work as for shapes; outlines on text come later, so that section is off for a text.
+- **Edit > Convert to Outlines** (Shift-Cmd-O) turns a text into ordinary shapes, one per letter with its holes, grouped, so the letters can be reshaped with Direct Select and morph by their points.
+- **Keyframes:** a text's words and every style setting can change at a keyframe. Position, rotation, scale, opacity and fill animate as for any shape, and tracking and line height animate too (with lines broken as they are at the end, so words never jump between lines midway). The words, font, weight, italic, size, alignment and box width change at the start of the transition.
+- A document naming a font this iPad doesn't have shows it in the system font and says so when it opens; the name is kept, so it comes back on an iPad that has the font.
+- Exports draw text as outlines: SVG, PNG, thumbnails and the web page look as the iPad does.
+
+**How it works**
+
+- **Core** (`Text.swift`, `DrawingEditor+Text.swift`): a text is a `VectorShape` with a `TextContent` and an empty path. `TextShaping` lays it out through the `TextShaper` in use (CoreText in the app, `StubTextShaper` in tests and on Linux), and `VectorShape.resolvingText()` puts the glyphs into the path wherever shapes are drawn or hit-tested, so stored text never holds glyphs. `TextEditing` is the string and selection logic and `TextEditState` the session; `Interpolation` lerps tracking and line height with `TextContent.held`. Tests are in `TextTests.swift`.
+- **App:** `CoreTextShaper` (`Canvas/`) breaks lines with a `CTTypesetter` and caches glyph outlines from `CTFontCreatePathForGlyph`. `MetalCanvasView` keeps an invisible `UITextView` as the keyboard's target, copying words and selection both ways, and offers texts to Scribble with `UIIndirectScribbleInteraction`.
+- **Format 1.1** adds `text` to shapes (`Schema/README.md`, "Text"). The HTML export's `text.json` and `player.js` are checked by the test vectors.
 
 ## Character Studio foundations
 

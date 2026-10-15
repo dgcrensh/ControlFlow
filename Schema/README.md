@@ -51,7 +51,7 @@ Every key here is optional and written only when it differs from its default.
 
 ### Text
 
-A shape with a `text` key is a text: its words are laid out in the shape's own space and filled with the shape's `fill` (and `fillGlobal`), `opacity`, `transform` and clipping, like any closed shape. A text has `"closed": true`, empty `points`, and no `stroke` or `gradient`. Readers that don't know `text` (1.0 readers) see an empty shape and draw nothing.
+A shape with a `text` key is a text: its words are laid out in the shape's own space and filled with the shape's `fill` (and `fillGlobal`), `opacity`, `transform` and clipping, like any closed shape. A text has `"closed": true` and empty `points`, and a `stroke` on it is not drawn (outlines on text come later). Readers that don't know `text` (1.0 readers) see an empty shape and draw nothing.
 
 `text` is `{ "string", "font", "weight", "italic", "size", "align", "width", "lineHeight", "tracking" }`, with only `string` always written:
 
