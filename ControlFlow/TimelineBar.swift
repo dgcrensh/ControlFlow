@@ -102,7 +102,7 @@ struct TimelineBar: View {
                 Text(block.title)
                     .font(.caption.weight(.semibold))
                     .lineLimit(1)
-                Text(Transition.seconds(block.duration) + "s")
+                Text(ControlFlowCore.Transition.seconds(block.duration) + "s")
                     .font(.caption2.monospacedDigit())
                     .foregroundStyle(.secondary)
                 Menu {
@@ -276,7 +276,7 @@ struct TransitionPopover: View {
                         .monospacedDigit()
                         .foregroundStyle(.secondary)
                     Stepper("Duration", value: Binding(get: { transition.duration }, set: { set(duration: $0) }),
-                            in: 0...Transition.maxDuration, step: 0.1)
+                            in: 0...ControlFlowCore.Transition.maxDuration, step: 0.1)
                         .labelsHidden()
                 }
                 Slider(value: Binding(get: { min(transition.duration, 3) },
@@ -321,14 +321,14 @@ struct TransitionPopover: View {
 
     private func set(duration: Double, continuous: Bool = false) {
         guard let chip else { return }
-        store.setTransition(Transition(duration: min(max(duration, 0), Transition.maxDuration), curve: chip.transition.curve),
+        store.setTransition(ControlFlowCore.Transition(duration: min(max(duration, 0), ControlFlowCore.Transition.maxDuration), curve: chip.transition.curve),
                             ofKeyframe: keyframe, continuous: continuous)
         if !continuous { store.previewTransition(into: keyframe) }
     }
 
     private func set(curve: TimingCurve, continuous: Bool = false) {
         guard let chip else { return }
-        store.setTransition(Transition(duration: chip.transition.duration, curve: curve), ofKeyframe: keyframe,
+        store.setTransition(ControlFlowCore.Transition(duration: chip.transition.duration, curve: curve), ofKeyframe: keyframe,
                             continuous: continuous)
         if !continuous { store.previewTransition(into: keyframe) }
     }

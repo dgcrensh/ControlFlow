@@ -577,7 +577,7 @@ final class CanvasStore {
 
     /// Sets a keyframe's transition. Changes with `continuous` in a row (a slider or a
     /// curve handle drag) are one undo step.
-    func setTransition(_ transition: Transition, ofKeyframe id: Int, continuous: Bool = false) {
+    func setTransition(_ transition: ControlFlowCore.Transition, ofKeyframe id: Int, continuous: Bool = false) {
         edit { $0.editor.setTransition(transition, ofKeyframe: id, continuous: continuous) }
     }
 
