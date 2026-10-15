@@ -32,6 +32,17 @@ public struct Affine2D: Hashable, Sendable, Codable {
         return Affine2D(a: cs, b: sn, c: -sn, d: cs, tx: 0, ty: 0)
     }
 
+    /// Rotation by `degrees`, clockwise on a y-down screen. Multiples of 90 are exact.
+    public static func rotation(degrees: Double) -> Affine2D {
+        let quarter = degrees / 90
+        if quarter == quarter.rounded(), abs(quarter) < 1e9 {
+            let turns = ((Int(quarter) % 4) + 4) % 4
+            let (cs, sn): (Double, Double) = [(1, 0), (0, 1), (-1, 0), (0, -1)][turns]
+            return Affine2D(a: cs, b: sn, c: -sn, d: cs, tx: 0, ty: 0)
+        }
+        return rotation(degrees * .pi / 180)
+    }
+
     public func apply(_ p: Vec2) -> Vec2 {
         Vec2(a * p.x + c * p.y + tx, b * p.x + d * p.y + ty)
     }

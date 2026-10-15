@@ -24,6 +24,10 @@ final class MetalCanvasView: UIView {
     /// draws it, which is the input-to-render latency on the CPU side.
     private var renderWait: OSSignpostIntervalState?
     private var hasLaidOut = false
+    /// The size and interface orientation at the last layout, to tell a resize, and
+    /// which way the iPad turned, from the next.
+    private var laidOutSize: CGSize = .zero
+    private var laidOutOrientation: DisplayOrientation?
 
     /// Stable small integer ids for live `UITouch` objects.
     private var touchIDs: [ObjectIdentifier: Int] = [:]
@@ -100,9 +104,20 @@ final class MetalCanvasView: UIView {
         metalLayer.contentsScale = scale
         metalLayer.drawableSize = CGSize(width: bounds.width * scale, height: bounds.height * scale)
         store.viewSize = bounds.size
-        if !hasLaidOut, bounds.width > 0, bounds.height > 0 {
-            hasLaidOut = true
-            store.session.resetView(viewSize: Vec2(bounds.size))
+        let orientation = window?.windowScene.flatMap { DisplayOrientation($0.effectiveGeometry.interfaceOrientation) }
+        if bounds.width > 0, bounds.height > 0 {
+            if !hasLaidOut {
+                hasLaidOut = true
+                store.session.resetView(viewSize: Vec2(bounds.size))
+            } else if bounds.size != laidOutSize {
+                // Keep the middle of the view still, and with the lock on, keep the art
+                // lined up with the screen.
+                var turn: Double?
+                if let old = laidOutOrientation, let orientation { turn = DisplayOrientation.turn(from: old, to: orientation) }
+                store.viewDidResize(from: laidOutSize, to: bounds.size, interfaceTurn: turn)
+            }
+            laidOutSize = bounds.size
+            laidOutOrientation = orientation
         }
         setNeedsRender()
     }
@@ -125,6 +140,11 @@ final class MetalCanvasView: UIView {
         // Play Sequence: each frame shows the scene at the time it reaches the screen.
         if store.isPlaying, let link = displayLink {
             store.playbackFrame(at: link.targetTimestamp)
+            needsRender = true
+        }
+        // The rotation lock snapping the canvas to a quarter turn.
+        if store.session.isTurning, let link = displayLink {
+            store.stepTurn(at: link.targetTimestamp)
             needsRender = true
         }
         guard needsRender else {
@@ -495,6 +515,19 @@ extension MetalCanvasView: UIPencilInteractionDelegate {
             return
         default:
             store.showPalette(at: squeeze.hoverPose?.location)
+        }
+    }
+}
+
+extension DisplayOrientation {
+    /// The window scene's interface orientation; nil when it is unknown.
+    init?(_ orientation: UIInterfaceOrientation) {
+        switch orientation {
+        case .portrait: self = .portrait
+        case .portraitUpsideDown: self = .portraitUpsideDown
+        case .landscapeLeft: self = .landscapeLeft
+        case .landscapeRight: self = .landscapeRight
+        default: return nil
         }
     }
 }

@@ -41,6 +41,11 @@ struct ContentView: View {
                     StyleBar(store: store, ui: store.ui)
                 }
             }
+            .overlay(alignment: .topTrailing) {
+                RotationLockBadge(store: store, ui: store.ui)
+                    .padding(.top, 12)
+                    .padding(.trailing, 16)
+            }
             .overlay { ToastView(ui: store.ui) }
             .overlay { PencilPalette(store: store, ui: store.ui) }
             // Keyboard shortcuts (EditorCommands) act on the focused document's canvas,
@@ -98,7 +103,9 @@ struct ContentView: View {
     private func startPresenting() {
         guard presenting == nil else { return }
         store.stopPlaying()
-        let controller = PresentationController(presentation: store.session.editor.presentation)
+        let controller = PresentationController(presentation: store.session.editor.presentation,
+                                                rotationLocked: store.session.isRotationLocked,
+                                                startRotation: store.session.camera.rotationDegrees)
         controller.onExit = { presenting = nil }
         PresentationHub.shared.active = controller
         presented = ObjectIdentifier(controller)
@@ -254,6 +261,9 @@ private struct ViewMenu: View {
             }
             Toggle(isOn: Binding(get: { ui.showsOnionSkin }, set: { store.setOnionSkin($0) })) {
                 Label("Onion Skin", systemImage: "square.2.layers.3d")
+            }
+            Toggle(isOn: Binding(get: { ui.rotationLocked }, set: { store.setRotationLocked($0) })) {
+                Label("Lock Rotation", systemImage: "lock.rotation")
             }
             Divider()
             Button("Viewport", systemImage: "rectangle.dashed") { showingViewport = true }
@@ -1028,6 +1038,31 @@ private struct PencilPalette: View {
         let margin = radius + 40
         return CGPoint(x: min(max(p.x, margin), max(size.width - margin, margin)),
                        y: min(max(p.y, margin), max(size.height - margin, margin)))
+    }
+}
+
+/// A small lock in the corner of the canvas while the rotation is locked, so a pinch
+/// that won't rotate isn't a mystery. Tapping it turns the lock off.
+private struct RotationLockBadge: View {
+    let store: CanvasStore
+    let ui: EditorUIState
+
+    var body: some View {
+        if ui.rotationLocked {
+            Button {
+                store.setRotationLocked(false)
+            } label: {
+                Image(systemName: "lock.rotation")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .padding(8)
+                    .background(.regularMaterial, in: Circle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Rotation Locked")
+            .accessibilityHint("Turns the rotation lock off, so two fingers rotate the canvas.")
+            .transition(.opacity)
+        }
     }
 }
 
