@@ -133,9 +133,7 @@ public struct ArtSegment: Hashable, Sendable {
     /// Names these vertices: a segment in a later batch from the same `ArtBuilder` with
     /// the same id has the same `floats`. Never reused by that builder.
     public var id: Int
-    /// The part (its id in the drawing) whose art this is. An accessory drawn partly
-    /// behind its owner has two segments with the same part. A renderer drawing a pose
-    /// draws each segment through its part's transform (see `PosedArt`).
+    /// The part (its id in the drawing) whose art this is.
     public var part: Int
     /// The part's vertices, in the batch's vertex numbering.
     public var vertices: Range<Int>
@@ -274,14 +272,8 @@ public struct ArtBuilder: Sendable {
         var steps: [ArtStep]
     }
 
-    /// A place in the draw stack: an accessory drawn partly behind its owner appears twice
-    /// with the same id, so the cache tells the two apart by their order.
-    struct PartSlot: Hashable, Sendable {
-        var id: Int
-        var occurrence: Int
-    }
-
-    private var partCache: [PartSlot: PartBatch] = [:]
+    /// Each part's last build, by part id.
+    private var partCache: [Int: PartBatch] = [:]
     private var nextPartBatchID = 1
     /// How many part batches have been built rather than reused, for tests.
     private(set) var partBuilds = 0
@@ -333,22 +325,19 @@ public struct ArtBuilder: Sendable {
         var batch = ArtBatch()
         reusesOtherTolerances = reusingOtherTolerances
         defer { reusesOtherTolerances = false }
-        var parts = drawing.drawStack
+        var parts = drawing.parts
         if let isolatedPart {
             parts = parts.filter { $0.id != isolatedPart } + parts.filter { $0.id == isolatedPart }
         }
-        var occurrences: [Int: Int] = [:]
-        var seen: Set<PartSlot> = []
+        var seen: Set<Int> = []
         // The shapes of parts rebuilt or gone, and of the rebuilt parts as they are now:
         // the difference has left the drawing, so its tessellations can go.
         var retired: Set<Int> = [], fresh: Set<Int> = []
         for part in parts {
-            let occurrence = occurrences[part.id, default: 0]
-            occurrences[part.id] = occurrence + 1
-            let slot = PartSlot(id: part.id, occurrence: occurrence)
+            let slot = part.id
             seen.insert(slot)
             // Left out before its cache is looked at, so a part built earlier and edited
-            // since keeps its slot (and its shapes' tessellations) for when it is ready.
+            // since keeps its cache entry (and its shapes' tessellations) for when it is ready.
             if leavingOutUncached, !isTessellated(part) {
                 batch.partsLeftOut += 1
                 continue

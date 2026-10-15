@@ -72,7 +72,7 @@ final class DirectSelectFlowTests: XCTestCase {
     func testTappingAShapeSelectsItAndShowsItsAnchors() {
         var rig = Rig.withPath()
         XCTAssertEqual(rig.editor.selection, Selection.none)
-        XCTAssertTrue(EditorOverlay.vertices(for: rig.editor, zoom: 1).isEmpty)
+        let unselected = EditorOverlay.vertices(for: rig.editor, zoom: 1)
         let steps = rig.undoSteps
 
         // Tap on the line between two anchors.
@@ -82,7 +82,7 @@ final class DirectSelectFlowTests: XCTestCase {
         XCTAssertTrue(rig.editor.selectedAnchors.isEmpty)
         XCTAssertEqual(rig.path.points.count, 4, "the tap that selects must not insert a point")
         XCTAssertEqual(rig.undoSteps, steps, "selecting is not an edit")
-        XCTAssertFalse(EditorOverlay.vertices(for: rig.editor, zoom: 1).isEmpty, "anchors are drawn")
+        XCTAssertGreaterThan(EditorOverlay.vertices(for: rig.editor, zoom: 1).count, unselected.count, "anchors are drawn")
         XCTAssertFalse(rig.s.isPencilActive)
         XCTAssertFalse(rig.editor.isInGesture)
     }

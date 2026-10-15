@@ -271,24 +271,6 @@ struct Workload: @unchecked Sendable {
         }
     }
 
-    /// One frame of the wiggle preview with part 0 turning, as the renderer draws it: it
-    /// reads the wiggle's live transform and draws the art it built when the wiggle
-    /// started through it, rebuilding only when the transform's id changes.
-    static let wiggleFrame = Workload(name: "Wiggle frame") { drawing in
-        var editor = DrawingEditor(drawing: drawing)
-        editor.toggleWiggle(part: drawing.parts[0].id, time: 0)
-        var builder = ArtBuilder()
-        var built: Int?
-        var time = 0.0
-        return {
-            time += 1.0 / 120
-            let live = editor.wiggleTransform(at: time)!
-            guard built != live.id else { return }
-            built = live.id
-            _ = builder.build(live.base, isolatedPart: nil, tolerance: 0.5, moving: live.shapes)
-        }
-    }
-
     /// The art's share of the first frame after opening (recommendation 5 of
     /// performance-next.md): a build with nothing cached that leaves out every part not
     /// yet tessellated. The cold build it replaced is "Art rebuild, new zoom bucket" with
@@ -408,7 +390,7 @@ struct Workload: @unchecked Sendable {
         [artRebuildAfterOneEdit, artRebuildAfterOneEditWalkOnly, artRebuildAfterOneEditAndUpload, artRebuildAtNewZoomBucket,
          zoomInRefineVisible, hoverFrame, selectHoverHitTest, overlayWireframeAtNewZoom, overlayWireframeAcrossZoomBucket,
          scissorsHover, pencilStroke, quickShapeCheck, eraserSample, dragSampleEverything, dragEndOnePart,
-         dragEndEverything, wiggleFrame, undoRedo, twoFingerNavigation, refreshQueries, layerTree, save, open, openParse,
+         dragEndEverything, undoRedo, twoFingerNavigation, refreshQueries, layerTree, save, open, openParse,
          openDecode, openFirstFrame, openFirstArtInView, svgExport, svgImport]
     }
 

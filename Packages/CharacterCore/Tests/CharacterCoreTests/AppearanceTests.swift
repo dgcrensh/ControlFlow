@@ -976,80 +976,19 @@ final class GroupClipAndBehindTests: XCTestCase {
         XCTAssertFalse(e.drawing.parts[0].groups[0].isClipped)
     }
 
-    /// Body, Head, and a Hat accessory of the head in front of it, whose brim (blue,
-    /// 5...15) draws behind the head (red, 0...10) and whose band (green) doesn't.
-    private func hat() -> Drawing {
-        var d = Drawing()
-        d.parts.append(Part(id: d.makeID(), name: "Body", shapes: [VectorShape(id: d.makeID(), path: square(0, 20, 10), fill: yellow)]))
-        let head = d.makeID()
-        d.parts.append(Part(id: head, name: "Head", shapes: [VectorShape(id: d.makeID(), path: square(0, 0, 10), fill: red)]))
-        var brim = VectorShape(id: d.makeID(), path: square(5, 5, 10), fill: blue)
-        brim.isBehindOwner = true
-        let band = VectorShape(id: d.makeID(), path: square(-5, -5, 7), fill: green)
-        var hat = Part(id: d.makeID(), name: "Hat", shapes: [band, brim])
-        hat.accessoryOf = head
-        d.parts.append(hat)
-        return d
-    }
-
-    func testBehindShapesDrawJustBehindTheOwner() {
-        let d = hat()
-        XCTAssertEqual(d.drawStack.map(\.name), ["Body", "Hat", "Head", "Hat"])
-        XCTAssertEqual(d.drawStack.map(\.shapes.count), [1, 1, 1, 1])
-        XCTAssertTrue(d.drawStack[1].shapes[0].isBehindOwner)
-        // The head covers the brim; the band stays in front of the head.
-        XCTAssertTrue(render(d, at: Vec2(7, 7)).isColor(red))
-        XCTAssertTrue(render(d, at: Vec2(12, 12)).isColor(blue))
-        XCTAssertTrue(render(d, at: Vec2(1, 1)).isColor(green))
-        // Taps go to what's on top.
-        XCTAssertEqual(d.hitTest(Vec2(7, 7), tolerance: 0)?.part, d.parts[1].id)
-        XCTAssertEqual(d.hitTest(Vec2(12, 12), tolerance: 0)?.part, d.parts[2].id)
-        // In a part's own art the flag does nothing.
-        var plain = d
-        plain.parts[2].accessoryOf = nil
-        XCTAssertEqual(plain.drawStack, plain.parts)
-        XCTAssertTrue(render(plain, at: Vec2(7, 7)).isColor(blue))
-    }
-
-    func testBehindOwnerAppliesToAccessoryShapesInOneUndoStep() {
-        var d = hat()
-        d.parts[2].shapes[1].isBehindOwner = false
-        var e = DrawingEditor(drawing: d)
-        e.selection = .shapes([ShapeRef(part: d.parts[1].id, shape: d.parts[1].shapes[0].id),
-                               ShapeRef(part: d.parts[2].id, shape: d.parts[2].shapes[1].id)])
-        XCTAssertEqual(e.selectionAppearance?.isInAccessory, false)
-        e.setBehindOwner(true)
-        XCTAssertFalse(e.drawing.parts[1].shapes[0].isBehindOwner)
-        XCTAssertTrue(e.drawing.parts[2].shapes[1].isBehindOwner)
-        e.undo()
-        XCTAssertFalse(e.drawing.parts[2].shapes[1].isBehindOwner)
-    }
-
-    func testTheFileKeepsClippedGroupsAndBehindShapes() throws {
-        var d = hat()
-        let group = d.makeID()
-        d.parts[2].shapes[0].group = group
-        d.parts[2].groups = [ShapeGroup(id: group, name: "Band", isClipped: true)]
+    func testTheFileKeepsClippedGroups() throws {
+        let d = clippedGroup()
         let text = CharacterFormat.encode(d).formatted()
-        XCTAssertTrue(text.contains("\"behindOwner\""))
         let back = try CharacterFormat.decode(JSONValue(parsing: text)).drawing
-        XCTAssertEqual(back.parts[2].groups.first?.isClipped, true)
-        XCTAssertEqual(back.parts[2].shapes.map(\.isBehindOwner), [false, true])
+        XCTAssertEqual(back.parts[0].groups.first?.isClipped, true)
         XCTAssertEqual(CharacterFormat.encode(back).formatted(), text)
-        // Off, neither key is written.
+        // Off, the group's key isn't written; the clipped shape's still is.
         let plain = CharacterFormat.encode(clippedGroup(groupClipped: false)).formatted()
-        XCTAssertFalse(plain.contains("behindOwner"))
         XCTAssertEqual(plain.components(separatedBy: "\"clipped\"").count, 2)
     }
 
-    func testSVGMasksClippedGroupsAndSplitsBehindShapes() throws {
+    func testSVGMasksClippedGroups() throws {
         let clipped = try XCTUnwrap(SVGWriter.document(for: clippedGroup()))
         XCTAssertTrue(clipped.contains("<g data-name=\"Iris\" mask=\"url(#"))
-        let svg = try XCTUnwrap(SVGWriter.document(for: hat()))
-        let behind = try XCTUnwrap(svg.range(of: "data-name=\"Hat (behind)\""))
-        let head = try XCTUnwrap(svg.range(of: "id=\"Head\""))
-        let front = try XCTUnwrap(svg.range(of: "id=\"Hat\""))
-        XCTAssertLessThan(behind.lowerBound, head.lowerBound)
-        XCTAssertLessThan(head.lowerBound, front.lowerBound)
     }
 }

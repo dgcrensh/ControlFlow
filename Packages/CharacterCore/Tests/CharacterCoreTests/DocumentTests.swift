@@ -37,7 +37,7 @@ private func editorDrawing() -> Drawing {
     e.addToPalette(RGBAColor(hex: "#12345680")!)
     e.selection = .layer(e.drawing.parts[0].id)
     e.renamePart(e.drawing.parts[0].id, to: "Head \"big\" ✨")
-    e.renameCharacter("Tést")
+    e.renamePresentation("Tést")
     var d = e.drawing
     d.parts[0].shapes[0].path.points[1].isSmooth = false
     d.references.append(ReferenceImage(id: d.makeID(), name: "Ref", size: Vec2(640, 480), center: Vec2(12.5, -3),
@@ -142,33 +142,19 @@ final class CharacterFormatTests: XCTestCase {
         XCTAssertFalse(mouth.path.closed)
         XCTAssertNil(mouth.fill)
         XCTAssertEqual(mouth.path.points.map(\.width), [0.3, 1.4, 0.3])
-        // The head sits on the neck, at the top of the spine; the arms branch off the spine.
-        XCTAssertEqual(d.bones.map(\.name), ["Spine", "Neck", "Arm.L", "Arm.R"])
-        XCTAssertEqual(d.bones[1].parent, d.bones[0].id)
-        XCTAssertEqual(d.bones[3].parent, d.bones[0].id)
-        XCTAssertTrue(d.bones[1].head.isApproximately(Vec2(0, -90), tolerance: 1e-9))
-        XCTAssertTrue(d.bones[3].tail.isApproximately(Vec2(-76, -80), tolerance: 1e-9))
-        XCTAssertNil(d.parts[0].bone)
-        XCTAssertEqual(d.parts[1].bone, d.bones[1].id)
-        // The antenna is the head's accessory, on the head's bone, in front of it with its
-        // stalk drawn behind it.
-        XCTAssertEqual(d.parts[2].accessoryOf, d.parts[1].id)
-        XCTAssertEqual(d.parts[2].bone, d.bones[1].id)
-        XCTAssertNil(d.parts[0].accessoryOf)
-        XCTAssertEqual(d.parts[2].shapes.map(\.isBehindOwner), [true, false])
-        XCTAssertEqual(d.drawStack.map(\.name), ["Torso", "Antenna", "Head", "Antenna"])
+        // The antenna is its own layer in front of the head, and the stalk keeps its place.
         XCTAssertTrue(d.parts[2].shapes[1].path.points[0].position.isApproximately(Vec2(0, -180), tolerance: 1e-9))
-        // Its art is stored in the neck's space and read back into world space.
+        // The head's art is stored in the neck bone's space and read back into world space.
         XCTAssertTrue(d.parts[1].pivot.isApproximately(Vec2(0, -110), tolerance: 1e-9))
         XCTAssertTrue(d.parts[1].shapes[0].path.points[0].position.isApproximately(Vec2(0, -150), tolerance: 1e-9))
         XCTAssertEqual(d.references.count, 1)
         XCTAssertEqual(d.references[0].rotation, .pi / 2, accuracy: 1e-12)
         XCTAssertEqual(d.references[0].opacity, 0.35)
-        XCTAssertEqual(d.frame, CharacterFrame(bounds: Rect(minPoint: Vec2(-90, -170), maxPoint: Vec2(90, 20)), ground: 8))
+        XCTAssertEqual(d.viewport, Viewport())
         XCTAssertEqual(package.referenceImages[d.references[0].id]?.count, try exampleFiles("robo.charstudio")["references/reference-1.png"]?.count)
         // Every id is distinct.
         var ids: [Int] = d.parts.map(\.id) + d.parts.flatMap { $0.shapes.map(\.id) } + d.references.map(\.id) +
-            d.globalColors.map(\.id) + d.bones.map(\.id)
+            d.globalColors.map(\.id)
         ids += d.parts.flatMap { $0.groups.map(\.id) }
         XCTAssertEqual(Set(ids).count, ids.count)
         XCTAssertGreaterThan(d.nextID, ids.max()!)
@@ -243,7 +229,7 @@ final class CharacterFormatTests: XCTestCase {
         """)
         let d = try CharacterFormat.decode(file).drawing
         XCTAssertEqual(d.parts.map(\.name), ["c", "a", "b"])
-        XCTAssertEqual(d.name, "Character")
+        XCTAssertEqual(d.name, "Untitled")
     }
 
     func testDuplicatePartNamesBecomeUniqueSlots() {
@@ -369,15 +355,14 @@ final class CharacterFormatTests: XCTestCase {
 }
 
 final class LayerTests: XCTestCase {
-    func testLayerTreeListsPartsFrontToBackUnderTheRootWithoutBones() {
+    func testLayerTreeListsLayersFrontToBack() {
         var d = Drawing()
         d.parts = [Part(id: 1, name: "Back"), Part(id: 2, name: "Front", shapes: [VectorShape(id: 3, path: BezierPath())])]
         d.references = [ReferenceImage(id: 4, name: "Under", size: Vec2(1, 1), center: .zero),
                         ReferenceImage(id: 5, name: "Over", size: Vec2(1, 1), center: .zero)]
         let tree = LayerTree(drawing: d)
-        XCTAssertEqual(tree.bones.map(\.id), ["root"])
-        XCTAssertEqual(tree.bones[0].parts.map(\.name), ["Front", "Back"])
-        XCTAssertEqual(tree.bones[0].parts[0].shapeCount, 1)
+        XCTAssertEqual(tree.parts.map(\.name), ["Front", "Back"])
+        XCTAssertEqual(tree.parts[0].shapeCount, 1)
         XCTAssertEqual(tree.references.map(\.name), ["Over", "Under"])
     }
 
@@ -400,13 +385,13 @@ final class LayerTests: XCTestCase {
         XCTAssertEqual(e.drawing.parts.map(\.name), ["Part 3", "Part 2", "Part 3 2"])
     }
 
-    func testSelectDeleteAndRenameCharacter() {
+    func testSelectDeleteAndRenamePresentation() {
         var e = DrawingEditor()
         e.addStroke(ring(center: Vec2(0, 0), radius: 30), zoom: 1)
         let id = e.drawing.parts[0].id
         e.selectPart(id)
         XCTAssertEqual(e.selection, .layer(id))
-        e.renameCharacter("Robo")
+        e.renamePresentation("Robo")
         XCTAssertEqual(e.drawing.name, "Robo")
         e.deletePart(id)
         XCTAssertTrue(e.drawing.parts.isEmpty)
@@ -414,7 +399,7 @@ final class LayerTests: XCTestCase {
         e.undo()
         XCTAssertEqual(e.drawing.parts.count, 1)
         e.undo()
-        XCTAssertEqual(e.drawing.name, "Character")
+        XCTAssertEqual(e.drawing.name, "Untitled")
     }
 
     func testIDsAreNeverReusedAfterUndo() {

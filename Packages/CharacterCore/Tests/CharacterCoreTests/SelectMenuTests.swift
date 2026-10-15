@@ -10,7 +10,7 @@ private let red = RGBAColor(r: 1, g: 0, b: 0)
 
 /// An editor with a Head part of four squares (0 and 2 red, 1 and 3 white; 0-1 outlined
 /// 2 wide, 2 outlined 4 wide, 3 not outlined), squares 1 and 2 grouped as "Eye", and a
-/// Hair accessory on the head with one red square.
+/// Hair part with one red square.
 private func editor() -> DrawingEditor {
     var d = Drawing()
     let fills: [RGBAColor] = [red, .white, red, .white]
@@ -25,9 +25,7 @@ private func editor() -> DrawingEditor {
     head.shapes[1].group = eye
     head.shapes[2].group = eye
     d.parts.append(head)
-    var hair = Part(id: d.makeID(), name: "Hair", shapes: [VectorShape(id: d.makeID(), path: square(500), fill: red)])
-    hair.accessoryOf = head.id
-    d.parts.append(hair)
+    d.parts.append(Part(id: d.makeID(), name: "Hair", shapes: [VectorShape(id: d.makeID(), path: square(500), fill: red)]))
     var e = DrawingEditor(drawing: d)
     e.tool = .select
     return e
@@ -43,7 +41,7 @@ private func titles(_ e: DrawingEditor) -> [String] {
 }
 
 final class SelectMenuTests: XCTestCase {
-    func testCrumbsWalkFromAShapeOutToTheAccessoryOwner() {
+    func testCrumbsWalkFromAShapeOutToTheLayer() {
         var e = editor()
         let head = e.drawing.parts[0].id, hair = e.drawing.parts[1].id
         let eye = e.drawing.parts[0].groups[0].id
@@ -62,12 +60,11 @@ final class SelectMenuTests: XCTestCase {
         XCTAssertFalse(e.canSelectParent)
 
         e.selection = .covering(refs(e, [0], part: 1))
-        XCTAssertEqual(titles(e), ["Head", "Hair", "[Shape]"])
+        XCTAssertEqual(titles(e), ["Hair", "[Shape]"])
         e.selectParent()
         XCTAssertEqual(e.selection, .layer(hair))
-        XCTAssertEqual(titles(e), ["Head", "[Hair]"])
-        e.selectParent()
-        XCTAssertEqual(e.selection, .layer(head))
+        XCTAssertEqual(titles(e), ["[Hair]"])
+        XCTAssertFalse(e.canSelectParent)
     }
 
     func testShapesInSeveralGroupsOrLayersHaveFewerCrumbs() {

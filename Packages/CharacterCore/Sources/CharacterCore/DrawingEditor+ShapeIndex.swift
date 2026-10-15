@@ -5,7 +5,7 @@ extension Tool {
     var usesShapeIndex: Bool {
         switch self {
         case .select, .directSelect, .eraser, .scissors: true
-        case .pencil, .pen, .shape, .bone: false
+        case .pencil, .pen, .shape: false
         }
     }
 }

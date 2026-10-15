@@ -18,9 +18,8 @@ extension DrawingEditor {
             removeShape(ref)
             selection = .none
         } else {
-            // A shape with keyforms loses the same points at every key.
             if let idx = drawing.indices(ref),
-               let changed = changingPoints(of: drawing.parts[idx.0].shapes[idx.1], refusal: Drawing.topologyMessage,
+               let changed = changingPoints(of: drawing.parts[idx.0].shapes[idx.1],
                                             { var p = $0; p.removePoints(at: doomed); return p }) {
                 drawing.parts[idx.0].shapes[idx.1] = changed
             }
@@ -110,8 +109,7 @@ extension DrawingEditor {
         guard let ref = activeShape, let a = selectedAnchor, let shape = drawing.shape(ref),
               shape.path.split(at: a) != nil, let idx = drawing.indices(ref) else { return }
         cancelGesture()
-        // A shape with keyforms is split at the same anchor at every key.
-        guard let pieces = changingPoints(of: shape, refusal: Drawing.topologyMessage, { $0.split(at: a) }) else { return }
+        guard let pieces = changingPoints(of: shape, { $0.split(at: a) }) else { return }
         let before = drawing
         drawing.parts[idx.0].shapes[idx.1] = pieces[0]
         var refs: Set<ShapeRef> = [ref]
@@ -141,13 +139,11 @@ extension DrawingEditor {
         cancelGesture()
         let before = drawing
         if refs.count == 1 {
-            // Whether the ends merge is decided where they are shown, so every key of a
-            // shape with keyforms gets the same points.
             if let idx = drawing.indices(first) {
                 let shape = drawing.parts[idx.0].shapes[idx.1]
                 let ends = (shape.path.endPoint(.start), shape.path.endPoint(.end))
                 let merge = ends.0.flatMap { a in ends.1.map { a.distance(to: $0) <= 1e-6 } } ?? false
-                if let closed = changingPoints(of: shape, refusal: Self.closeRefusal,
+                if let closed = changingPoints(of: shape,
                                                { $0.closedByJoiningEnds(mergeWithin: merge ? .infinity : -1) }) {
                     drawing.parts[idx.0].shapes[idx.1] = closed
                 }
@@ -277,5 +273,22 @@ extension DrawingEditor {
         } else {
             transformSelection(.translation(delta), key: "nudge-\(selection)")
         }
+    }
+
+    // MARK: Changing points
+
+    /// `shape` with its path changed by `change`, one shape per path it gives (the first
+    /// keeps the shape's id). Nil when `change` gives nil.
+    func changingPoints(of shape: VectorShape, _ change: (BezierPath) -> [BezierPath]?) -> [VectorShape]? {
+        change(shape.path)?.map { path in
+            var out = shape
+            out.path = path
+            return out
+        }
+    }
+
+    /// `changingPoints` for a change that keeps one path.
+    func changingPoints(of shape: VectorShape, _ change: (BezierPath) -> BezierPath?) -> VectorShape? {
+        changingPoints(of: shape, { path in change(path).map { [$0] } })?.first
     }
 }

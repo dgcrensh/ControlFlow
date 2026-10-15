@@ -8,10 +8,6 @@ public struct ShapeAppearance: Hashable, Sendable {
     /// How much of the shape the gradient spans (see `setGradientSpan`).
     public var gradientSpan: Double?
     public var isClipped: Bool
-    /// The shape draws behind its accessory's owner (see `VectorShape.isBehindOwner`).
-    public var isBehindOwner: Bool
-    /// The shape is in an accessory, so it can draw behind the owner.
-    public var isInAccessory: Bool
     /// The global colors the fill and outline follow.
     public var fillGlobal: Int?
     public var outlineGlobal: Int?
@@ -62,8 +58,7 @@ extension DrawingEditor {
         let gradient = shape.visibleFill != nil ? shape.gradient : nil
         return ShapeAppearance(opacity: shape.opacity, gradient: gradient,
                                gradientSpan: gradient.map { Self.span(of: $0, in: shape.path.bounds()) },
-                               isClipped: shape.isClipped, isBehindOwner: shape.isBehindOwner,
-                               isInAccessory: drawing.parts[first.0].accessoryOf != nil, fillGlobal: shape.fillGlobal,
+                               isClipped: shape.isClipped, fillGlobal: shape.fillGlobal,
                                outlineGlobal: shape.stroke?.global, hasOutline: shape.stroke != nil,
                                isClosed: shape.path.closed)
     }
@@ -127,16 +122,6 @@ extension DrawingEditor {
         for (p, s) in targets where !clipped || s > 0 {
             drawing.parts[p].shapes[s].isClipped = clipped
         }
-        commit(from: before)
-    }
-
-    /// Makes the selected shapes that are in accessories draw just behind their owner's
-    /// art, or with the rest of their accessory again. One undo step.
-    public mutating func setBehindOwner(_ behind: Bool) {
-        let targets = drawing.shapeIndices(in: selection).filter { drawing.parts[$0.0].accessoryOf != nil }
-        guard !targets.isEmpty else { return }
-        let before = drawing
-        for (p, s) in targets { drawing.parts[p].shapes[s].isBehindOwner = behind }
         commit(from: before)
     }
 
@@ -308,7 +293,6 @@ extension DrawingEditor {
         guard let i = drawing.globalColors.firstIndex(where: { $0.id == id }) else { return }
         let before = drawing
         drawing.globalColors[i].color = color
-        // Art in other variants and skins follows too.
         for p in drawing.parts.indices {
             drawing.parts[p].updateAllShapes { shape in
                 if shape.fillGlobal == id, shape.fill != nil {

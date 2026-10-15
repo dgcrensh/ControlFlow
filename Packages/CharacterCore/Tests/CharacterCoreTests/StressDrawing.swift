@@ -47,10 +47,6 @@ enum StressDrawing {
             }
             d.parts.append(part)
         }
-        // Every tenth part is an accessory of the part before it.
-        for p in stride(from: 1, to: d.parts.count, by: 10) {
-            d.parts[p].accessoryOf = d.parts[p - 1].id
-        }
         return d
     }
 

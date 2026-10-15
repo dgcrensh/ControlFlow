@@ -4,8 +4,7 @@ import XCTest
 
 /// `ShapeIndex` must give exactly the answers of the scans it replaces: the topmost hit,
 /// the scissors' target, the eraser's and the marquee's hit sets, with isolation, an
-/// isolated group, hidden and locked shapes, clipping and accessories drawn behind
-/// their owner. And a stale index is never read.
+/// isolated group, hidden and locked shapes and clipping. And a stale index is never read.
 final class ShapeIndexTests: XCTestCase {
     /// The stress drawing with every case the filters and the draw order care about.
     static let drawing: Drawing = {
@@ -22,9 +21,6 @@ final class ShapeIndexTests: XCTestCase {
         }
         d.parts[2].isLocked = true
         d.parts[3].isHidden = true
-        // Part 1 is an accessory of part 0: half its shapes draw behind the owner.
-        precondition(d.parts[1].accessoryOf == d.parts[0].id)
-        for s in d.parts[1].shapes.indices where s % 2 == 0 { d.parts[1].shapes[s].isBehindOwner = true }
         // Part 4's group clips to the shape below it; part 8's group clips to a hidden shape.
         d.parts[4].groups[0].isClipped = true
         d.parts[8].groups[0].isClipped = true
@@ -59,7 +55,7 @@ final class ShapeIndexTests: XCTestCase {
         }
     }
 
-    /// The isolations to try: none, one part, an accessory split around its owner, and a group.
+    /// The isolations to try: none, two parts, and groups.
     static var isolations: [(part: Int?, group: Int?)] {
         let d = drawing
         return [(nil, nil), (d.parts[5].id, nil), (d.parts[1].id, nil), (d.parts[4].id, d.parts[4].groups[0].id),
@@ -69,8 +65,6 @@ final class ShapeIndexTests: XCTestCase {
     func testDrawingCoversTheCases() {
         let d = Self.drawing
         XCTAssertTrue(d.groupsAreValid)
-        XCTAssertTrue(d.accessoriesAreValid)
-        XCTAssertNotEqual(d.drawStack.map(\.id), d.parts.map(\.id), "an accessory splits around its owner")
     }
 
     func testHitTestMatchesTheScan() {

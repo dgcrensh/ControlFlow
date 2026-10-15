@@ -31,20 +31,10 @@ public struct LiveTransform: Sendable {
         return abs(x - y) <= 1e-6 * x && abs(t.a * t.c + t.b * t.d) <= 1e-6 * x
     }
 
-    /// The shape ids `selection` moves in `drawing`: a layer brings its accessories.
-    /// Nil when it moves no shapes (a reference image, or nothing).
+    /// The shape ids `selection` moves in `drawing`. Nil when it moves no shapes (a
+    /// reference image, or nothing).
     static func shapes(of selection: Selection, in drawing: Drawing) -> Set<Int>? {
-        var ids: Set<Int> = []
-        switch selection {
-        case .layer(let id):
-            for p in drawing.family(of: id) { ids.formUnion(drawing.parts[p].shapes.map(\.id)) }
-        case .layers(let layers):
-            for p in drawing.families(of: layers) { ids.formUnion(drawing.parts[p].shapes.map(\.id)) }
-        case .shape, .shapes:
-            ids = Set(drawing.shapeRefs(in: selection).map(\.shape))
-        case .none, .reference:
-            break
-        }
+        let ids = Set(drawing.shapeRefs(in: selection).map(\.shape))
         return ids.isEmpty ? nil : ids
     }
 }

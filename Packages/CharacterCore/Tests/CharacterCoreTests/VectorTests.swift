@@ -457,9 +457,11 @@ final class DrawingEditorTests: XCTestCase {
 
     func testOverlayHasHandlesInSelectTool() {
         var e = editorWithSquare()
-        XCTAssertTrue(EditorOverlay.vertices(for: e, zoom: 1).isEmpty)
+        // Only the viewport's border.
+        let border = EditorOverlay.vertices(for: DrawingEditor(), zoom: 1)
+        XCTAssertEqual(EditorOverlay.vertices(for: e, zoom: 1), border)
         e.tool = .select
         tap(&e, Vec2(50, 50))
-        XCTAssertFalse(EditorOverlay.vertices(for: e, zoom: 1).isEmpty)
+        XCTAssertGreaterThan(EditorOverlay.vertices(for: e, zoom: 1).count, border.count)
     }
 }

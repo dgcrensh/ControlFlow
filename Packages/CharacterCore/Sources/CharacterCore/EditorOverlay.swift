@@ -9,26 +9,9 @@ public enum EditorOverlay {
     public static let handleFill = RGBAColor.white
     /// The eraser's ring and the outline of what it would delete.
     public static let eraserColor = RGBAColor(r: 0.9, g: 0.25, b: 0.2)
-    /// Bones that aren't selected, and the symmetry axis.
-    public static let boneColor = RGBAColor(r: 0.45, g: 0.42, b: 0.58)
     public static let symmetryColor = RGBAColor(r: 0.85, g: 0.35, b: 0.75, a: 0.8)
-    /// The character frame's box and ground line.
-    public static let frameColor = RGBAColor(r: 0.15, g: 0.62, b: 0.55)
-    /// Weight painting: anchors that follow only the part's own bone, and only its second bone.
-    public static let firstBoneWeightColor = RGBAColor(r: 0.2, g: 0.45, b: 0.95)
-    public static let secondBoneWeightColor = RGBAColor(r: 0.95, g: 0.35, b: 0.2)
-    /// The onion skin of a part's other variants.
-    /// IK targets (the tips of bones with IK chains) while posing.
-    public static let ikColor = RGBAColor(r: 0.95, g: 0.55, b: 0.1)
-    public static let onionColor = RGBAColor(r: 0.55, g: 0.35, b: 0.85, a: 0.55)
-    /// The selected deformer's lattice, pivot and angle knob.
-    public static let deformerColor = RGBAColor(r: 0.1, g: 0.66, b: 0.82)
-
-    /// The color of an anchor whose second-bone weight is `weight`.
-    public static func weightColor(_ weight: Double) -> RGBAColor {
-        let t = min(max(weight, 0), 1), a = firstBoneWeightColor, b = secondBoneWeightColor
-        return RGBAColor(r: a.r + (b.r - a.r) * t, g: a.g + (b.g - a.g) * t, b: a.b + (b.b - a.b) * t)
-    }
+    /// The viewport's border.
+    public static let viewportBorderColor = RGBAColor(r: 0.5, g: 0.5, b: 0.54, a: 0.9)
 
     /// The outline view's wireframe on a light or dark canvas, and the dimmed wireframe of
     /// art outside isolation or the ghost focus. Opaque, since overlapping capsules
@@ -40,12 +23,11 @@ public enum EditorOverlay {
     }
 
     /// The whole overlay as one array, in drawing order. The renderer keeps the costly
-    /// layers between frames with `layers(for:zoom:viewRect:art:darkMode:cache:)` instead.
+    /// layers between frames with `layers(for:zoom:viewRect:darkMode:cache:)` instead.
     public static func vertices(for editor: DrawingEditor, zoom: Double, viewRect: Rect? = nil,
-                                art: Drawing? = nil, posed: Drawing? = nil, darkMode: Bool = false) -> [Float] {
+                                darkMode: Bool = false) -> [Float] {
         var cache = OverlayCache()
-        let layers = layers(for: editor, zoom: zoom, viewRect: viewRect, art: art, posed: posed, darkMode: darkMode,
-                            cache: &cache)
+        let layers = layers(for: editor, zoom: zoom, viewRect: viewRect, darkMode: darkMode, cache: &cache)
         return layers.wireframe + layers.guides + layers.selection + layers.top
     }
 
@@ -54,33 +36,29 @@ public enum EditorOverlay {
     /// other two are built on every call.
     ///
     /// `viewRect` (world space) bounds lines that run across the whole view, such as the
-    /// symmetry axis and the ground line. `art` is the drawing as the wiggle preview
-    /// shows it, for the outline view; it defaults to the editor's. `posed` is
-    /// `editor.shownDrawing`, which a renderer can keep between frames; while posing,
-    /// the bones, the outline view and the outlines of the selected bone's parts show it.
-    public static func layers(for editor: DrawingEditor, zoom: Double, viewRect: Rect? = nil, art: Drawing? = nil,
-                              posed: Drawing? = nil, darkMode: Bool = false, cache: inout OverlayCache) -> OverlayLayers {
+    /// symmetry axis.
+    public static func layers(for editor: DrawingEditor, zoom: Double, viewRect: Rect? = nil, darkMode: Bool = false,
+                              cache: inout OverlayCache) -> OverlayLayers {
         var layers = OverlayLayers()
         let px = 1 / max(zoom, 1e-9)
-        let shown = editor.isPosing ? posed ?? editor.shownDrawing : editor.drawing
+        let shown = editor.drawing
         // The kept layers depend on the zoom only through flattening and dash lengths, so
         // they are built for the zoom bucket and kept while a pinch stays inside it.
         let bucket = zoomBucket(zoom)
 
         // Outline view: every shown shape as a thin line, dimmed outside isolation and the
-        // ghost focus. The wiggle preview moves the art every frame, so it is never kept.
+        // ghost focus.
         if editor.outlineView {
             let focus = editor.ghostFocus
             let key = OverlayCache.WireframeKey(revision: editor.revision, bucket: bucket, isolatedPart: editor.isolatedPart,
-                                                isolatedGroup: editor.isolatedGroup, ghostFocus: focus, darkMode: darkMode,
-                                                posing: editor.isPosing)
-            if art == nil, cache.wireframeKey == key {
+                                                isolatedGroup: editor.isolatedGroup, ghostFocus: focus, darkMode: darkMode)
+            if cache.wireframeKey == key {
                 layers.wireframe = cache.wireframe
             } else {
                 var b = Builder(editor: editor, drawing: shown, px: 1 / bucket)
-                b.wireframe(of: art ?? shown, focus: focus, darkMode: darkMode)
+                b.wireframe(of: shown, focus: focus, darkMode: darkMode)
                 layers.wireframe = b.out
-                cache.wireframeKey = art == nil ? key : nil
+                cache.wireframeKey = key
                 cache.wireframe = b.out
                 cache.generation &+= 1
             }
@@ -126,7 +104,7 @@ public enum EditorOverlay {
 public struct OverlayLayers: Sendable {
     /// The outline view's wireframe of every shown shape. Kept between frames.
     public var wireframe: [Float] = []
-    /// The character frame, symmetry axis, bones, hover feedback and a part's pivot.
+    /// The viewport's border, symmetry axis, hover feedback and a part's pivot.
     public var guides: [Float] = []
     /// The selection's outlines, and in direct select its anchors and handles. Kept
     /// between frames.
@@ -150,7 +128,6 @@ public struct OverlayCache: Sendable {
         var isolatedGroup: Int?
         var ghostFocus: Set<Int>?
         var darkMode: Bool
-        var posing: Bool
     }
 
     struct SelectionKey: Equatable, Sendable {
@@ -179,7 +156,6 @@ public struct OverlayCache: Sendable {
 private struct Builder {
     typealias Overlay = EditorOverlay
     let editor: DrawingEditor
-    /// The drawing as this layer shows it: posed while posing, for the guides.
     let drawing: Drawing
     let px: Double
     var out: [Float] = []
@@ -281,18 +257,11 @@ private struct Builder {
         }
     }
 
-    /// The frame, symmetry, bones, hover feedback and a part's pivot.
+    /// The viewport's border, symmetry, hover feedback and a part's pivot.
     mutating func guides(viewRect: Rect?, zoom: Double) {
-        // The character frame: a dashed box and the ground line across the view.
-        if let frame = drawing.frame, !frame.isHidden {
-            let c = frame.bounds.corners
-            for i in 0..<4 { dashedLine(c[i], c[(i + 1) % 4], dash: 8 * px, width: 1.5, color: Overlay.frameColor) }
-            let pad = 40 * px
-            let left = min(viewRect.map { $0.minPoint.x } ?? c[0].x, c[0].x) - pad
-            let right = max(viewRect.map { $0.maxPoint.x } ?? c[1].x, c[1].x) + pad
-            line(Vec2(left, frame.ground), Vec2(right, frame.ground), width: 2, color: Overlay.frameColor.withAlpha(0.45))
-            line(Vec2(c[0].x, frame.ground), Vec2(c[1].x, frame.ground), width: 2, color: Overlay.frameColor)
-        }
+        let c = drawing.viewport.bounds.corners
+        CapsuleTessellator.append(points: c + [c[0]], width: 1, color: Overlay.viewportBorderColor, screenSpace: true,
+                                  to: &out)
 
         // The symmetry axis, and what symmetry will add for a shape or pen path in progress.
         if editor.symmetry.isEnabled {
@@ -314,104 +283,6 @@ private struct Builder {
             }
         }
 
-        // Onion skin: the variant part's other variants as faint outlines, in the rest pose.
-        if editor.showsOnionSkin, !editor.isPosing, let id = editor.variantPart, let part = drawing.part(id), !part.isHidden {
-            for variant in part.variants where variant.id != part.activeVariant {
-                for shape in variant.shapes where !shape.isHidden {
-                    let poly = shape.path.flattened(tolerance: 0.5 * px)
-                    guard !poly.isEmpty else { continue }
-                    CapsuleTessellator.append(points: shape.path.closed && poly.count > 2 ? poly + [poly[0]] : poly,
-                                              width: 1.5, color: Overlay.onionColor, screenSpace: true, to: &out)
-                }
-            }
-        }
-
-        // Onion skin of the keyform being edited: the keyed shapes (the selected ones, when
-        // any) at the neighbouring keys.
-        if editor.showsOnionSkin, !editor.isPosing {
-            for path in drawing.keyformOnionSkin(of: drawing.shapeRefs(in: editor.selection)) {
-                let poly = path.flattened(tolerance: 0.5 * px)
-                guard !poly.isEmpty else { continue }
-                CapsuleTessellator.append(points: path.closed && poly.count > 2 ? poly + [poly[0]] : poly,
-                                          width: 1.5, color: Overlay.onionColor, screenSpace: true, to: &out)
-            }
-        }
-
-        // The skeleton, in the bone tool or when bones are shown everywhere.
-        if editor.tool == .bone || editor.showsBones {
-            let hover = editor.hoverBone
-            if let id = editor.selectedBone, editor.tool == .bone {
-                // The selected bone's parts, so it's clear what moves with it.
-                for part in drawing.parts where part.bone == id && !part.isHidden {
-                    for (i, shape) in part.shapes.enumerated() where part.isShown(i) {
-                        outline(of: ShapeRef(part: part.id, shape: shape.id), color: accent.withAlpha(0.5))
-                    }
-                }
-            }
-            for bone in drawing.bones {
-                let selected = bone.id == editor.selectedBone
-                let hovered = hover?.bone == bone.id
-                let color = selected ? accent : Overlay.boneColor
-                // A line to the parent's tip when the bone doesn't start there.
-                if let parent = bone.parent.flatMap({ drawing.bone($0) }), parent.tail.distance(to: bone.head) > 1e-6 {
-                    var dashY = 0.0
-                    let d = bone.head - parent.tail, len = d.length, step = 6 * px
-                    while dashY < len {
-                        line(parent.tail + d * (dashY / len), parent.tail + d * (min(dashY + step, len) / len),
-                             width: 1, color: Overlay.boneColor)
-                        dashY += step * 2
-                    }
-                }
-                let outlinePoints = BoneMetrics.outline(of: bone, zoom: zoom)
-                let fill = selected ? accent.withAlpha(0.35) : Overlay.boneColor.withAlpha(0.25)
-                // A soft fill down the middle of the bone (one capsule, so nothing overlaps and darkens).
-                let w = BoneMetrics.halfWidth(of: bone, zoom: zoom)
-                if bone.length > 1e-6 {
-                    let d = bone.tail - bone.head
-                    CapsuleTessellator.append(points: [bone.head + d * 0.15, bone.head + d * 0.55], width: w * 1.1,
-                                              color: fill, to: &out)
-                }
-                let ring = outlinePoints + [outlinePoints[0]]
-                CapsuleTessellator.append(points: ring, width: selected || hovered ? 2 : 1.5, color: color,
-                                          screenSpace: true, to: &out)
-                let jointRadius = 4.5
-                for (handle, point) in [(BoneHandle.head, bone.head), (.tail, bone.tail)] {
-                    let lit = hovered && hover?.handle == handle
-                    dot(point, radius: lit ? jointRadius + 2 : jointRadius, color: color)
-                    dot(point, radius: (lit ? jointRadius + 2 : jointRadius) - 1.5, color: Overlay.handleFill)
-                }
-            }
-        }
-
-        // IK targets while posing: a ring with a cross at each IK bone's tip, to drag.
-        if editor.isPosing, editor.boneMode == .pose {
-            // The bones here are already posed.
-            for bone in drawing.bones where drawing.ikChain(bone.id) != nil {
-                let color = bone.id == editor.selectedBone ? accent : Overlay.ikColor
-                let tip = bone.tail, r = 9 * px
-                ring(tip, radius: r, color: color)
-                line(tip - Vec2(r * 1.6, 0), tip - Vec2(r * 0.6, 0), width: 1.5, color: color)
-                line(tip + Vec2(r * 0.6, 0), tip + Vec2(r * 1.6, 0), width: 1.5, color: color)
-                line(tip - Vec2(0, r * 1.6), tip - Vec2(0, r * 0.6), width: 1.5, color: color)
-                line(tip + Vec2(0, r * 0.6), tip + Vec2(0, r * 1.6), width: 1.5, color: color)
-            }
-        }
-
-        // Weight painting: the painted part's anchors, from the color of its own bone to the
-        // second bone's, and the brush.
-        if editor.tool == .bone, editor.boneMode == .weights {
-            if let id = editor.weightPaintPart, let part = drawing.part(id) {
-                for (i, shape) in part.shapes.enumerated() where part.isShown(i) {
-                    outline(of: ShapeRef(part: part.id, shape: shape.id), color: Overlay.boneColor.withAlpha(0.6))
-                    for point in shape.path.points {
-                        dot(point.position, radius: 4.5, color: Overlay.handleFill)
-                        dot(point.position, radius: 3.5, color: Overlay.weightColor(point.weight))
-                    }
-                }
-            }
-            if let hover = editor.hoverPoint { ring(hover, radius: editor.weightBrushRadius * px, color: accent) }
-        }
-
         // The scissors find the target and the cut point in one search.
         let cut = editor.tool == .scissors ? editor.hoverCut : nil
         let target = editor.tool == .scissors ? cut?.ref : editor.hoverTarget
@@ -428,7 +299,7 @@ private struct Builder {
                 ring(hover, radius: EditorMetrics.eraserRadius * px, color: Overlay.eraserColor)
             case .scissors:
                 if let point = cut?.point { ringDot(point, radius: 6) }
-            case .pen, .select, .directSelect, .shape, .bone:
+            case .pen, .select, .directSelect, .shape:
                 break
             }
         }
@@ -450,7 +321,7 @@ private struct Builder {
             let refs = drawing.shapeRefs(in: editor.selection)
             let active = refs.count == 1 ? refs[0] : nil
             for ref in refs { drawAnchors(of: ref, showHandles: true, active: active) }
-        case .pencil, .shape, .eraser, .bone, .pen, .select:
+        case .pencil, .shape, .eraser, .pen, .select:
             break
         }
     }
@@ -509,47 +380,13 @@ private struct Builder {
                 ringDot(edge.to, radius: 9)
             }
 
-        case .pencil, .shape, .eraser, .bone, .scissors:
+        case .pencil, .shape, .eraser, .scissors:
             break
         }
 
         if let marquee = editor.marquee {
             let c = marquee.corners
             for i in 0..<4 { line(c[i], c[(i + 1) % 4], width: 1) }
-        }
-        if !editor.isPosing, let id = editor.selectedDeformer { deformer(id) }
-    }
-
-    /// The selected deformer: a warp's lattice as it bends, or a rotation's pivot and the
-    /// knob it turns by.
-    mutating func deformer(_ id: Int) {
-        guard let deformer = editor.drawing.deformer(id) else { return }
-        let handles = editor.deformerHandles(of: id, zoom: 1 / px)
-        let color = Overlay.deformerColor
-        if deformer.isWarp {
-            let points = handles.map(\.position), columns = deformer.columns, rows = deformer.rows
-            guard points.count == columns * rows else { return }
-            for row in 0..<rows {
-                for column in 0..<columns {
-                    let i = row * columns + column
-                    if column + 1 < columns { line(points[i], points[i + 1], width: 1.5, color: color) }
-                    if row + 1 < rows { line(points[i], points[i + columns], width: 1.5, color: color) }
-                }
-            }
-            for p in points {
-                dot(p, radius: 5.5, color: color)
-                dot(p, radius: 3.5, color: Overlay.handleFill)
-            }
-        } else {
-            guard let pivot = handles.first(where: { $0.handle == .pivot })?.position,
-                  let knob = handles.first(where: { $0.handle == .angle })?.position else { return }
-            line(pivot, knob, width: 1.5, color: color)
-            line(pivot - Vec2(10 * px, 0), pivot + Vec2(10 * px, 0), width: 1.5, color: color)
-            line(pivot - Vec2(0, 10 * px), pivot + Vec2(0, 10 * px), width: 1.5, color: color)
-            dot(pivot, radius: 5, color: color)
-            dot(pivot, radius: 3, color: Overlay.handleFill)
-            dot(knob, radius: 7, color: color)
-            dot(knob, radius: 4.5, color: Overlay.handleFill)
         }
     }
 }

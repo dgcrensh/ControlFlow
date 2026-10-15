@@ -1,20 +1,19 @@
 import XCTest
 @testable import CharacterCore
 
-/// A drawing of a body part with an accessory (a hat), and a separate arm.
+/// A drawing of a body part of two shapes (with a hat on top), and a separate arm.
 private func editor() -> DrawingEditor {
     var d = Drawing()
-    func add(_ name: String, _ r: Rect, of owner: Int? = nil) -> Int {
-        let shape = VectorShape(id: d.makeID(), path: ShapePrimitives.rectangle(r), fill: .ink,
-                                stroke: StrokeStyle(color: .ink, width: 2))
-        var part = Part(id: d.makeID(), name: name, shapes: [shape], pivot: r.center)
-        part.accessoryOf = owner
-        d.parts.append(part)
-        return part.id
+    func shape(_ r: Rect) -> VectorShape {
+        VectorShape(id: d.makeID(), path: ShapePrimitives.rectangle(r), fill: .ink, stroke: StrokeStyle(color: .ink, width: 2))
     }
-    let body = add("Body", Rect(minPoint: Vec2(0, 0), maxPoint: Vec2(100, 100)))
-    _ = add("Hat", Rect(minPoint: Vec2(20, -20), maxPoint: Vec2(80, 0)), of: body)
-    _ = add("Arm", Rect(minPoint: Vec2(200, 0), maxPoint: Vec2(220, 100)))
+    func add(_ name: String, _ shapes: [VectorShape], pivot: Vec2) {
+        d.parts.append(Part(id: d.makeID(), name: name, shapes: shapes, pivot: pivot))
+    }
+    let body = Rect(minPoint: Vec2(0, 0), maxPoint: Vec2(100, 100))
+    add("Body", [shape(body), shape(Rect(minPoint: Vec2(20, -20), maxPoint: Vec2(80, 0)))], pivot: body.center)
+    let arm = Rect(minPoint: Vec2(200, 0), maxPoint: Vec2(220, 100))
+    add("Arm", [shape(arm)], pivot: arm.center)
     var e = DrawingEditor(drawing: d)
     e.tool = .select
     return e
@@ -23,7 +22,7 @@ private func editor() -> DrawingEditor {
 final class LiveTransformTests: XCTestCase {
     func testAMoveDragReportsItsTransformUntilItEnds() throws {
         var e = editor()
-        let body = e.drawing.parts[0], hat = e.drawing.parts[1]
+        let body = e.drawing.parts[0]
         e.selection = .layer(body.id)
         let before = e.drawing
         // Off the pivot, which sits in the middle.
@@ -32,8 +31,7 @@ final class LiveTransformTests: XCTestCase {
         e.pencilMoved(to: Vec2(40, 65))
         let first = try XCTUnwrap(e.liveTransform)
         XCTAssertEqual(first.base, before)
-        // The part brings its accessory.
-        XCTAssertEqual(first.shapes, Set([body.shapes[0].id, hat.shapes[0].id]))
+        XCTAssertEqual(first.shapes, Set(body.shapes.map(\.id)))
         XCTAssertEqual(first.transform, .translation(Vec2(10, 5)))
         XCTAssertTrue(first.movesTessellation)
         // The drawing still moves on every sample, for everything but the art.
@@ -56,7 +54,7 @@ final class LiveTransformTests: XCTestCase {
 
     func testOnlyShapeDragsAreLive() {
         var e = editor()
-        let arm = e.drawing.parts[2]
+        let arm = e.drawing.parts[1]
         e.selection = .shape(part: arm.id, shape: arm.shapes[0].id)
         e.pencilBegan(at: Vec2(210, 20), zoom: 1)
         e.pencilMoved(to: Vec2(215, 20))
@@ -91,7 +89,7 @@ final class CarryTessellationTests: XCTestCase {
     private let base = StressDrawing.make(parts: 4, shapesPerPart: 6)
     private let tolerance = 0.5
 
-    /// Part 1 and its accessories moved by `t`, as a drag of that layer leaves them.
+    /// Part 1 moved by `t`, as a drag of that layer leaves it.
     private func drag(_ t: Affine2D, from drawing: Drawing? = nil) -> LiveTransform {
         let d = drawing ?? base
         let selection = Selection.layer(d.parts[1].id)

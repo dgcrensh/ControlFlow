@@ -86,19 +86,4 @@ final class OverlayTests: XCTestCase {
         // The wireframe is one point wide, whatever the zoom.
         XCTAssertEqual(near.wireframe[6], 0.5)
     }
-
-    /// The wiggle preview's art changes every frame, so the wireframe is never kept for it.
-    func testWiggleArtIsNotKept() {
-        var editor = editor()
-        editor.outlineView = true
-        var cache = OverlayCache()
-        var art = editor.drawing
-        _ = EditorOverlay.layers(for: editor, zoom: 1, art: art, cache: &cache)
-        art.parts[0].shapes[0].path = BezierPath(points: [PathPoint(.zero), PathPoint(Vec2(50, 50))])
-        let layers = EditorOverlay.layers(for: editor, zoom: 1, art: art, cache: &cache)
-        XCTAssertEqual(flat(layers), EditorOverlay.vertices(for: editor, zoom: 1, art: art))
-        // Back to the editor's own art.
-        let plain = EditorOverlay.layers(for: editor, zoom: 1, cache: &cache)
-        XCTAssertEqual(flat(plain), EditorOverlay.vertices(for: editor, zoom: 1))
-    }
 }

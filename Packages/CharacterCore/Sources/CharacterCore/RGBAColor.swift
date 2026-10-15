@@ -1,7 +1,7 @@
 import Foundation
 
 /// An sRGB color with straight (non-premultiplied) alpha, components in 0...1.
-/// Serializes as `#RRGGBBAA`, the color format of the Character Studio file spec.
+/// Serializes as `#RRGGBBAA`, the file format's color format.
 public struct RGBAColor: Hashable, Sendable {
     public var r: Double, g: Double, b: Double, a: Double
 

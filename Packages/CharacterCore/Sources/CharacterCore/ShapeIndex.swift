@@ -7,7 +7,7 @@ import Foundation
 /// It answers exactly what the scans in `Drawing.hitTest` and `DrawingEditor` answer: the
 /// grid only narrows the candidates (conservatively), and every candidate then goes
 /// through the same tests as before. Entries are kept in `parts` order (the scans'
-/// order, which decides ties), and each carries its place in `drawStack` for hit tests.
+/// order, which decides ties), and each carries its place in the draw order for hit tests.
 /// It holds copies of the shapes, not indices into the drawing, so it stays usable for
 /// geometry queries after shapes are removed (see `removing`).
 ///
@@ -20,7 +20,7 @@ struct ShapeIndex: Sendable {
         var shape: VectorShape
         var controlBounds: Rect
         var hitBounds: Rect
-        /// The shape's position in `drawStack`, back to front.
+        /// The shape's position in the draw order, back to front.
         var drawRank: Int
         var clip: Clip
     }
@@ -52,12 +52,10 @@ struct ShapeIndex: Sendable {
         var ranks = drawing.parts.map { [Int](repeating: -1, count: $0.shapes.count) }
         var clips = drawing.parts.map { [Clip](repeating: .none, count: $0.shapes.count) }
         var rank = 0
-        for stackPart in drawing.drawStack {
+        for stackPart in drawing.parts {
             guard let p = partIndex[stackPart.id] else { rank += stackPart.shapes.count; continue }
             let original = drawing.parts[p]
-            // A split accessory's sides hold the shapes behind the owner or the rest.
-            let map: [Int] = stackPart.shapes.count == original.shapes.count ? Array(original.shapes.indices)
-                : original.shapes.indices.filter { original.shapes[$0].isBehindOwner == stackPart.shapes.first?.isBehindOwner }
+            let map = Array(original.shapes.indices)
             var groupBases: [Int: Int?] = [:]
             for (j, shape) in stackPart.shapes.enumerated() {
                 defer { rank += 1 }

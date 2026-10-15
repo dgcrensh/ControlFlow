@@ -20,79 +20,84 @@ private func assertClose(_ a: Vec2?, _ b: Vec2, tolerance: Double = 1e-6, file: 
     XCTAssertTrue(a.isApproximately(b, tolerance: tolerance), "\(a) is not \(b)", file: file, line: line)
 }
 
-final class CharacterFrameTests: XCTestCase {
-    func testShowingTheFrameFitsItToTheArtAndUndoes() {
+final class ViewportTests: XCTestCase {
+    func testANewDrawingHasAWideWhiteViewportThatIsTheExportArea() {
+        let d = Drawing()
+        XCTAssertEqual(d.viewport.bounds, rect(0, 0, 1920, 1080))
+        XCTAssertEqual(d.viewport.background, .white)
+        XCTAssertEqual(d.viewport.aspect, .wide)
+        XCTAssertEqual(d.exportArea(), rect(0, 0, 1920, 1080))
+    }
+
+    func testChangingTheAspectKeepsTheWidthAndTheOrigin() {
+        let v = Viewport()
+        XCTAssertEqual(v.withAspect(Viewport.Aspect.square.ratio).bounds, rect(0, 0, 1920, 1920))
+        XCTAssertEqual(v.withAspect(Viewport.Aspect.standard.ratio).bounds, rect(0, 0, 1920, 1440))
+        XCTAssertEqual(v.withAspect(Viewport.Aspect.portrait.ratio).aspect, .portrait)
+        XCTAssertEqual(v.withAspect(3).aspect, nil, "a custom ratio")
+        XCTAssertEqual(v.withAspect(0), v)
+        XCTAssertEqual(v.withAspect(.infinity), v)
+    }
+
+    func testViewportEditsUndoAndSizesStayPositive() {
         var d = Drawing()
         addRect(&d, "Body", rect(0, 0, 100, 200))
         var e = DrawingEditor(drawing: d)
-        e.setFrameShown(true)
-        XCTAssertEqual(e.drawing.frame?.bounds, rect(-16, -16, 132, 232))
-        XCTAssertEqual(e.drawing.frame?.ground, 200)
-        XCTAssertEqual(e.drawing.exportArea(), rect(-16, -16, 132, 232))
-
-        e.setFrameShown(false)
-        XCTAssertEqual(e.drawing.frame?.isHidden, true)
-        // A hidden frame leaves the export to the art.
-        XCTAssertEqual(e.drawing.exportArea(), rect(-8, -8, 116, 216))
-
+        e.setViewportAspect(Viewport.Aspect.square.ratio)
+        XCTAssertEqual(e.drawing.viewport.height, 1920)
+        XCTAssertEqual(e.drawing.parts[0].bounds, rect(0, 0, 100, 200), "no art moves")
         e.undo()
-        XCTAssertEqual(e.drawing.frame?.isHidden, false)
+        XCTAssertEqual(e.drawing.viewport.height, 1080)
+
+        e.updateViewport { $0.width = -5 }
+        XCTAssertEqual(e.drawing.viewport.width, Viewport.minimumSide)
         e.undo()
-        XCTAssertNil(e.drawing.frame)
+        e.updateViewport(coalescingKey: "width") { $0.width = 800 }
+        e.updateViewport(coalescingKey: "width") { $0.width = 640 }
+        XCTAssertEqual(e.drawing.viewport.width, 640)
+        e.undo()
+        XCTAssertEqual(e.drawing.viewport.width, 1920, "both width edits were one step")
+        XCTAssertFalse(e.canUndo)
+        // No change: no undo step.
+        e.updateViewport { $0.width = 1920 }
+        XCTAssertFalse(e.canUndo)
     }
 
-    func testANewFrameWithNoArtIsStandardSize() {
-        var e = DrawingEditor()
-        e.setFrameShown(true, center: Vec2(10, 20))
-        XCTAssertEqual(e.drawing.frame?.bounds, rect(-150, -220, 320, 480))
-        XCTAssertEqual(e.drawing.frame?.ground, 260)
-        XCTAssertEqual(e.drawing.exportArea(), rect(-150, -220, 320, 480))
+    func testTheVeilCoversTheViewOutsideTheViewport() {
+        let v = Viewport(width: 100, height: 50)
+        func area(_ triangles: [Vec2]) -> Double {
+            stride(from: 0, to: triangles.count, by: 3).reduce(0) { sum, i in
+                let a = triangles[i], b = triangles[i + 1], c = triangles[i + 2]
+                return sum + abs((b.x - a.x) * (c.y - a.y) - (c.x - a.x) * (b.y - a.y)) / 2
+            }
+        }
+        // Inside the viewport: nothing to dim.
+        XCTAssertEqual(v.veilTriangles(covering: rect(10, 10, 20, 20)), [])
+        // Round it on every side: four bands, the view's area minus the viewport's.
+        let around = v.veilTriangles(covering: rect(-50, -50, 200, 150))
+        XCTAssertEqual(around.count, 4 * 6)
+        XCTAssertEqual(area(around), 200 * 150 - 100 * 50, accuracy: 1e-9)
+        // Overlapping one corner.
+        let corner = v.veilTriangles(covering: rect(50, 25, 100, 100))
+        XCTAssertEqual(area(corner), 100 * 100 - 50 * 25, accuracy: 1e-9)
+        // Wholly outside: the whole view.
+        XCTAssertEqual(area(v.veilTriangles(covering: rect(200, 0, 30, 30))), 900, accuracy: 1e-9)
+        XCTAssertEqual(v.veilTriangles(covering: .null), [])
     }
 
-    func testFitFrameUsesTheSelectionAndSizesStayPositive() {
-        var d = Drawing()
-        let head = addRect(&d, "Head", rect(0, 0, 40, 40))
-        addRect(&d, "Body", rect(0, 50, 40, 100))
-        var e = DrawingEditor(drawing: d)
-        e.selection = .layer(head)
-        e.fitFrame()
-        XCTAssertEqual(e.drawing.frame?.bounds, rect(-16, -16, 72, 72))
-        XCTAssertEqual(e.drawing.frame?.ground, 40)
-        e.selection = .none
-        e.fitFrame()
-        XCTAssertEqual(e.drawing.frame?.bounds, rect(-16, -16, 72, 182))
-        XCTAssertEqual(e.drawing.frame?.ground, 150)
-
-        e.updateFrame { $0.bounds.maxPoint.x = $0.bounds.minPoint.x - 5 }
-        XCTAssertEqual(e.drawing.frame?.bounds.width, CharacterFrame.minimumSide)
-        e.updateFrame(coalescingKey: "ground") { $0.ground = 10 }
-        e.updateFrame(coalescingKey: "ground") { $0.ground = 12 }
-        XCTAssertEqual(e.drawing.frame?.ground, 12)
-        e.undo()
-        // Both ground edits were one step.
-        XCTAssertEqual(e.drawing.frame?.ground, 150)
-        e.removeFrame()
-        XCTAssertNil(e.drawing.frame)
-    }
-
-    func testTheFrameIsSavedAndRead() throws {
+    func testTheViewportIsSavedAndRead() throws {
         var d = Drawing()
         addRect(&d, "Body", rect(0, 0, 100, 200))
-        XCTAssertNil(CharacterFormat.encode(d)["frame"])
-        d.frame = CharacterFrame(bounds: rect(-10, -20, 120, 250), ground: 200)
-        var json = CharacterFormat.encode(d)
-        XCTAssertNil(json["frame"]?["hidden"])
-        XCTAssertEqual(try CharacterFormat.decode(json).drawing.frame, d.frame)
-        d.frame?.isHidden = true
-        json = CharacterFormat.encode(d)
-        XCTAssertEqual(json["frame"]?["hidden"], JSONValue.bool(true))
-        XCTAssertEqual(try CharacterFormat.decode(json).drawing.frame, d.frame)
+        d.viewport = Viewport(width: 1080, height: 1920, background: RGBAColor(r: 0, g: 0, b: 0))
+        let json = CharacterFormat.encode(d)
+        XCTAssertEqual(json["viewport"]?["width"], JSONValue.number(1080))
+        XCTAssertEqual(try CharacterFormat.decode(json).drawing.viewport, d.viewport)
 
-        let flat = try JSONValue(parsing: #"{ "formatVersion": "0.2.0", "frame": { "x": 0, "y": 0, "width": 0, "height": 10 } }"#)
+        // A file without one gets the default.
+        let bare = try JSONValue(parsing: #"{ "formatVersion": "0.3.0" }"#)
+        XCTAssertEqual(try CharacterFormat.decode(bare).drawing.viewport, Viewport())
+        let flat = try JSONValue(parsing: #"{ "formatVersion": "0.3.0", "viewport": { "width": 0, "height": 10 } }"#)
         XCTAssertThrowsError(try CharacterFormat.decode(flat))
-        // The ground defaults to the bottom of the box.
-        let bare = try JSONValue(parsing: #"{ "formatVersion": "0.2.0", "frame": { "x": 0, "y": 0, "width": 5, "height": 10 } }"#)
-        XCTAssertEqual(try CharacterFormat.decode(bare).drawing.frame?.ground, 10)
     }
 }
 
@@ -129,13 +134,12 @@ final class ViewOptionTests: XCTestCase {
         XCTAssertEqual(EditorOverlay.vertices(for: e, zoom: 1).count, plain.count)
     }
 
-    func testTheFrameIsDrawnUnlessHidden() {
+    func testTheViewportBorderIsDrawn() {
         var e = DrawingEditor()
-        let plain = EditorOverlay.vertices(for: e, zoom: 1)
-        e.setFrameShown(true)
-        XCTAssertGreaterThan(EditorOverlay.vertices(for: e, zoom: 1).count, plain.count)
-        e.setFrameShown(false)
-        XCTAssertEqual(EditorOverlay.vertices(for: e, zoom: 1).count, plain.count)
+        let wide = EditorOverlay.vertices(for: e, zoom: 1)
+        XCTAssertFalse(wide.isEmpty)
+        e.setViewportAspect(1)
+        XCTAssertNotEqual(EditorOverlay.vertices(for: e, zoom: 1), wide)
     }
 
     func testZoomToFitCentersTheRect() {
@@ -157,11 +161,12 @@ final class SVGExportTests: XCTestCase {
         let svg = try XCTUnwrap(SVGWriter.document(for: d))
         XCTAssertTrue(svg.hasPrefix("<?xml"))
         XCTAssertTrue(svg.contains("<title>Robo &amp; Co</title>"))
-        XCTAssertTrue(svg.contains("viewBox=\"-9 -9 28 38\""), svg)
+        XCTAssertTrue(svg.contains("viewBox=\"0 0 1920 1080\""), svg)
         XCTAssertTrue(svg.contains("<g id=\"Arm_L\" data-name=\"Arm L\">"), svg)
         XCTAssertTrue(svg.contains("d=\"M0 0L10 0L10 20L0 20Z\" fill=\"#FF0000\" stroke=\"#000000\" stroke-width=\"2\""), svg)
         XCTAssertFalse(svg.contains("Ghost"))
-        XCTAssertNil(SVGWriter.document(for: Drawing()))
+        XCTAssertNotNil(SVGWriter.document(for: Drawing()), "an empty viewport still exports")
+        XCTAssertNil(SVGWriter.document(for: d, area: rect(0, 0, 0, 10)))
     }
 
     func testNumbers() {

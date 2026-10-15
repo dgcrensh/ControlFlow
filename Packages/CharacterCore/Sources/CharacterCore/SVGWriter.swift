@@ -1,6 +1,6 @@
 import Foundation
 
-/// Writes a character's art as an SVG 1.1 document, one group per part, back to front,
+/// Writes the art as an SVG 1.1 document, one group per part, back to front,
 /// with a named group inside it for each group of shapes.
 ///
 /// Everything the canvas draws comes across: fills and gradients (in user space, so
@@ -8,31 +8,21 @@ import Foundation
 /// opacity, and clipping (as a mask made of the base shape). What SVG can't say
 /// directly is drawn the way the canvas draws it: an inside or outside outline is
 /// stroked twice as wide and clipped or masked by the path, and an outline whose width
-/// varies is written as the stroker's triangles in one filled path. Hidden art, bones,
-/// the frame and reference images are left out.
+/// varies is written as the stroker's triangles in one filled path. Hidden art and
+/// reference images are left out.
 public enum SVGWriter {
     /// How finely variable-width outlines are flattened, in points.
     public static let tolerance = 0.1
 
-    /// The SVG text. `area` is the part of the canvas the document shows (see
-    /// `Drawing.exportArea`); nil when there is nothing to export.
+    /// The SVG text. `area` is the part of the canvas the document shows; by default the
+    /// viewport (see `Drawing.exportArea`). Nil when the area is empty.
     public static func document(for drawing: Drawing, area: Rect? = nil) -> String? {
         guard let area = area ?? drawing.exportArea(), area.width > 0, area.height > 0 else { return nil }
         var writer = Writer(area: area)
         let names = Dictionary(zip(drawing.parts.map(\.id), CharacterFormat.slotNames(for: drawing.parts)),
                                uniquingKeysWith: { a, _ in a })
-        // An accessory's shapes drawn behind its owner get a group of their own there.
-        let stack = drawing.drawStack
-        var seen = Set<Int>(), split = Set<Int>()
-        for part in stack where !seen.insert(part.id).inserted { split.insert(part.id) }
-        for part in stack where !part.isHidden {
-            let name = names[part.id] ?? part.name
-            guard split.contains(part.id) else {
-                writer.part(part, name: name)
-                continue
-            }
-            guard !part.shapes.isEmpty else { continue }
-            writer.part(part, name: part.shapes.allSatisfy(\.isBehindOwner) ? name + " (behind)" : name)
+        for part in drawing.parts where !part.isHidden {
+            writer.part(part, name: names[part.id] ?? part.name)
         }
         return writer.finish(title: drawing.name)
     }

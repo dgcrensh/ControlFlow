@@ -348,7 +348,7 @@ final class HideLockIsolateTests: XCTestCase {
         XCTAssertTrue(e.drawing.shape(ref)!.isHidden)
         XCTAssertFalse(e.drawing.parts[0].isHidden)
         XCTAssertNil(e.drawing.hitTest(Vec2(250, 50), tolerance: 1))
-        XCTAssertTrue(LayerTree(drawing: e.drawing).bones[0].parts[0].hasHiddenOrLockedShapes)
+        XCTAssertTrue(LayerTree(drawing: e.drawing).parts.last!.hasHiddenOrLockedShapes)
     }
 
     func testHideAndLockRoundTripThroughTheFile() throws {

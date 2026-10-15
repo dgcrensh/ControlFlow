@@ -184,21 +184,9 @@ final class ArtPartCacheTests: XCTestCase {
         XCTAssertEqual(marks.count, 4)
     }
 
-    func testAnAccessoryDrawnBehindItsOwner() {
-        // Part 1 is an accessory of part 0; a shape behind its owner splits it in two.
-        var behind = base
-        behind.parts[1].shapes[0].isBehindOwner = true
-        XCTAssertEqual(behind.drawStack.filter { $0.id == base.parts[1].id }.count, 2)
-        assertWarmEqualsCold(from: base, to: behind)
-        assertWarmEqualsCold(from: behind, to: base)
-        var edited = behind
-        edited.parts[1].shapes[4].fill = RGBAColor(r: 0, g: 0, b: 1)
-        XCTAssertEqual(assertWarmEqualsCold(from: behind, to: edited).rebuilt, 1, "only the front half changed")
-    }
-
     func testANewTolerance() {
         let fine = Context(tolerance: 0.1)
-        XCTAssertEqual(assertWarmEqualsCold(from: base, to: base, fine).rebuilt, base.drawStack.count)
+        XCTAssertEqual(assertWarmEqualsCold(from: base, to: base, fine).rebuilt, base.parts.count)
     }
 
     /// A part built while a refine is under way holds shapes at the old tolerance. Once
@@ -218,7 +206,7 @@ final class ArtPartCacheTests: XCTestCase {
         _ = warm.tessellations.merge(refined, for: base)
         let builds = warm.partBuilds
         let after = warm.build(base, isolatedPart: nil, tolerance: 0.25, reusingOtherTolerances: true)
-        XCTAssertEqual(warm.partBuilds - builds, base.drawStack.count, "every mixed part is rebuilt")
+        XCTAssertEqual(warm.partBuilds - builds, base.parts.count, "every mixed part is rebuilt")
         XCTAssertEqual(warm.tessellationCount, tessellated, "from the merged tessellations")
 
         var cold = ArtBuilder()

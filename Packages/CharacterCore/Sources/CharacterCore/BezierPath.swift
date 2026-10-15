@@ -147,10 +147,6 @@ public struct PathPoint: Hashable, Sendable, Codable {
     /// False leaves that edge bare while the fill still covers it. Ignored on the
     /// last point of an open path, which has no segment leaving it.
     public var stroked = true
-    /// How much the part's second bone moves this point, from 0 (only the part's own
-    /// bone) to 1 (only the second bone). Unused on parts bound to one bone. The anchor
-    /// and both handles skin with it.
-    public var weight: Double = 0
 
     public init(_ position: Vec2, in inHandle: Vec2 = .zero, out outHandle: Vec2 = .zero, smooth: Bool = true) {
         self.position = position
@@ -355,7 +351,6 @@ public struct BezierPath: Hashable, Sendable, Codable {
         points[b].inHandle = r.p2 - r.p3
         var new = PathPoint(l.p3, in: l.p2 - l.p3, out: r.p1 - r.p0, smooth: true)
         new.width = points[a].width + (points[b].width - points[a].width) * t
-        new.weight = points[a].weight + (points[b].weight - points[a].weight) * t
         // Both halves of a bare segment stay bare.
         new.stroked = points[a].stroked
         points.insert(new, at: a + 1)

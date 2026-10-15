@@ -86,8 +86,7 @@ extension JSONValue {
         }
     }
 
-    /// One-line text for scalars, arrays of scalars or of arrays of scalars (such as a
-    /// point's `weights` pairs), and objects whose values are those. Nil for anything deeper.
+    /// One-line text for scalars, arrays of scalars or of arrays of scalars, and objects whose values are those. Nil for anything deeper.
     private var inlineText: String? {
         switch self {
         case .null, .bool, .number, .string:

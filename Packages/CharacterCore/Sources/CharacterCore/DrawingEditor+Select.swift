@@ -4,7 +4,7 @@ import Foundation
 /// first. Tapping a crumb that isn't the current level selects that level.
 public struct SelectionCrumb: Hashable, Sendable {
     public enum Level: Hashable, Sendable {
-        /// A whole part or accessory.
+        /// A whole part.
         case layer(Int)
         /// A whole group of a layer.
         case group(Int, inPart: Int)
@@ -29,8 +29,7 @@ public struct SelectionCrumb: Hashable, Sendable {
 extension DrawingEditor {
     // MARK: Breadcrumbs and select parent
 
-    /// The levels around the selection, outermost first: the owner part of an accessory,
-    /// the layer, the group when the selected shapes are all in one, then the shapes
+    /// The levels around the selection, outermost first: the layer, the group when the selected shapes are all in one, then the shapes
     /// themselves when they are less than that. With nothing selected inside an isolated
     /// layer or group, the levels of the isolation, none of them current. Empty when
     /// nothing is selected and nothing isolated, or for several layers, shapes in several
@@ -66,9 +65,6 @@ extension DrawingEditor {
         }
         guard let part = drawing.part(layer) else { return [] }
         var crumbs: [SelectionCrumb] = []
-        if let owner = part.accessoryOf.flatMap({ drawing.part($0) }) {
-            crumbs.append(SelectionCrumb(level: .layer(owner.id), title: owner.name, isCurrent: false))
-        }
         crumbs.append(SelectionCrumb(level: .layer(layer), title: part.name, isCurrent: current == .layer(layer)))
         if let group, let info = part.group(group) {
             let level = SelectionCrumb.Level.group(group, inPart: layer)
@@ -110,7 +106,7 @@ extension DrawingEditor {
     public var canSelectParent: Bool { parentCrumb != nil }
 
     /// Selects the level around the selection (Cmd-Up): from shapes to their group or
-    /// layer, from a group to its layer, from an accessory to its part.
+    /// layer, and from a group to its layer.
     public mutating func selectParent() {
         guard let level = parentCrumb else { return }
         selectCrumb(level)

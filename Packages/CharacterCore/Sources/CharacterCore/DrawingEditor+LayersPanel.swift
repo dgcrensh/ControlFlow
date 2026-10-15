@@ -47,21 +47,6 @@ extension DrawingEditor {
         }
     }
 
-    /// True when whole layers are selected that can move to another bone.
-    public var canMoveSelectedLayersToBone: Bool { !selectedLayers.isEmpty }
-
-    /// Puts the selected layers on bone `bone` (nil for the root), as one undo step. An
-    /// accessory goes with its owner, so a selected accessory moves its owner's family.
-    public mutating func moveSelectedLayers(toBone bone: Int?) {
-        if let bone { guard drawing.boneIndex(bone) != nil else { return } }
-        let owners = Set(selectedLayers.compactMap { id in drawing.part(id).map { $0.accessoryOf ?? id } })
-        guard !owners.isEmpty else { return }
-        cancelGesture()
-        let before = drawing
-        for p in drawing.parts.indices where owners.contains(drawing.parts[p].id) { drawing.parts[p].bone = bone }
-        commit(from: before)
-    }
-
     // MARK: Groups in the panel
 
     /// Selects group `id` of layer `part`: its editable shapes, as tapping it does.
@@ -104,14 +89,9 @@ extension DrawingEditor {
     // MARK: Dragging tree rows
 
     /// Moves the layer on tree row `source` to before row `destination` (offsets into
-    /// `rows`, as a list's drag reports them), as one undo step:
-    ///
-    /// - A part goes just in front of the next part below where it is dropped (or to the
-    ///   very back when dropped last), carrying its accessories along as reordering in
-    ///   the draw order does.
-    /// - An accessory moves among its own part's rows: just in front of the row below
-    ///   where it is dropped (another accessory or the part's own art), or just behind
-    ///   the row above when dropped last. Dropped outside its part's rows, it stays put.
+    /// `rows`, as a list's drag reports them), as one undo step. The layer goes just in
+    /// front of the next layer below where it is dropped, or to the very back when
+    /// dropped last.
     public mutating func moveTreeRow(from source: Int, to destination: Int, in rows: [LayerTree.Row]) {
         guard rows.indices.contains(source), rows[source].kind == .layer, destination >= 0, destination <= rows.count,
               destination != source, destination != source + 1, let moving = drawing.part(rows[source].layer.id)
@@ -119,86 +99,14 @@ extension DrawingEditor {
         var others = rows
         others.remove(at: source)
         let drop = destination > source ? destination - 1 : destination
-        let reordered: [Part]?
-        if moving.accessoryOf == nil {
-            let below = others[drop...].first { $0.kind == .layer && $0.depth == 0 }?.layer.id
-            reordered = partsMoving(moving.id, inFrontOf: below)
-        } else {
-            reordered = partsMovingAccessory(moving, to: drop, among: others)
-        }
-        guard let reordered, reordered.map(\.id) != drawing.parts.map(\.id) else { return }
+        let below = others[drop...].first { $0.kind == .layer }?.layer.id
+        var parts = drawing.parts.filter { $0.id != moving.id }
+        let slot = below.flatMap { id in parts.firstIndex { $0.id == id }.map { $0 + 1 } } ?? 0
+        parts.insert(moving, at: slot)
+        guard parts.map(\.id) != drawing.parts.map(\.id) else { return }
         cancelGesture()
         let before = drawing
-        drawing.parts = reordered
+        drawing.parts = parts
         commit(from: before)
-    }
-
-    // MARK: Dragging stack rows
-
-    /// Moves Stack view row `source` to before row `destination` (offsets into `rows`, as
-    /// a list's drag reports them), as one undo step:
-    ///
-    /// - A layer moves in the draw order as `setPartOrder(frontToBack:)` does, carrying a
-    ///   part's accessories along; behind-shape rows don't count as places.
-    /// - An accessory's behind shapes go just behind the layer on the row above where they
-    ///   are dropped (`setBehindLayer(of:to:)`), or behind the same layer as the behind
-    ///   shapes on that row. Dropped at the very top, they stay put.
-    public mutating func moveStackRow(from source: Int, to destination: Int, in rows: [LayerTree.StackRow]) {
-        guard rows.indices.contains(source), destination >= 0, destination <= rows.count,
-              destination != source, destination != source + 1 else { return }
-        var others = rows
-        let moving = others.remove(at: source)
-        let drop = destination > source ? destination - 1 : destination
-        guard moving.isBehind else {
-            var order = others.filter { !$0.isBehind }.map(\.layer.id)
-            order.insert(moving.layer.id, at: others[..<drop].filter { !$0.isBehind }.count)
-            setPartOrder(frontToBack: order)
-            return
-        }
-        guard drop > 0 else { return }
-        let above = others[drop - 1]
-        guard let target = above.isBehind ? above.behindLayer : above.layer.id else { return }
-        setBehindLayer(of: moving.layer.id, to: target)
-    }
-
-    /// The parts with part `id` (and its accessories) just in front of part `target`'s
-    /// run of art and adjoining accessories, or at the very back when `target` is nil.
-    private func partsMoving(_ id: Int, inFrontOf target: Int?) -> [Part]? {
-        let family = Set(drawing.family(of: id).map { drawing.parts[$0].id })
-        let others = drawing.parts.filter { !family.contains($0.id) }
-        var slot = 0
-        if let target {
-            guard let t = others.firstIndex(where: { $0.id == target }) else { return nil }
-            var top = t
-            while top + 1 < others.count, others[top + 1].accessoryOf == target { top += 1 }
-            slot = top + 1
-        }
-        return Drawing.placing(id, at: slot, among: others, from: drawing.parts)
-    }
-
-    /// The parts with `accessory` moved to tree position `drop` among `rows` (the tree
-    /// without its own row), or nil when that is outside its owner's rows.
-    private func partsMovingAccessory(_ accessory: Part, to drop: Int, among rows: [LayerTree.Row]) -> [Part]? {
-        guard let owner = accessory.accessoryOf,
-              let ownerRow = rows.firstIndex(where: { $0.kind == .layer && $0.depth == 0 && $0.layer.id == owner })
-        else { return nil }
-        let end = rows[(ownerRow + 1)...].firstIndex { $0.depth == 0 } ?? rows.count
-        guard drop > ownerRow, drop <= end else { return nil }
-        // Siblings are the owner's accessories and its own art, one level in.
-        func sibling(_ row: LayerTree.Row) -> Int? {
-            guard row.depth == 1 else { return nil }
-            return row.kind == .art ? owner : (row.kind == .layer ? row.layer.id : nil)
-        }
-        var parts = drawing.parts
-        parts.removeAll { $0.id == accessory.id }
-        if let below = rows[drop..<end].lazy.compactMap(sibling).first, let b = parts.firstIndex(where: { $0.id == below }) {
-            parts.insert(accessory, at: b + 1)
-        } else if let above = rows[(ownerRow + 1)..<drop].reversed().lazy.compactMap(sibling).first,
-                  let a = parts.firstIndex(where: { $0.id == above }) {
-            parts.insert(accessory, at: a)
-        } else {
-            return nil
-        }
-        return parts
     }
 }

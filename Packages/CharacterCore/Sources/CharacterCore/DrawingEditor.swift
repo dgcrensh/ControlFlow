@@ -16,30 +16,9 @@ public enum Tool: String, Hashable, Sendable, CaseIterable {
     case eraser
     /// Tap an outline to cut the path there.
     case scissors
-    /// Draw, chain and adjust the skeleton's bones (the rest pose).
-    case bone
 }
 
-/// What a Pencil drag does with the bone tool.
-public enum BoneToolMode: String, Hashable, Sendable, CaseIterable {
-    /// Drag from empty canvas for a new bone on the root, from a bone's tip to chain a
-    /// child, or from its head to branch a sibling. Dragging a bone's middle moves it.
-    case draw
-    /// Drag a bone's tip to turn and resize it (its children follow), its head to move
-    /// just that end, or its middle to move it with its children.
-    case adjust
-    /// Pose mode: drag a bone to turn it about its head (forward kinematics); its
-    /// children and the art bound to them follow. The rest pose never changes.
-    case pose
-    /// Pose mode: paint the selected two-bone part's weights with the Pencil, toward the
-    /// selected bone. The art shows posed while it is painted.
-    case weights
-
-    /// True for the Pose modes, false for the Setup modes (draw and adjust).
-    public var isPose: Bool { self == .pose || self == .weights }
-}
-
-/// Live symmetry: new strokes, shapes, pen paths and bones get a mirrored copy across a
+/// Live symmetry: new strokes, shapes and pen paths get a mirrored copy across a
 /// vertical axis.
 public struct SymmetrySettings: Hashable, Sendable {
     public var isEnabled: Bool
@@ -141,13 +120,7 @@ public struct DrawingEditor: Sendable {
             // Isolation ends when its part goes (deleted, erased, merged or undone away).
             if let id = isolatedPart, drawing.partIndex(id) == nil { isolatedPart = nil }
             if let id = isolatedGroup, isolatedPart.flatMap({ drawing.part($0)?.group(id) }) == nil { isolatedGroup = nil }
-            if let id = selectedBone, drawing.boneIndex(id) == nil { selectedBone = nil }
-            if let id = wigglePart, drawing.partIndex(id) == nil { wigglePart = nil }
-            // The wiggle's live transform has a new base (see `wiggleTransform(at:)`).
-            if wigglePart != nil { newWiggleID() }
             if let id = targetLayer, drawing.partIndex(id) == nil { targetLayer = nil }
-            if let id = activePose, drawing.poseIndex(id) == nil { activePose = nil }
-            if let id = selectedDeformer, drawing.deformerIndex(id) == nil { selectedDeformer = nil }
         }
     }
     /// Increments on every change to `drawing`, so renderers know to rebuild.
@@ -181,39 +154,11 @@ public struct DrawingEditor: Sendable {
     }
     /// The tool before the current one, for the Pencil's double tap.
     public private(set) var previousTool: Tool?
-    /// The bone the bone tool has selected. Bones are selected apart from the art, so a
-    /// part and a bone can be selected together (to attach one to the other).
-    public var selectedBone: Int? {
-        didSet { if let id = selectedBone, drawing.boneIndex(id) == nil { selectedBone = nil } }
-    }
-    /// The deformer picked in the layers panel. Its lattice (or pivot and angle handle)
-    /// shows on the canvas, and dragging a handle bends it in any tool but Pose mode (see
-    /// `DrawingEditor+Deformers`). Deformers are picked apart from the art, like bones.
-    public var selectedDeformer: Int? {
-        didSet { if let id = selectedDeformer, drawing.deformerIndex(id) == nil { selectedDeformer = nil } }
-    }
-    public var boneMode: BoneToolMode = .draw {
-        didSet { if boneMode != oldValue { cancelGesture() } }
-    }
-    /// The test pose last saved or applied, which the pose panel names and updates.
-    public internal(set) var activePose: Int?
-    /// The weight brush's radius in screen points (see `paintWeights(part:at:)`).
-    public var weightBrushRadius = DrawingEditor.defaultWeightBrushRadius
-    /// Draws the bones in every tool, not just the bone tool.
-    public var showsBones = false
     /// Draws every shape as a thin wireframe instead of its fill and outline.
     public var outlineView = false
     /// Dims everything but the selection (see `ghostFocus`).
     public var ghostsUnselected = false
-    /// Outlines the variant part's other variants faintly, to draw one against the others,
-    /// and while editing a keyform the keyed shapes at the neighbouring keys.
-    public var showsOnionSkin = false
     public var symmetry = SymmetrySettings()
-    /// The part rocking about its pivot for the wiggle preview, and when it started.
-    public internal(set) var wigglePart: Int?
-    var wiggleStart = 0.0
-    /// The id of the wiggle's live transform, new whenever its base drawing changes.
-    var wiggleID = 0
     /// What the shape tool draws, and its settings.
     public var shapeKind: ShapeKind = .rectangle
     public var shapeOptions = ShapeToolOptions()
@@ -245,9 +190,8 @@ public struct DrawingEditor: Sendable {
     /// When on, tapping or marquee-dragging adds to (or removes from) the selection.
     public var addToSelection = false
     public var snap = SnapSettings()
-    /// A short message for the user about an edit that was refused, such as moving a
-    /// keyed shape's points while two parameters are away from their defaults. The app
-    /// shows it and clears it with `clearNotice()`.
+    /// A short message for the user about an edit that was refused. The app shows it and
+    /// clears it with `clearNotice()`.
     public internal(set) var notice: String?
     public private(set) var undoStack = UndoStack<Drawing>()
 
@@ -274,7 +218,7 @@ public struct DrawingEditor: Sendable {
     public private(set) var closingEdge: (from: Vec2, to: Vec2)?
     /// The transform drag in progress, if it moves shapes. See `LiveTransform`.
     public private(set) var liveTransform: LiveTransform?
-    /// Numbers live transforms, the drags' and the wiggle's alike.
+    /// Numbers the drags' live transforms.
     var liveTransformCount = 0
     var gestureZoom = 1.0
     /// The last tap with a time, for spotting a double tap.
@@ -350,8 +294,6 @@ public struct DrawingEditor: Sendable {
         case penJoin(ShapeRef, PathEnd)
         /// A scissors press on an outline.
         case cut(ShapeRef, segment: Int, t: Double)
-        /// A bone-tool press on a bone. `newBone` is where a drag starts a new bone, when it does.
-        case bone(Int, BoneHandle, newBone: (head: Vec2, parent: Int?)?)
         case empty
     }
 
@@ -376,20 +318,6 @@ public struct DrawingEditor: Sendable {
         /// The shape tool's drag; `ref` is the shape once the drag has made one.
         case shapeDraw(start: Vec2, ref: ShapeRef?, before: Drawing)
         case erase(before: Drawing, last: Vec2)
-        /// Drawing a new bone (and its mirror image with symmetry on), made on the first move.
-        case boneDraw(head: Vec2, parent: Int?, bone: Int?, mirror: Int?, before: Drawing)
-        /// Adjusting bone `id`; `grab` keeps the grabbed point from jumping to the Pencil tip.
-        case boneEdit(BoneHandle, id: Int, before: Drawing, start: Vec2, grab: Vec2)
-        /// Turning bone `id` in Pose mode about its posed `head`, from the Pencil's angle
-        /// `startAngle` (radians) and the bone's turn `startRotation` (degrees) as it began.
-        case poseTurn(id: Int, before: Drawing, head: Vec2, startAngle: Double, startRotation: Double)
-        /// Dragging the IK target at bone `id`'s posed tip; `grab` keeps the tip from
-        /// jumping to the Pencil.
-        case ikDrag(id: Int, before: Drawing, grab: Vec2)
-        /// Painting part `part`'s weights.
-        case weightPaint(part: Int, before: Drawing, last: Vec2)
-        /// Dragging a handle of deformer `id`; `grab` keeps it from jumping to the Pencil tip.
-        case deformer(DeformerHandle, id: Int, before: Drawing, grab: Vec2)
         /// A drag that does nothing (for example, from a pen shortcut target).
         case idle
     }
@@ -399,16 +327,6 @@ public struct DrawingEditor: Sendable {
         hoverPoint = nil
         if tool.usesShapeIndex { refreshShapeIndex() }
         let px = 1 / gestureZoom
-        // The selected deformer's handles come first, in any tool.
-        if let hit = deformerHit(at: p, zoom: gestureZoom) {
-            if let refusal = deformerEditRefusal(hit.handle) {
-                notice = refusal
-                gesture = .idle
-            } else {
-                gesture = .deformer(hit.handle, id: hit.id, before: drawing, grab: hit.position - p)
-            }
-            return
-        }
         switch tool {
         case .pencil:
             gesture = nil
@@ -429,26 +347,6 @@ public struct DrawingEditor: Sendable {
             } else {
                 gesture = .pending(.empty, start: p)
             }
-        case .bone:
-            if boneMode == .weights, let part = weightPaintPart {
-                gesture = .weightPaint(part: part, before: drawing, last: p)
-                paintWeights(part: part, at: p)
-            } else if let hit = boneHit(at: p, zoom: gestureZoom) {
-                gesture = .pending(.bone(hit.bone, hit.handle, newBone: newBoneStart(on: hit.bone, hit.handle)), start: p)
-            } else {
-                gesture = .pending(.empty, start: p)
-            }
-        }
-    }
-
-    /// Where a draw-mode drag from a bone's joint starts a new bone: from its tip a child
-    /// (chaining), from its head a sibling (branching). Nil from the middle, or in adjust mode.
-    private func newBoneStart(on id: Int, _ handle: BoneHandle) -> (head: Vec2, parent: Int?)? {
-        guard boneMode == .draw, let bone = drawing.bone(id) else { return nil }
-        switch handle {
-        case .tail: return (bone.tail, bone.id)
-        case .head: return (bone.head, bone.parent)
-        case .body: return nil
         }
     }
 
@@ -470,15 +368,9 @@ public struct DrawingEditor: Sendable {
             return hitShape(at: p, tolerance: reach)
         case .scissors:
             return hoverCut?.ref
-        case .pencil, .pen, .shape, .bone:
+        case .pencil, .pen, .shape:
             return nil
         }
-    }
-
-    /// The bone, and which part of it, a bone-tool touch at the hover point would grab.
-    public var hoverBone: (bone: Int, handle: BoneHandle)? {
-        guard tool == .bone, gesture == nil, boneMode != .weights, let p = hoverPoint else { return nil }
-        return boneHit(at: p, zoom: hoverZoom)
     }
 
     /// Where the scissors would cut if the Pencil touched down at the hover point.
@@ -579,33 +471,6 @@ public struct DrawingEditor: Sendable {
             eraseAlong(last, p)
             self.gesture = .erase(before: before, last: p)
 
-        case .boneDraw(let head, let parent, let bone, let mirror, let before):
-            let made = drawBone(head: head, parent: parent, bone: bone, mirror: mirror, to: p)
-            self.gesture = .boneDraw(head: head, parent: parent, bone: made.bone, mirror: made.mirror, before: before)
-
-        case .boneEdit(let handle, let id, let before, let start, let grab):
-            drawing = editedBones(before, handle, id: id, start: start, to: p, grab: grab)
-
-        case .poseTurn(let id, _, let head, let startAngle, let startRotation):
-            turnBone(id, head: head, startAngle: startAngle, startRotation: startRotation, to: p)
-
-        case .ikDrag(let id, _, let grab):
-            drawing.pose = drawing.solvingIK(drawing.pose, bone: id, target: p + grab)
-            followPose()
-
-        case .weightPaint(let part, let before, let last):
-            // A dab every half radius along the stroke, however fast or slow it moves.
-            let step = max(weightBrushRadius / gestureZoom / 2, 1e-6)
-            let distance = p.distance(to: last)
-            let n = Int(distance / step)
-            guard n > 0 else { return }
-            let direction = (p - last) / distance
-            for i in 1...n { paintWeights(part: part, at: last + direction * (step * Double(i))) }
-            self.gesture = .weightPaint(part: part, before: before, last: last + direction * (step * Double(n)))
-
-        case .deformer(let handle, let id, let before, let grab):
-            dragDeformer(handle, of: id, before: before, to: p + grab)
-
         case .idle:
             break
         }
@@ -633,26 +498,18 @@ public struct DrawingEditor: Sendable {
         case .shapeDraw(_, let ref, let before):
             if let ref { addMirrorImage(of: ref) }
             commit(from: before)
-        case .boneDraw(_, _, let bone, let mirror, let before):
-            if let bone { finishDrawnBone(bone, mirror: mirror) }
-            commit(from: before)
         case .anchors(let ref, _, let before, _):
-            // A shape with keyforms is closed the same way at every key.
             if closing != nil, let idx = drawing.indices(ref),
-               let closed = changingPoints(of: drawing.parts[idx.0].shapes[idx.1], refusal: Self.closeRefusal,
-                                           { $0.closedWithStraightEdge() }) {
-                drawing.parts[idx.0].shapes[idx.1] = closed
+               let closed = drawing.parts[idx.0].shapes[idx.1].path.closedWithStraightEdge() {
+                drawing.parts[idx.0].shapes[idx.1].path = closed
             }
             commit(from: undoBase ?? before)
             undoBase = nil
         case .transform(_, _, let before, _), .pivot(_, let before, _, _),
              .segment(_, _, _, let before, _), .handle(_, _, _, let before, _), .penPlace(_, _, let before, _),
-             .erase(let before, _), .boneEdit(_, _, let before, _, _), .poseTurn(_, let before, _, _, _),
-             .ikDrag(_, let before, _), .weightPaint(_, let before, _):
+             .erase(let before, _):
             commit(from: undoBase ?? before)
             undoBase = nil
-        case .deformer(_, _, let before, _):
-            commit(from: before, folding: false)
         case .marquee(_, let additive, let baseShapes, let baseAnchors):
             if let rect = marquee { finishMarquee(rect, additive: additive, baseShapes: baseShapes, baseAnchors: baseAnchors) }
             marquee = nil
@@ -673,9 +530,7 @@ public struct DrawingEditor: Sendable {
         defer { drawing.nextID = max(drawing.nextID, nextID) }
         switch gesture {
         case .transform(_, _, let before, _), .anchors(_, _, let before, _), .segment(_, _, _, let before, _),
-             .handle(_, _, _, let before, _), .shapeDraw(_, _, let before), .erase(let before, _),
-             .boneDraw(_, _, _, _, let before), .boneEdit(_, _, let before, _, _), .poseTurn(_, let before, _, _, _),
-             .ikDrag(_, let before, _), .weightPaint(_, let before, _), .deformer(_, _, let before, _):
+             .handle(_, _, _, let before, _), .shapeDraw(_, _, let before), .erase(let before, _):
             drawing = undoBase ?? before
             undoBase = nil
             validateSelection()
@@ -690,22 +545,6 @@ public struct DrawingEditor: Sendable {
         case .pending, .idle:
             break
         }
-    }
-
-    // MARK: Pose
-
-    /// A Pose-mode drag on bone `id` from `start`: it turns about its head as posed, or
-    /// from the tip of a bone with an IK chain, moves the IK target.
-    private func beginPoseTurn(_ id: Int, handle: BoneHandle, from start: Vec2) -> Gesture {
-        guard let bone = drawing.bone(id) else { return .idle }
-        if handle == .tail, drawing.ikChain(id) != nil {
-            let tip = drawing.posedSkeleton(drawing.pose).posed(bone).tail
-            return .ikDrag(id: id, before: drawing, grab: tip - start)
-        }
-        let head = drawing.posedSkeleton(drawing.pose).posed(bone).head
-        let d = start - head
-        return .poseTurn(id: id, before: drawing, head: head, startAngle: atan2(d.y, d.x),
-                         startRotation: drawing.pose.rotation(of: id))
     }
 
     // MARK: Select
@@ -1063,11 +902,6 @@ public struct DrawingEditor: Sendable {
     private mutating func joinOrContinuePen(_ ref: ShapeRef, _ end: PathEnd) {
         guard let other = drawing.shape(ref), !other.path.closed else { return }
         guard let pen = penPath else {
-            // Its new anchors would have nowhere to be in its keyforms.
-            if other.isKeyed {
-                notice = Self.penExtendRefusal
-                return
-            }
             penPath = PenPath(part: ref.part, shape: ref.shape, fromStart: end == .start, createdPart: false)
             let saved = style
             selection = .shape(part: ref.part, shape: ref.shape)
@@ -1125,24 +959,7 @@ public struct DrawingEditor: Sendable {
             return .segment(ref, index: segment, t: t, before: drawing, start: start)
         case .cut:
             return .idle
-        case .bone(let id, let handle, let newBone):
-            if let newBone {
-                return .boneDraw(head: newBone.head, parent: newBone.parent, bone: nil, mirror: nil, before: drawing)
-            }
-            guard let bone = drawing.bone(id) else { return .idle }
-            selectedBone = id
-            // Pose mode turns bones; the weight brush never moves them.
-            if boneMode == .pose { return beginPoseTurn(id, handle: handle, from: start) }
-            if boneMode == .weights { return .idle }
-            // In draw mode only the middle is pressed here (joints start new bones): it moves the bone.
-            let edit: BoneHandle = boneMode == .draw ? .body : handle
-            let grabbed = edit == .tail ? bone.tail : bone.head
-            return .boneEdit(edit, id: id, before: drawing, start: start, grab: grabbed - start)
         case .empty:
-            if tool == .bone {
-                guard boneMode == .draw else { return .idle }
-                return .boneDraw(head: boneSnapped(start, excluding: []), parent: nil, bone: nil, mirror: nil, before: drawing)
-            }
             guard tool == .select || tool == .directSelect else { return .idle }
             marquee = Rect(from: start, to: start)
             return .marquee(start: start, additive: addToSelection,
@@ -1197,15 +1014,7 @@ public struct DrawingEditor: Sendable {
                 guard insertsOnTap else { break }
                 narrowSelection(to: ref)
                 var inserted: Int?
-                // A shape with keyforms gets the new anchor at the same place on its curve at every key.
-                if let shape = drawing.shape(ref),
-                   let changed = changingPoints(of: shape, refusal: Drawing.topologyMessage, { path -> BezierPath? in
-                       var p = path
-                       inserted = p.insertPoint(segment: segment, t: t)
-                       return p
-                   }) {
-                    editShape(ref) { $0 = changed }
-                }
+                editShape(ref) { inserted = $0.path.insertPoint(segment: segment, t: t) }
                 selectedAnchors = inserted.map { [$0] } ?? []
             case .shape(let ref):
                 if addToSelection {
@@ -1215,7 +1024,7 @@ public struct DrawingEditor: Sendable {
                 }
             case .handle:
                 break
-            case .empty, .selectionBody, .pivot, .penFinish, .penClose, .penJoin, .cut, .bone:
+            case .empty, .selectionBody, .pivot, .penFinish, .penClose, .penJoin, .cut:
                 if !selectedAnchors.isEmpty {
                     selectedAnchors = []
                 } else if !addToSelection {
@@ -1224,12 +1033,6 @@ public struct DrawingEditor: Sendable {
             }
         case .scissors:
             if case .cut(let ref, let segment, let t) = pending { cut(ref, segment: segment, t: t) }
-        case .bone:
-            if case .bone(let id, _, _) = pending {
-                selectedBone = id
-            } else {
-                selectedBone = nil
-            }
         case .shape, .eraser:
             break
         }
@@ -1445,19 +1248,14 @@ public struct DrawingEditor: Sendable {
 
     public mutating func deleteSelection() {
         cancelGesture()
-        if tool == .bone, let id = selectedBone {
-            deleteBone(id)
-            return
-        }
         let before = drawing
         switch selection {
         case .none:
             return
         case .layer(let id):
-            // A part's accessories go with it.
-            drawing.parts.removeAll { $0.id == id || $0.accessoryOf == id }
+            drawing.parts.removeAll { $0.id == id }
         case .layers(let ids):
-            drawing.parts.removeAll { ids.contains($0.id) || $0.accessoryOf.map(ids.contains) == true }
+            drawing.parts.removeAll { ids.contains($0.id) }
         case .shape(let pid, let sid):
             guard drawing.indices(part: pid, shape: sid) != nil else { return }
             removeShape(ShapeRef(part: pid, shape: sid))
@@ -1594,7 +1392,7 @@ public struct DrawingEditor: Sendable {
         commit(from: before)
     }
 
-    public mutating func renameCharacter(_ name: String) {
+    public mutating func renamePresentation(_ name: String) {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         let before = drawing
@@ -1667,16 +1465,20 @@ public struct DrawingEditor: Sendable {
     mutating func removeShape(_ ref: ShapeRef) {
         guard let idx = drawing.indices(ref) else { return }
         drawing.parts[idx.0].shapes.remove(at: idx.1)
-        // A part with other variants or skins keeps them when its shown art is gone.
-        if drawing.parts[idx.0].shapes.isEmpty, !drawing.parts[idx.0].holdsOtherArt { drawing.parts.remove(at: idx.0) }
+        if drawing.parts[idx.0].shapes.isEmpty { drawing.parts.remove(at: idx.0) }
     }
 
     /// Joins shape `b` onto shape `a` at the given ends, keeping `a`'s style and
     /// removing `b`. Does not record undo.
     mutating func joinShapes(_ a: ShapeRef, _ aEnd: PathEnd, _ b: ShapeRef, _ bEnd: PathEnd) -> Bool {
         guard a != b, let ai = drawing.indices(a), let shapeB = drawing.shape(b),
-              let joined = joinedShape(drawing.parts[ai.0].shapes[ai.1], aEnd, shapeB, bEnd) else { return false }
-        drawing.parts[ai.0].shapes[ai.1] = joined
+              let pa = drawing.parts[ai.0].shapes[ai.1].path.endPoint(aEnd), let pb = shapeB.path.endPoint(bEnd)
+        else { return false }
+        // Ends that touch merge into one anchor.
+        let tolerance = pa.distance(to: pb) <= 1e-6 ? Double.infinity : -1
+        guard let joined = BezierPath.joined(drawing.parts[ai.0].shapes[ai.1].path, aEnd, shapeB.path, bEnd,
+                                             mergeWithin: tolerance) else { return false }
+        drawing.parts[ai.0].shapes[ai.1].path = joined
         removeShape(b)
         return true
     }
@@ -1689,36 +1491,12 @@ public struct DrawingEditor: Sendable {
         commit(from: before, key: "\(key)-\(selection)")
     }
 
-    /// Records the change since `before` as an undo step. `folding` is false for
-    /// commands that rewrite keyforms themselves (the parameter commands), whose changes
-    /// must not be folded into a keyform again.
-    mutating func commit(from before: Drawing, key: String? = nil, folding: Bool = true) {
+    /// Records the change since `before` as an undo step.
+    mutating func commit(from before: Drawing, key: String? = nil) {
         // Any other edit ends a run of color changes.
         if key == nil { recentColorSource = nil }
         // Groups stay whole: no empty groups, and each one's shapes together.
         if !drawing.groupsAreValid { drawing.repairGroups() }
-        // Accessories stay on their owners' bones, and owners exist.
-        if !drawing.accessoriesAreValid { drawing.repairAccessories() }
-        // Every part shows the art its skin and variant call for.
-        if !drawing.skinsAreValid { drawing.repairSkins() }
-        // Switches name parameters and layers that exist, within the parameters' ranges.
-        if !drawing.switchesAreValid { drawing.repairSwitches() }
-        // Parameter drivers name bones that exist, and driven parameters follow the pose.
-        if !drawing.parameterDriversAreValid { drawing.repairParameterDrivers() }
-        if drawing.pose != before.pose { followPose() }
-        // Edits land in the rest drawing or in the keyform the parameters are at, and are
-        // refused when they can't.
-        if folding, !drawing.parameters.isEmpty || !before.parameters.isEmpty,
-           let refusal = drawing.foldKeyformEdits(since: before) {
-            let nextID = drawing.nextID
-            drawing = before
-            drawing.nextID = max(before.nextID, nextID)
-            validateSelection()
-            notice = refusal
-            return
-        }
-        // Deformed art shows what its keyforms and deformers give now.
-        drawing.showDeformedArt()
         guard before != drawing else { return }
         undoStack.record(before, coalescingKey: key)
     }
@@ -1727,20 +1505,9 @@ public struct DrawingEditor: Sendable {
     /// session, so the app can key cached pixels and textures by id.
     private mutating func restore(_ state: Drawing) {
         let nextID = drawing.nextID
-        // The parameter sliders stay where they are: the state is shown at their values.
-        // Bone-driven ones follow the state's pose instead, when it or their driver changes.
-        var values = drawing.parameterValues
-        let posed = drawing.pose != state.pose
-        let drivers = Dictionary(drawing.parameters.map { ($0.id, $0.driver) }, uniquingKeysWith: { a, _ in a })
         drawing = state
-        for (id, value) in drawing.drivenValues(for: drawing.pose)
-        where posed || drivers[id] != drawing.parameter(id)?.driver {
-            values[id] = value
-        }
-        drawing.setParameterValues(values)
         drawing.nextID = max(state.nextID, nextID)
         validateSelection()
-        if let id = selectedBone, drawing.boneIndex(id) == nil { selectedBone = nil }
         if let pen = penPath, drawing.indices(part: pen.part, shape: pen.shape) == nil { penPath = nil }
     }
 

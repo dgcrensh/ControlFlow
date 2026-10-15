@@ -17,7 +17,6 @@ final class PerformanceTests: XCTestCase {
         XCTAssertEqual(drawing.parts.count, StressDrawing.parts)
         XCTAssertEqual(drawing.shapeCount, StressDrawing.parts * StressDrawing.shapesPerPart)
         XCTAssertTrue(drawing.groupsAreValid)
-        XCTAssertTrue(drawing.accessoriesAreValid)
         XCTAssertTrue(drawing.parts.contains { $0.shapes.contains(where: \.isClipped) })
         XCTAssertTrue(drawing.parts.contains { $0.shapes.contains { $0.stroke?.dash.isEmpty == false } })
         XCTAssertNotNil(drawing.hitTest(StressDrawing.busyPoint(), tolerance: 4))
@@ -148,17 +147,12 @@ final class PerformanceTests: XCTestCase {
         read(editor.canArrange)
         read(editor.canHideOrLockSelection)
         read(editor.canMoveSelectedShapes)
-        read(editor.accessoryOwnerForSelection)
         read(editor.hasHiddenArt)
         read(editor.hasLockedArt)
-        read(editor.canAttachSelectedPart)
-        read(editor.canSnapPivotToBone)
         read(editor.canDuplicateMirrored)
-        read(editor.canAddJointCap)
-        read(editor.wiggleCandidate)
         read(editor.drawing.exportArea())
         read(LayerTree(drawing: editor.drawing))
-        XCTAssertEqual(n, 23)
+        XCTAssertEqual(n, 18)
     }
 
     // MARK: Live stroke
@@ -328,138 +322,8 @@ final class PerformanceTests: XCTestCase {
         }
     }
 
-    // MARK: Posing
-
-    /// The stress drawing rigged for posing: a root bone, and for each part an upper bone
-    /// on it ending at the part's middle and a lower bone from there. Each part is on its
-    /// upper bone; with `bending`, it is bound to the lower bone too, with auto weights.
-    static func rigged(_ drawing: Drawing, bending: Bool) -> (drawing: Drawing, root: Int, lower: [Int]) {
-        var d = drawing
-        let root = Bone(id: d.makeID(), name: "Root", head: Vec2(0, -200), tail: Vec2(0, -100))
-        d.bones = [root]
-        var lower: [Int] = []
-        for p in d.parts.indices {
-            let center = d.parts[p].pivot
-            let upper = Bone(id: d.makeID(), name: "Upper \(p)", parent: root.id, head: center - Vec2(80, 0), tail: center)
-            let below = Bone(id: d.makeID(), name: "Lower \(p)", parent: upper.id, head: center, tail: center + Vec2(80, 0))
-            d.bones += [upper, below]
-            d.parts[p].bone = upper.id
-            lower.append(below.id)
-            if bending {
-                d.parts[p].secondBone = below.id
-                d.parts[p] = AutoWeights.assign(d.parts[p], in: d)
-            }
-        }
-        return (d, root.id, lower)
-    }
-
-    /// 20 frames of a pose drag, each drawn as the renderer draws Pose mode: the posed
-    /// art, then a build of it from a builder warm with the rest pose. `turn` sets the
-    /// pose for frame `i`.
-    private func measurePosing(_ drawing: Drawing, turn: @escaping (Int) -> Pose) {
-        var warm = ArtBuilder()
-        _ = warm.build(drawing, isolatedPart: nil, tolerance: 0.5)
-        measure {
-            var builder = warm
-            for i in 1...20 {
-                let art = drawing.posedArt(turn(i))
-                _ = builder.build(art.drawing, isolatedPart: nil, tolerance: 0.5)
-            }
-        }
-    }
-
-    /// Turning the root bone moves every part rigidly: GPU transforms, no re-tessellation.
-    func testPoseRigidParts() {
-        let rig = Self.rigged(drawing, bending: false)
-        measurePosing(rig.drawing) { Pose(rotations: [rig.root: Double($0)]) }
-    }
-
-    /// Turning every lower bone bends every part, so every shape is skinned and
-    /// re-tessellated each frame: the worst case for weighted posing.
-    func testPoseEveryPartBending() {
-        let rig = Self.rigged(drawing, bending: true)
-        measurePosing(rig.drawing) { i in Pose(rotations: Dictionary(uniqueKeysWithValues: rig.lower.map { ($0, Double(i)) })) }
-    }
-
-    /// Only the skinning of the bending case, without tessellating.
-    func testPoseSkinningEveryPart() {
-        let rig = Self.rigged(drawing, bending: true)
-        let pose = Pose(rotations: Dictionary(uniqueKeysWithValues: rig.lower.map { ($0, 20.0) }))
-        measure {
-            for _ in 0..<20 { _ = rig.drawing.posedArt(pose) }
-        }
-    }
-
-    // MARK: Keyforms
-
-    /// The stress drawing with every shape keyed on one parameter, `Blink` (0 to 1,
-    /// default 0): at 1 each point (anchor and handles) moves by a few points, scaled
-    /// toward the middle of its part, as a squash would.
-    static func keyed(_ drawing: Drawing) -> (drawing: Drawing, parameter: Int) {
-        var d = drawing
-        let parameter = Parameter(id: d.makeID(), name: "Blink", minimum: 0, maximum: 1, defaultValue: 0)
-        d.parameters = [parameter]
-        for p in d.parts.indices {
-            let center = d.parts[p].pivot
-            let squash = Affine2D.translation(center) * Affine2D.scale(x: 1, y: 0.7) * Affine2D.translation(-center)
-            for s in d.parts[p].shapes.indices {
-                let shape = d.parts[p].shapes[s]
-                var squashed = shape.path
-                squashed.apply(squash)
-                d.parts[p].shapes[s].setKeyforms(restPath: shape.path, restOpacity: shape.opacity,
-                                                 keys: [(parameter.id, 1, squashed, shape.opacity)])
-            }
-        }
-        return (d, parameter.id)
-    }
-
-    /// 20 frames of a slider drag over a drawing where every shape is keyed: each frame sets
-    /// the value and rebuilds the art from a builder warm with the rest drawing, so every
-    /// shape is re-evaluated and re-tessellated. The worst case for the parameter slider.
-    func testKeyformSliderEveryShapeKeyed() {
-        let (keyed, parameter) = Self.keyed(drawing)
-        var warm = ArtBuilder()
-        _ = warm.build(keyed, isolatedPart: nil, tolerance: 0.5)
-        measure {
-            var builder = warm
-            var d = keyed
-            for i in 1...20 {
-                d.setValue(Double(i) / 20, of: parameter)
-                _ = builder.build(d, isolatedPart: nil, tolerance: 0.5)
-            }
-        }
-    }
-
-    /// Only the evaluation of the slider drag above, without tessellating.
-    func testKeyformEvaluationEveryShapeKeyed() {
-        let (keyed, parameter) = Self.keyed(drawing)
-        measure {
-            var d = keyed
-            for i in 1...20 { d.setValue(Double(i) / 20, of: parameter) }
-        }
-    }
-
-    /// `testUndoGrowthOver500Commits` with every shape keyed and the slider at a keyform,
-    /// so each commit folds its edit into the keyform and each snapshot carries the
-    /// keyforms: what keyforms add to undo.
-    func testUndoGrowthOver500CommitsWithKeyforms() {
-        let (keyed, parameter) = Self.keyed(drawing)
-        var start = DrawingEditor(drawing: keyed)
-        start.drawing.setValue(1, of: parameter)
-        let refs = drawing.parts.flatMap { part in part.shapes.map { ShapeRef(part: part.id, shape: $0.id) } }
-        measure {
-            var editor = start
-            for i in 0..<500 {
-                let ref = refs[i * 7 % refs.count]
-                editor.selection = .shape(part: ref.part, shape: ref.shape)
-                editor.nudge(by: Vec2(1, 0))
-            }
-            XCTAssertEqual(editor.undoStack.undoStates.count, min(500, UndoStack<Drawing>.defaultLimit))
-        }
-    }
-
-    /// The same 500 nudges with no parameters, for comparison with the test above.
-    func testUndoGrowthOver500NudgesWithoutKeyforms() {
+    /// 500 nudges, each its own undo step.
+    func testUndoGrowthOver500Nudges() {
         let start = DrawingEditor(drawing: drawing)
         let refs = drawing.parts.flatMap { part in part.shapes.map { ShapeRef(part: part.id, shape: $0.id) } }
         measure {
