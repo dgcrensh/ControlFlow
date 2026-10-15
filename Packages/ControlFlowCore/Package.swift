@@ -10,7 +10,8 @@ let package = Package(
         .library(name: "ControlFlowCore", targets: ["ControlFlowCore"]),
     ],
     targets: [
-        .target(name: "ControlFlowCore"),
+        // Player/ is the HTML export's page and player, copied into each export.
+        .target(name: "ControlFlowCore", resources: [.copy("Player")]),
         .testTarget(name: "ControlFlowCoreTests", dependencies: ["ControlFlowCore"]),
     ]
 )

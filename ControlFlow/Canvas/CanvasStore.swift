@@ -736,6 +736,12 @@ final class CanvasStore {
         Signposts.canvas.withIntervalSignpost("SVG export") { session.editor.svgDocument().map { Data($0.utf8) } }
     }
 
+    /// The presentation as a static web page's files (see `HTMLExport`), or nil if the
+    /// player is missing from the build.
+    func htmlFiles() -> [String: Data]? {
+        Signposts.canvas.withIntervalSignpost("HTML export") { try? HTMLExport.files(for: session.editor.presentation) }
+    }
+
     /// The viewport as a PNG at `scale` pixels per point: its background and the art.
     func pngData(scale: Double) -> Data? {
         let drawing = session.editor.drawing

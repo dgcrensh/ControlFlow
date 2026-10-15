@@ -185,10 +185,18 @@ private struct ToolBar: View {
     /// Offers the exported file to save in Files.
     private func export(_ data: Data?, type: UTType) {
         guard let data else { return }
-        let name = ui.presentationName.isEmpty ? "Untitled" : ui.presentationName
-        exportFile = ExportFile(data: data, type: type, name: name)
+        exportFile = ExportFile(data: data, type: type, name: exportName)
         exporting = true
     }
+
+    /// Offers the web page's folder to save in Files.
+    private func exportWebPage() {
+        guard let files = store.htmlFiles() else { return }
+        exportFile = ExportFile(folder: files, name: exportName)
+        exporting = true
+    }
+
+    private var exportName: String { ui.presentationName.isEmpty ? "Untitled" : ui.presentationName }
 
     private var strip: some View {
         VStack(spacing: 12) {
@@ -217,6 +225,7 @@ private struct ToolBar: View {
                         Button("\(scale)x") { export(store.pngData(scale: Double(scale)), type: .png) }
                     }
                 }
+                Button("Export Web Page", systemImage: "globe") { exportWebPage() }
                 Divider()
                 Button("Clear Canvas", systemImage: "trash", role: .destructive) { store.clear() }
             } label: {

@@ -38,7 +38,7 @@ In this order:
 - A **group** is `{ "id", "name" }`, with `"clipped": true` on a clipped group and an optional `transform`. A shape's `group` holds its group's id; a group's shapes are next to each other in `shapes`, and groups don't nest.
 - A **shape** is `{ "id", "group", "closed", "fill", "fillGlobal", "gradient", "stroke", "opacity", "clipped", "transform", "points" }`, with only `id`, `closed` and `points` always written.
 - A **vertex** is `{ "id", "p", "in", "out" }`: the anchor `p` and its handles as offsets from `p`. Optional keys: `w` (the outline width there as a multiple of the stroke width, blended along each segment; default 1), `smooth: false` on corner points, `symmetric: true` on points whose handles are kept equally long, and `stroked: false` to leave the segment to the next point without an outline (the fill still covers it).
-- **Editor hints**: layers, groups and shapes may carry `hidden: true` and `locked: true`, written only when set. Like names, they are the same at every keyframe, and players draw hidden art as usual.
+- **Editor hints**: layers, groups and shapes may carry `hidden: true` and `locked: true`, written only when set. Like names, they are the same at every keyframe. The app's presentation mode and the HTML export leave hidden art out, as the SVG export does.
 
 ### Appearance
 
@@ -99,11 +99,11 @@ A shape whose vertices change lines them up by id:
 
 ## Test vectors
 
-The files in [`vectors/`](vectors) check another player (such as the planned HTML export) against the app. Each holds a `document`, a path to a `presentation.json` relative to the file or the document itself, and `samples`: `{ "sequence", "time", "scene" }`, the scene expected `time` seconds into playing that sequence (by index) from the end of the one before it. Times are each sequence's start, a quarter, half and three quarters into each transition, and each keyframe's end.
+The files in [`vectors/`](vectors) check another player (such as the HTML export's) against the app. Each holds a `document`, a path to a `presentation.json` relative to the file or the document itself, and `samples`: `{ "sequence", "time", "scene" }`, the scene expected `time` seconds into playing that sequence (by index) from the end of the one before it. Times are each sequence's start, a quarter, half and three quarters into each transition, and each keyframe's end.
 
 A `scene` is `{ "background", "globalColors", "layers" }`, in the file's own JSON for those objects, with numbers rounded to 4 decimals; compare numbers to within 0.0002. Layers include objects that are leaving.
 
 - `demo.json` plays the example.
 - `morph.json` exercises each rule: points born and dying on segments and at an open path's end, turns past 360, a flip, an overshooting curve and color, a cut, a shape created and one deleted, a new draw order and a shape that can't be merged.
 
-`TestVectorTests` checks them; run it with `UPDATE_VECTORS=1` to write them afresh after an intended change to these rules.
+`TestVectorTests` checks them; run it with `UPDATE_VECTORS=1` to write them afresh after an intended change to these rules. `test_player.js` (`node Schema/test_player.js`, Node 18 or later) checks the HTML export's player against the same samples, so a change to these rules goes into `Packages/ControlFlowCore/Sources/ControlFlowCore/Player/player.js` too.

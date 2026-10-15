@@ -21,6 +21,8 @@ schema() {
     .venv/bin/pip install --quiet "jsonschema>=4.18"
   fi
   .venv/bin/python Schema/validate.py
+  echo "==> HTML export player"
+  node Schema/test_player.js
 }
 
 app() {
