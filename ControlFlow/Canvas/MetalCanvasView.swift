@@ -431,7 +431,7 @@ final class TextInputView: UITextView {
 
 // MARK: Scribble
 
-extension MetalCanvasView: UIIndirectScribbleInteractionDelegate {
+extension MetalCanvasView: @preconcurrency UIIndirectScribbleInteractionDelegate {
     typealias ElementIdentifier = ShapeRef
 
     /// The text tool's texts on screen: writing into one with the Pencil types into it.

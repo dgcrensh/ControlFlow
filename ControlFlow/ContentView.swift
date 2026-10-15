@@ -709,9 +709,9 @@ private struct TextStyleControls: View {
                 .labelStyle(.iconOnly)
             }
             Picker("Alignment", selection: Binding(get: { style.align }, set: { store.setTextAlignment($0) })) {
-                Image(systemName: "text.alignleft").accessibilityLabel("Left").tag(TextAlignment.left)
-                Image(systemName: "text.aligncenter").accessibilityLabel("Center").tag(TextAlignment.center)
-                Image(systemName: "text.alignright").accessibilityLabel("Right").tag(TextAlignment.right)
+                Image(systemName: "text.alignleft").accessibilityLabel("Left").tag(ControlFlowCore.TextAlignment.left)
+                Image(systemName: "text.aligncenter").accessibilityLabel("Center").tag(ControlFlowCore.TextAlignment.center)
+                Image(systemName: "text.alignright").accessibilityLabel("Right").tag(ControlFlowCore.TextAlignment.right)
             }
             .pickerStyle(.segmented)
             .frame(width: 130)

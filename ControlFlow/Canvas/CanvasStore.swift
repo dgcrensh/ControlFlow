@@ -467,7 +467,7 @@ final class CanvasStore {
     func setTextSize(_ size: Double) { edit { $0.editor.setTextSize(size) } }
     func setTextWeight(_ weight: Int) { edit { $0.editor.setTextWeight(weight) } }
     func setTextItalic(_ italic: Bool) { edit { $0.editor.setTextItalic(italic) } }
-    func setTextAlignment(_ align: TextAlignment) { edit { $0.editor.setTextAlignment(align) } }
+    func setTextAlignment(_ align: ControlFlowCore.TextAlignment) { edit { $0.editor.setTextAlignment(align) } }
     func setTextLineHeight(_ lineHeight: Double) { edit { $0.editor.setTextLineHeight(lineHeight) } }
     func setTextTracking(_ tracking: Double) { edit { $0.editor.setTextTracking(tracking) } }
     func convertTextToOutlines() { edit { $0.editor.convertTextToOutlines() } }
