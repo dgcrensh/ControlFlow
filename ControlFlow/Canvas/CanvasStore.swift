@@ -48,6 +48,8 @@ final class EditorUIState {
     /// The width multiple at the selected anchors, while point-editing.
     var anchorWidth: Double?
     var pressureWidth = false
+    /// Two fingers don't rotate the canvas, which keeps the viewport lined up with the screen.
+    var rotationLocked = true
     var presentationName = ""
     /// The layers, then reference images.
     var layers = LayerTree(drawing: Drawing())
@@ -179,6 +181,7 @@ final class CanvasStore {
         #endif
         session = CanvasSession(options: options, presentation: package.presentation)
         session.editor.pressureWidth = UserDefaults.standard.bool(forKey: Self.pressureWidthKey)
+        session.setRotationLocked(Self.storedRotationLock, viewSize: .zero, animated: false)
         referenceData = package.referenceImages
         document = package
         handOff = DocumentHandOff(revision: session.editor.revision)
@@ -267,6 +270,9 @@ final class CanvasStore {
     func refresh(continuous: Bool = false) {
         let interval = Signposts.canvas.beginInterval("Refresh")
         defer { Signposts.canvas.endInterval("Refresh", interval) }
+        // A viewport turned between landscape and portrait turns the locked camera with it.
+        session.keepRotationLocked(viewSize: Vec2(viewSize))
+        update(\.rotationLocked, session.isRotationLocked)
         let editor = session.editor
         let revisionChanged = editor.revision != refreshedRevision
         if revisionChanged {
@@ -791,6 +797,34 @@ final class CanvasStore {
     func resetView() {
         session.resetView(viewSize: Vec2(viewSize))
         onChange?()
+    }
+
+    // MARK: Rotation lock
+
+    private static let rotationLockKey = "rotationLocked"
+
+    /// The rotation lock, remembered on this iPad. On until turned off.
+    static var storedRotationLock: Bool {
+        UserDefaults.standard.object(forKey: rotationLockKey) as? Bool ?? true
+    }
+
+    /// Turning it on snaps the canvas to the nearest allowed quarter turn, animated.
+    func setRotationLocked(_ on: Bool) {
+        UserDefaults.standard.set(on, forKey: Self.rotationLockKey)
+        session.setRotationLocked(on, viewSize: Vec2(viewSize))
+        update(\.rotationLocked, session.isRotationLocked)
+        onChange?()
+    }
+
+    /// The canvas view changed size, turning with the iPad by `interfaceTurn` degrees.
+    func viewDidResize(from old: CGSize, to new: CGSize, interfaceTurn: Double?) {
+        session.viewDidResize(from: Vec2(old), to: Vec2(new), interfaceTurn: interfaceTurn)
+        onChange?()
+    }
+
+    /// Moves the lock's snapping turn on to display time `time`.
+    func stepTurn(at time: Double) {
+        session.stepTurn(at: time)
     }
 
     // MARK: Style

@@ -54,7 +54,8 @@ public enum TapCommand: Hashable, Sendable {
 /// - The Pencil draws, selects and edits, depending on the tool. Only one Pencil
 ///   touch is tracked at a time.
 /// - One finger never draws or edits.
-/// - Two fingers pan, pinch-zoom and rotate the canvas together.
+/// - Two fingers pan, pinch-zoom and rotate the canvas together. With the rotation
+///   locked they pan and zoom only (see `RotationLock`).
 /// - While the Pencil is down, finger touches are ignored, so a resting palm cannot
 ///   move the canvas mid-stroke. Large-radius touches are ignored as palms anyway.
 /// - Fingers beyond the first two do not navigate.
@@ -83,6 +84,13 @@ public struct CanvasSession: Sendable {
     private var navigation: (ids: (Int, Int), gesture: TwoFingerNavigation)?
     private var nextStrokeID = 1
 
+    /// The rotation lock (see `RotationLock`): two fingers don't rotate, and the camera
+    /// keeps the quarter turn that lines the viewport up with the view. Set it with
+    /// `setRotationLocked(_:viewSize:animated:)`.
+    public private(set) var isRotationLocked = false
+    /// The camera snapping to the locked rotation, while it animates.
+    public private(set) var turn: CameraTurn?
+
     public init(options: InputOptions = InputOptions(), drawing: Drawing = Drawing()) {
         self.init(options: options, presentation: Presentation(opening: drawing))
     }
@@ -93,6 +101,7 @@ public struct CanvasSession: Sendable {
     }
 
     public var isNavigating: Bool { navigation != nil }
+    public var isTurning: Bool { turn != nil }
     public var isDrawing: Bool { liveStroke != nil }
 
     /// The live stroke's mirror image while symmetry is on, for drawing as a preview.
@@ -108,20 +117,111 @@ public struct CanvasSession: Sendable {
 
     // MARK: Commands
 
+    /// 100% zoom with the world origin at the center of the view, unrotated, or at the
+    /// locked rotation while the lock is on.
     public mutating func resetView(viewSize: Vec2) {
+        turn = nil
         camera = .centered(in: viewSize)
+        if isRotationLocked {
+            camera = camera.turned(to: lockedRotation(viewSize: viewSize), about: viewSize / 2)
+        }
         navigation = nil
     }
 
-    /// Fits `rect` (world space) in the view, unrotated and centered, with `margin`
-    /// screen points to spare on the tighter side.
+    /// Fits `rect` (world space) in the view, centered, with `margin` screen points to
+    /// spare on the tighter side: unrotated, or at the locked rotation while the lock is on.
     public mutating func zoom(toFit rect: Rect, viewSize: Vec2, margin: Double = 48) {
-        guard !rect.isNull, viewSize.x > 2 * margin, viewSize.y > 2 * margin else { return }
-        let fit = min((viewSize.x - 2 * margin) / max(rect.width, 1), (viewSize.y - 2 * margin) / max(rect.height, 1))
-        let zoom = min(max(fit, CanvasCamera.zoomRange.lowerBound), CanvasCamera.zoomRange.upperBound)
-        camera = CanvasCamera(worldToScreen: Affine2D.translation(viewSize / 2) * Affine2D.scale(zoom) *
-            Affine2D.translation(-rect.center))
+        let rotation = isRotationLocked ? lockedRotation(viewSize: viewSize) : 0
+        zoom(toFit: rect, viewSize: viewSize, rotation: rotation, margin: margin)
+    }
+
+    /// Fits `rect` (world space) in the view at rotation `rotation` (degrees clockwise).
+    public mutating func zoom(toFit rect: Rect, viewSize: Vec2, rotation: Double, margin: Double = 48) {
+        guard let fitted = CanvasCamera.fitting(rect, in: viewSize, rotation: rotation, margin: margin) else { return }
+        turn = nil
+        camera = fitted
         navigation = nil
+    }
+
+    // MARK: Rotation lock
+
+    /// The rotation the lock wants for a view of `viewSize` points, in degrees clockwise.
+    public func lockedRotation(viewSize: Vec2, interfaceTurn: Double? = nil) -> Double {
+        let current = turn?.end.rotationDegrees ?? camera.rotationDegrees
+        return RotationLock.targetRotation(viewport: editor.drawing.viewport, viewSize: viewSize,
+                                           current: current, interfaceTurn: interfaceTurn)
+    }
+
+    /// Turns the lock on or off. Turning it on snaps the rotation to the locked one about
+    /// the view's center, keeping the zoom: over `RotationLock.snapDuration` when
+    /// `animated` (the app then calls `stepTurn(at:)` each frame), else at once.
+    /// Turning it off leaves the camera where it is.
+    public mutating func setRotationLocked(_ locked: Bool, viewSize: Vec2, animated: Bool = true) {
+        guard locked != isRotationLocked else { return }
+        isRotationLocked = locked
+        if let nav = navigation {
+            // A navigation in progress carries on under the new rule from where it is.
+            let p0 = fingers[nav.ids.0] ?? nav.gesture.start0, p1 = fingers[nav.ids.1] ?? nav.gesture.start1
+            navigation = (nav.ids, TwoFingerNavigation(startCamera: camera, start0: p0, start1: p1, rotates: !locked))
+        }
+        if locked {
+            keepRotationLocked(viewSize: viewSize, animated: animated)
+        } else {
+            finishTurn()
+        }
+    }
+
+    /// Snaps the camera back to the locked rotation if it has left it, for instance after
+    /// the viewport changed between landscape and portrait. Does nothing while the lock
+    /// is off, a turn is animating or two fingers are navigating.
+    public mutating func keepRotationLocked(viewSize: Vec2, animated: Bool = true) {
+        guard isRotationLocked, turn == nil, navigation == nil, viewSize.x > 0, viewSize.y > 0 else { return }
+        let target = lockedRotation(viewSize: viewSize)
+        guard abs(RotationLock.signedDegrees(target - camera.rotationDegrees)) > 1e-6 else { return }
+        let center = viewSize / 2
+        if animated {
+            turn = CameraTurn(start: camera, to: target, about: center)
+        } else {
+            camera = camera.turned(to: target, about: center)
+        }
+    }
+
+    /// Moves an animated turn on to display time `time`. Returns true while it runs.
+    @discardableResult
+    public mutating func stepTurn(at time: Double) -> Bool {
+        guard var current = turn else { return false }
+        let (camera, finished) = current.camera(at: time)
+        self.camera = camera
+        turn = finished ? nil : current
+        return !finished
+    }
+
+    /// Jumps an animated turn to its end.
+    private mutating func finishTurn() {
+        if let turn { camera = turn.end }
+        turn = nil
+    }
+
+    /// The canvas view changed size from `old` to `new` points: keeps the world point at
+    /// the center of the view at the center, and, with the lock on, turns the camera about
+    /// it to the locked rotation, keeping the zoom. `interfaceTurn` is how far the
+    /// interface turned on the glass (`DisplayOrientation.turn(from:to:)`), when the
+    /// resize came from turning the iPad.
+    public mutating func viewDidResize(from old: Vec2, to new: Vec2, interfaceTurn: Double? = nil) {
+        guard old != new, new.x > 0, new.y > 0 else { return }
+        finishTurn()
+        let center = new / 2
+        let world = camera.toWorld(old / 2)
+        camera = CanvasCamera(worldToScreen: Affine2D.translation(center - camera.toScreen(world)) * camera.worldToScreen)
+        if isRotationLocked {
+            camera = camera.turned(to: lockedRotation(viewSize: new, interfaceTurn: interfaceTurn), about: center)
+        }
+        if let nav = navigation {
+            // Restart the gesture from the new camera so it doesn't jump back.
+            navigation = (nav.ids, TwoFingerNavigation(startCamera: camera, start0: fingers[nav.ids.0] ?? nav.gesture.start0,
+                                                       start1: fingers[nav.ids.1] ?? nav.gesture.start1,
+                                                       rotates: !isRotationLocked))
+        }
     }
 
     /// Removes all art. Undoable.
@@ -308,7 +408,10 @@ public struct CanvasSession: Sendable {
     private mutating func startNavigation() {
         let a = fingerOrder[0], b = fingerOrder[1]
         guard let p0 = fingers[a], let p1 = fingers[b] else { return }
-        navigation = ((a, b), TwoFingerNavigation(startCamera: camera, start0: p0, start1: p1))
+        // Fingers take over from a turn still animating, from where it ends.
+        finishTurn()
+        navigation = ((a, b), TwoFingerNavigation(startCamera: camera, start0: p0, start1: p1,
+                                                  rotates: !isRotationLocked))
     }
 
     private mutating func beginPencil(touch: Int, at location: Vec2, pressure: Double? = nil) {
@@ -371,7 +474,7 @@ public struct CanvasSession: Sendable {
         if tap == nil {
             // A tap starts only from a canvas with no fingers down.
             guard fingerOrder.isEmpty else { return }
-            tap = FingerTap(startTime: time, startCamera: camera)
+            tap = FingerTap(startTime: time, startCamera: turn?.end ?? camera)
         }
         tap!.starts[id] = location
         tap!.down.insert(id)
