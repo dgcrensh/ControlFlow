@@ -1,12 +1,12 @@
 # CLAUDE.md
 
-ControlFlow is a personal iPad app (SwiftUI + Metal) for drawing keyframed vector presentations with the Apple Pencil, forked from Character Studio. See [docs/plans/animation-app.md](docs/plans/animation-app.md) for the plan, [README.md](README.md) for the user-facing behaviour of each milestone and [Schema/README.md](Schema/README.md) for the file format (an interim subset of Character Studio's until format 1.0).
+ControlFlow is a personal iPad app (SwiftUI + Metal) for drawing keyframed vector presentations with the Apple Pencil, forked from Character Studio. See [docs/plans/animation-app.md](docs/plans/animation-app.md) for the plan, [README.md](README.md) for the user-facing behaviour of each milestone and [Schema/README.md](Schema/README.md) for the file format.
 
 ## Layout
 
-- `ControlFlow/`: the app target. SwiftUI shell, panels, the Metal canvas (`Canvas/`), and the `.charstudio` document (`Document/`). Shaders are compiled at launch from `Canvas/ShaderSource.swift`; there are no `.metal` files.
-- `Packages/ControlFlowCore/`: a UI-free Swift package with everything that can be tested: geometry, camera, curve fitting, Bézier paths, the `Drawing` model and its `Viewport`, `DrawingEditor` and its commands, undo, tessellation, touch routing, snapping and the JSON file format. The app links it as a local package.
-- `Schema/`: JSON Schema for `character.json`, the `robo.charstudio` example and `validate.py`.
+- `ControlFlow/`: the app target. SwiftUI shell, panels, the Metal canvas (`Canvas/`), and the `.controlflow` document (`Document/`). Shaders are compiled at launch from `Canvas/ShaderSource.swift`; there are no `.metal` files.
+- `Packages/ControlFlowCore/`: a UI-free Swift package with everything that can be tested: geometry, camera, curve fitting, Bézier paths, the `Drawing` model and its `Viewport`, `DrawingEditor` and its commands, undo, keyframes (`Presentation`, `Timeline`) and their interpolation, tessellation, touch routing, snapping and the JSON file format. The app links it as a local package.
+- `Schema/`: JSON Schema for `presentation.json`, the `demo.controlflow` example, the interpolation test vectors and `validate.py`.
 - `.github/workflows/ci.yml`: the three CI jobs. `scripts/check.sh` runs the same three locally.
 - `docs/plans/`: planning docs (feature reviews, implementation plans). This is the source of truth for plans: read the relevant one before starting planned work, and update it in the same PR when a plan changes or an item ships. Don't keep plans only outside the repo.
 
@@ -14,8 +14,8 @@ ControlFlow is a personal iPad app (SwiftUI + Metal) for drawing keyframed vecto
 
 - **Logic goes in ControlFlowCore, not the app.** ControlFlowCore imports only Foundation (no UIKit, SwiftUI, Metal or CoreGraphics) because CI tests it on Linux. Editing behaviour, input routing and file I/O belong there with unit tests; the app should stay a thin layer that forwards touches and draws what the core produces.
 - **Swift 6 language mode** with strict concurrency, in both the package and the app.
-- **The file format is stable byte for byte.** `JSONValue` keeps key order and numbers are written with at most 4 decimals, and `DocumentTests` re-saves `Schema/examples/robo.charstudio` and expects identical bytes. When changing the format: update `character-0.3.schema.json`, `Schema/README.md` and the example together, keep new keys optional so older files still read, and add a step to `CharacterFormat.migrations` if the version changes.
-- **Undo** stores `Drawing` snapshots (copy-on-write); one user gesture or command is one undo step. Ids are never reused within a session.
+- **The file format is stable byte for byte.** `JSONValue` keeps key order and numbers are written with at most 4 decimals, and `DocumentTests` re-saves `Schema/examples/demo.controlflow` and expects identical bytes. When changing the format: update `controlflow-1.0.schema.json`, `Schema/README.md` and the example together, keep new keys optional so older files still read, and add a step to `PresentationFormat.migrations` if the version changes. When changing how transitions play, regenerate `Schema/vectors` with `UPDATE_VECTORS=1 swift test --filter TestVectorTests` and say why in the PR.
+- **Undo** stores `EditorSnapshot`s (the whole `Presentation`, copy-on-write, and the current keyframe); one user gesture or command is one undo step. Ids are never reused within a session.
 - Coordinates are points with y down; angles are degrees, clockwise on screen; colors are `#RRGGBBAA`.
 - When a change alters what the user sees, update the matching milestone notes in `README.md`.
 

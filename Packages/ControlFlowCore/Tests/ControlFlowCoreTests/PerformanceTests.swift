@@ -231,7 +231,7 @@ final class PerformanceTests: XCTestCase {
     func testEncodeAndFormat() {
         let drawing = drawing
         measure {
-            _ = CharacterFormat.encode(drawing).formatted()
+            _ = PresentationFormat.encode(drawing).formatted()
         }
     }
 
@@ -318,7 +318,7 @@ final class PerformanceTests: XCTestCase {
                 editor.selection = .shape(layer: ref.layer, shape: ref.shape)
                 editor.setFill(RGBAColor(r: Double(i) / 500, g: 0.5, b: 0.5))
             }
-            XCTAssertEqual(editor.undoStack.undoStates.count, min(500, UndoStack<Drawing>.defaultLimit))
+            XCTAssertEqual(editor.undoStack.undoStates.count, min(500, UndoStack<EditorSnapshot>.defaultLimit))
         }
     }
 
@@ -333,7 +333,7 @@ final class PerformanceTests: XCTestCase {
                 editor.selection = .shape(layer: ref.layer, shape: ref.shape)
                 editor.nudge(by: Vec2(1, 0))
             }
-            XCTAssertEqual(editor.undoStack.undoStates.count, min(500, UndoStack<Drawing>.defaultLimit))
+            XCTAssertEqual(editor.undoStack.undoStates.count, min(500, UndoStack<EditorSnapshot>.defaultLimit))
         }
     }
 

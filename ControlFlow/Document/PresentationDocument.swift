@@ -3,35 +3,35 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 extension UTType {
-    /// A `.charstudio` folder package. Declared in Config/Info.plist.
-    static let characterStudio = UTType(exportedAs: "com.dgcrensh.characterstudio.character")
+    /// A `.controlflow` folder package. Declared in Config/Info.plist.
+    static let controlFlowPresentation = UTType(exportedAs: "com.dgcrensh.controlflow.presentation")
 }
 
-/// A document saved in the Files app as a `.charstudio` package holding
-/// `character.json`, `thumbnail.png` and any reference images. This is the interim
-/// save; the presentation format replaces it in milestone 3.
+/// A document saved in the Files app as a `.controlflow` package holding
+/// `presentation.json`, `thumbnail.png` and any reference images (see Schema/README.md).
 ///
-/// The editor works on its own `CanvasStore` and copies the drawing back into the
+/// The editor works on its own `CanvasStore` and copies the presentation back into the
 /// document after each finished change, which marks it edited so it autosaves.
-struct CharacterDocument: FileDocument {
-    static var readableContentTypes: [UTType] { [.characterStudio] }
+struct PresentationDocument: FileDocument {
+    static var readableContentTypes: [UTType] { [.controlFlowPresentation] }
 
-    var package: CharacterPackage
+    var package: PresentationPackage
 
-    init(package: CharacterPackage = CharacterPackage()) {
+    init(package: PresentationPackage = PresentationPackage()) {
         self.package = package
     }
 
     init(configuration: ReadConfiguration) throws {
         let interval = Signposts.canvas.beginInterval("Open")
         defer { Signposts.canvas.endInterval("Open", interval) }
-        package = try CharacterPackage(files: Self.files(in: configuration.file))
+        package = try PresentationPackage(files: Self.files(in: configuration.file))
     }
 
     /// Runs off the main thread, for each autosave.
     func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
         let interval = Signposts.canvas.beginInterval("Save")
         defer { Signposts.canvas.endInterval("Save", interval) }
+        // The opening state stands for the presentation.
         let thumbnail = ThumbnailRenderer.png(for: package.drawing)
         return Self.folder(from: package.files(thumbnail: thumbnail))
     }

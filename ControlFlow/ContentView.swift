@@ -4,13 +4,13 @@ import UniformTypeIdentifiers
 
 /// The editor for one document.
 struct ContentView: View {
-    @Binding var document: CharacterDocument
+    @Binding var document: PresentationDocument
     @State private var store: CanvasStore
     @Environment(\.scenePhase) private var scenePhase
     /// The canvas width, which bounds the context bar in the navigation bar.
     @State private var canvasWidth: CGFloat = 0
 
-    init(document: Binding<CharacterDocument>) {
+    init(document: Binding<PresentationDocument>) {
         _document = document
         _store = State(initialValue: CanvasStore(package: document.wrappedValue.package))
     }
@@ -879,5 +879,5 @@ private struct ToastView: View {
 }
 
 #Preview {
-    ContentView(document: .constant(CharacterDocument()))
+    ContentView(document: .constant(PresentationDocument()))
 }

@@ -21,7 +21,7 @@ public enum SVGWriter {
         // Exported as drawn: the transforms go into the points.
         let drawing = drawing.world
         var writer = Writer(area: area)
-        let names = Dictionary(zip(drawing.layers.map(\.id), CharacterFormat.slotNames(for: drawing.layers)),
+        let names = Dictionary(zip(drawing.layers.map(\.id), PresentationFormat.uniqueNames(drawing.layers.map(\.name), fallback: "Layer")),
                                uniquingKeysWith: { a, _ in a })
         for layer in drawing.layers where !layer.isHidden {
             writer.layer(layer, name: names[layer.id] ?? layer.name)

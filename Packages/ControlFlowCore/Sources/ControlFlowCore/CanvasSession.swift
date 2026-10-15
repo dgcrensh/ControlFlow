@@ -84,8 +84,12 @@ public struct CanvasSession: Sendable {
     private var nextStrokeID = 1
 
     public init(options: InputOptions = InputOptions(), drawing: Drawing = Drawing()) {
+        self.init(options: options, presentation: Presentation(opening: drawing))
+    }
+
+    public init(options: InputOptions = InputOptions(), presentation: Presentation) {
         self.options = options
-        self.editor = DrawingEditor(drawing: drawing)
+        self.editor = DrawingEditor(presentation: presentation)
     }
 
     public var isNavigating: Bool { navigation != nil }

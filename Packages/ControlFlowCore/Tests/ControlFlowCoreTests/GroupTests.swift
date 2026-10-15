@@ -331,39 +331,38 @@ final class GroupTests: XCTestCase {
         var e = editor(squares: 3)
         e.selection = .covering(refs(e, [1, 2]))
         e.groupSelection(name: "Bangs")
-        let text = CharacterFormat.encode(e.drawing).formatted()
-        XCTAssertTrue(text.contains("\"groups\": ["))
-        XCTAssertTrue(text.contains("{ \"id\": 1, \"name\": \"Bangs\" }"))
-        XCTAssertTrue(text.contains("\"closed\": true,\n              \"group\": 1,"))
-        let back = try CharacterFormat.decode(JSONValue(parsing: text)).drawing
+        let text = PresentationFormat.encode(e.drawing).formatted()
+        let group = e.drawing.layers[0].groups[0].id
+        XCTAssertTrue(text.contains("\"groups\": [\n") && text.contains("{ \"id\": \(group), \"name\": \"Bangs\" }"))
+        XCTAssertTrue(text.contains("\"group\": \(group),"))
+        let back = try PresentationFormat.decode(JSONValue(parsing: text)).drawing
         XCTAssertEqual(back.layers[0].groups.map(\.name), ["Bangs"])
         XCTAssertEqual(back.layers[0].members(ofGroup: back.layers[0].groups[0].id), [1, 2])
-        XCTAssertEqual(CharacterFormat.encode(back).formatted(), text)
+        XCTAssertEqual(PresentationFormat.encode(back).formatted(), text)
 
         // A layer without groups writes neither key.
-        let plain = CharacterFormat.encode(editor(squares: 2).drawing).formatted()
+        let plain = PresentationFormat.encode(editor(squares: 2).drawing).formatted()
         XCTAssertFalse(plain.contains("group"))
     }
 
     func testReadsSplitAndUnknownGroups() throws {
         let file = try JSONValue(parsing: """
         {
-          "formatVersion": "0.2.0",
-          "slots": [{ "id": "a", "bone": "root", "attachment": "a" }],
-          "skins": { "default": { "a": { "a": {
-            "type": "vector",
+          "formatVersion": "1.0",
+          "opening": { "layers": [{
+            "id": 1, "name": "a",
             "groups": [{ "id": 7, "name": "Eye" }, { "id": 8 }, { "id": 9, "name": "Unused" }],
             "shapes": [
-              { "closed": true, "group": 7, "points": [{ "p": [0, 0] }] },
-              { "closed": true, "points": [{ "p": [1, 0] }] },
-              { "closed": true, "group": 7, "points": [{ "p": [2, 0] }] },
-              { "closed": true, "group": 8, "points": [{ "p": [3, 0] }] },
-              { "closed": true, "group": 42, "points": [{ "p": [4, 0] }] }
+              { "id": 2, "closed": true, "group": 7, "points": [{ "id": 12, "p": [0, 0] }] },
+              { "id": 3, "closed": true, "points": [{ "id": 13, "p": [1, 0] }] },
+              { "id": 4, "closed": true, "group": 7, "points": [{ "id": 14, "p": [2, 0] }] },
+              { "id": 5, "closed": true, "group": 8, "points": [{ "id": 15, "p": [3, 0] }] },
+              { "id": 6, "closed": true, "group": 42, "points": [{ "id": 16, "p": [4, 0] }] }
             ]
-          } } } }
+          }] }
         }
         """)
-        let d = try CharacterFormat.decode(file).drawing
+        let d = try PresentationFormat.decode(file).drawing
         XCTAssertTrue(d.groupsAreValid)
         let layer = d.layers[0]
         XCTAssertEqual(layer.groupRuns.map(\.group.name), ["Eye", "Eye", "Group"])
@@ -374,16 +373,13 @@ final class GroupTests: XCTestCase {
     func testRepeatedGroupIDsAreDamage() throws {
         let file = try JSONValue(parsing: """
         {
-          "formatVersion": "0.2.0",
-          "slots": [{ "id": "a", "bone": "root", "attachment": "a" }],
-          "skins": { "default": { "a": { "a": {
-            "type": "vector", "groups": [{ "id": 1 }, { "id": 1 }], "shapes": []
-          } } } }
+          "formatVersion": "1.0",
+          "opening": { "layers": [{ "id": 1, "name": "a", "groups": [{ "id": 2 }, { "id": 2 }], "shapes": [] }] }
         }
         """)
-        XCTAssertThrowsError(try CharacterFormat.decode(file)) { error in
-            XCTAssertEqual(error as? CharacterFileError,
-                           .invalid(path: "skins.default.a.a.groups[1].id", problem: "repeats group 1"))
+        XCTAssertThrowsError(try PresentationFormat.decode(file)) { error in
+            XCTAssertEqual(error as? PresentationFileError,
+                           .invalid(path: "opening.layers[0].groups[1].id", problem: "repeats id 2"))
         }
     }
 

@@ -6,14 +6,14 @@
 	<array>
 		<dict>
 			<key>CFBundleTypeName</key>
-			<string>ControlFlow Document</string>
+			<string>ControlFlow Presentation</string>
 			<key>CFBundleTypeRole</key>
 			<string>Editor</string>
 			<key>LSHandlerRank</key>
 			<string>Owner</string>
 			<key>LSItemContentTypes</key>
 			<array>
-				<string>com.dgcrensh.characterstudio.character</string>
+				<string>com.dgcrensh.controlflow.presentation</string>
 			</array>
 			<key>LSTypeIsPackage</key>
 			<true/>
@@ -23,9 +23,9 @@
 	<array>
 		<dict>
 			<key>UTTypeIdentifier</key>
-			<string>com.dgcrensh.characterstudio.character</string>
+			<string>com.dgcrensh.controlflow.presentation</string>
 			<key>UTTypeDescription</key>
-			<string>ControlFlow Document</string>
+			<string>ControlFlow Presentation</string>
 			<key>UTTypeConformsTo</key>
 			<array>
 				<string>com.apple.package</string>
@@ -35,7 +35,7 @@
 			<dict>
 				<key>public.filename-extension</key>
 				<array>
-					<string>charstudio</string>
+					<string>controlflow</string>
 				</array>
 			</dict>
 		</dict>

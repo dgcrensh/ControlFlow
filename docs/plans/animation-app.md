@@ -190,7 +190,7 @@ Inserting a point in the editor already preserves the curve (`BezierPath.insertP
 
 - **Document type:** a new package type, `.controlflow`, with a new UTI. The package contains `presentation.json` and `references/` (images).
 - **Writer:** the same `JSONValue` writer, which keeps key order and writes at most 4 decimals, and stays byte-stable.
-- **Schema:** `Schema/controlflow-1.0.schema.json`, with `Schema/README.md` rewritten and an example `Schema/examples/demo.controlflow` that `DocumentTests` re-saves byte for byte. `CharacterFormat.migrations` starts fresh at 1.0.
+- **Schema:** `Schema/controlflow-1.0.schema.json`, with `Schema/README.md` rewritten and an example `Schema/examples/demo.controlflow` that `DocumentTests` re-saves byte for byte. `PresentationFormat.migrations` starts fresh at 1.0.
 - **Load errors** name the JSON path of the problem, as today. An unknown id in a change is an error.
 
 ```json
@@ -261,7 +261,14 @@ Design choices now that keep this cheap later:
    - Select composes its edit into each selected layer's or shape's transform, or a wholly selected group's. When the result would skew (a world-axis stretch across a turned object), it changes the points instead. The selection frame is oriented to a single transformed object.
    - Apply Transform bakes a layer's whole tree, a group into its shapes, or shapes' own transforms, without moving anything.
    - The interim format writes an optional `transform` object on attachments, groups and shapes, only when it isn't the default; the attachment's `pivot` stays the layer pivot.
-3. **Keyframe core:** sequences, deltas, the resolver with lazy snapshots, edit-to-delta, the timeline commands (§5.3), interpolation (§6, including born and dying vertices) and format 1.0 with its schema and example. Everything is in CharacterCore with Linux tests and the shared test vectors.
+3. **Keyframe core** (shipped): sequences, deltas, the resolver with lazy snapshots, edit-to-delta, the timeline commands (§5.3), interpolation (§6, including born and dying vertices) and format 1.0 with its schema and example. Everything is in ControlFlowCore with Linux tests and the shared test vectors.
+   - `Presentation` (opening `Drawing` + `KeyframeSequence`s) and `SceneChange` are in `Presentation.swift`; `Timeline` resolves and edits states; `SceneDiff` turns two states into changes and applies them; `Interpolation` and `VertexMerge` play transitions. `DrawingEditor` edits a current keyframe and its undo stores `EditorSnapshot`s (presentation + current keyframe); the commands for milestone 4's UI are in `DrawingEditor+Timeline.swift`.
+   - Not keyed, so the same at every keyframe and stored once in the opening state: the name, the viewport's size, palette, references, global colors' names, layer and group names, and hidden/locked. Editing any of them at a keyframe changes it everywhere.
+   - The file writes optional keys only when they aren't their defaults, as before, so the §9 example is shorter in practice (no empty `groups`, no default transform keys). A `set` back to a default writes the default value; `null` removes keys with none (`fill`, `stroke`, `gradient`, `group`, `fillGlobal`). `closed` can be keyed (it snaps).
+   - Ids are unique in the file, with one exception: a keyframe may create an object with the id of one already deleted, which is how a shape moved to another layer keeps its id (and animates as one shape). Sequence and keyframe ids share the numbering.
+   - `after`/`before`/`t` on vertex changes are hints for playback only; the states come from the ids and positions. Dash lists and gradient stops that change length snap. Scale overshoot is clamped to the sign both ends share rather than to ≥ 0, so flips still animate.
+   - The example is `Schema/examples/demo.controlflow`, the robot in three sequences; `.charstudio` files no longer open. Test vectors are `Schema/vectors/demo.json` and `morph.json`, documented in `Schema/README.md`.
+   - The app opens and saves `.controlflow` (UTI `com.dgcrensh.controlflow.presentation`) and still edits only the opening state until the timeline UI.
 4. **Timeline UI:** the strip, Set Keyframe, the transition popover and curve editor, scrubbing, Play Sequence, onion skin and changed indicators.
 5. **Presenting:** presentation mode, the inputs, and the external display with the presenter view.
 6. **HTML export** (later): §10.

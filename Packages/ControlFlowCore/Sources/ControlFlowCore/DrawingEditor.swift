@@ -193,14 +193,19 @@ public struct DrawingEditor: Sendable {
     /// A short message for the user about an edit that was refused. The app shows it and
     /// clears it with `clearNotice()`.
     public internal(set) var notice: String?
-    public private(set) var undoStack = UndoStack<Drawing>()
+    public internal(set) var undoStack = UndoStack<EditorSnapshot>()
+    /// The whole document: the opening state and every keyframe. `drawing` is its scene
+    /// at `currentKeyframe`, and each committed edit is recorded into it there.
+    public internal(set) var timeline = Timeline()
+    /// The keyframe being edited (its id), or nil for the opening state.
+    public internal(set) var currentKeyframe: Int?
 
     /// A pivot the user dragged for a selection that is not a layer. Layers keep theirs in `Layer.pivot`.
     public internal(set) var customPivot: Vec2?
     /// The marquee rectangle while one is being dragged.
     public private(set) var marquee: Rect?
     /// The path the pen is extending, if any.
-    public private(set) var penPath: PenPath?
+    public internal(set) var penPath: PenPath?
     /// Where the Pencil hovers, for the pen's rubber band.
     public private(set) var penCursor: Vec2?
     /// Where the Pencil hovers in any tool, and the zoom then, for hover feedback.
@@ -230,13 +235,21 @@ public struct DrawingEditor: Sendable {
     /// marquee. Used only while its revision is `revision` (see `freshShapeIndex`).
     var shapeIndex: ShapeIndex?
 
-    public init() {}
+    public init() {
+        self.init(drawing: Drawing())
+    }
 
-    /// An editor for an opened document, with empty undo history.
+    /// An editor for a document with only an opening state, with empty undo history.
     public init(drawing: Drawing) {
-        var drawing = drawing
-        drawing.assignVertexIDs()
-        self.drawing = drawing
+        self.init(presentation: Presentation(opening: drawing))
+    }
+
+    /// An editor for an opened document, at its opening state, with empty undo history.
+    public init(presentation: Presentation) {
+        var presentation = presentation
+        presentation.opening.assignVertexIDs()
+        timeline = Timeline(presentation)
+        drawing = timeline.state(at: 0)
     }
 
     public var canUndo: Bool { undoStack.canUndo }
@@ -1233,13 +1246,13 @@ public struct DrawingEditor: Sendable {
 
     public mutating func undo() {
         cancelGesture()
-        guard let state = undoStack.undo(current: drawing) else { return }
+        guard let state = undoStack.undo(current: snapshot) else { return }
         restore(state)
     }
 
     public mutating func redo() {
         cancelGesture()
-        guard let state = undoStack.redo(current: drawing) else { return }
+        guard let state = undoStack.redo(current: snapshot) else { return }
         restore(state)
     }
 
@@ -1427,10 +1440,18 @@ public struct DrawingEditor: Sendable {
     /// Replaces the whole drawing (for example, with a version of the file changed
     /// outside the editor). Undoable.
     public mutating func replaceDrawing(_ newDrawing: Drawing) {
+        replacePresentation(Presentation(opening: newDrawing))
+    }
+
+    /// Replaces the whole document (opening state and keyframes), as one undo step,
+    /// staying on the same keyframe when it is still there.
+    public mutating func replacePresentation(_ presentation: Presentation) {
         cancelGesture()
-        let before = drawing
-        restore(newDrawing)
-        commit(from: before)
+        let before = snapshot
+        var presentation = presentation
+        presentation.opening.assignVertexIDs()
+        restore(EditorSnapshot(presentation: presentation, keyframe: currentKeyframe))
+        if snapshot.presentation != before.presentation { undoStack.record(before) }
     }
 
     // MARK: Reference images
@@ -1507,15 +1528,26 @@ public struct DrawingEditor: Sendable {
         // New points get ids, and copied points fresh ones.
         drawing.assignVertexIDs()
         guard before != drawing else { return }
-        undoStack.record(before, coalescingKey: key)
+        // A change made to `drawing` without a commit becomes part of the state undo returns to.
+        syncTimeline(with: before)
+        undoStack.record(snapshot, coalescingKey: key)
+        timeline.record(drawing, at: currentChainIndex)
     }
 
-    /// Switches to another state of the drawing. Ids are never handed out twice in a
+    /// The document and keyframe, as undo keeps them.
+    var snapshot: EditorSnapshot { EditorSnapshot(presentation: timeline.presentation, keyframe: currentKeyframe) }
+
+    /// Switches to another state of the document. Ids are never handed out twice in a
     /// session, so the app can key cached pixels and textures by id.
-    private mutating func restore(_ state: Drawing) {
-        let nextID = drawing.nextID
-        drawing = state
-        drawing.nextID = max(state.nextID, nextID)
+    mutating func restore(_ state: EditorSnapshot) {
+        let nextID = max(drawing.nextID, timeline.presentation.opening.nextID)
+        let lastTransition = timeline.lastTransition
+        var presentation = state.presentation
+        presentation.opening.nextID = max(presentation.opening.nextID, nextID)
+        timeline = Timeline(presentation)
+        timeline.lastTransition = lastTransition
+        currentKeyframe = state.keyframe.flatMap { presentation.chainIndex(of: $0) != nil ? $0 : nil }
+        drawing = timeline.state(at: currentChainIndex)
         validateSelection()
         if let pen = penPath, drawing.indices(layer: pen.layer, shape: pen.shape) == nil { penPath = nil }
     }

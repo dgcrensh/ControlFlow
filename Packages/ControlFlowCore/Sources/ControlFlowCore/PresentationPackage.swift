@@ -1,43 +1,46 @@
 import Foundation
 
-/// The contents of a `.charstudio` document package: `character.json`, an optional
+/// The contents of a `.controlflow` document package: `presentation.json`, an optional
 /// `thumbnail.png`, and the pixels of any reference images under `references/`.
 ///
 /// The package is handled as a map from package-relative path to file bytes, so it
 /// is independent of how the app reads and writes folders.
-public struct CharacterPackage: Hashable, Sendable {
-    public static let characterFile = "character.json"
+public struct PresentationPackage: Hashable, Sendable {
+    public static let presentationFile = "presentation.json"
     public static let thumbnailFile = "thumbnail.png"
     public static let referencesFolder = "references"
 
-    public var drawing: Drawing
+    public var presentation: Presentation
     /// Encoded image bytes (PNG or JPEG) for each reference image, by reference id.
-    /// May hold images no longer in the drawing; only referenced ones are saved.
+    /// May hold images no longer in the document; only referenced ones are saved.
     public var referenceImages: [Int: Data]
 
-    public init(drawing: Drawing = Drawing(), referenceImages: [Int: Data] = [:]) {
-        self.drawing = drawing
+    public init(presentation: Presentation = Presentation(), referenceImages: [Int: Data] = [:]) {
+        self.presentation = presentation
         self.referenceImages = referenceImages
     }
+
+    /// The opening state, which holds the reference images.
+    public var drawing: Drawing { presentation.opening }
 
     /// Reads a package from its files, keyed by path relative to the package root.
     /// A reference image whose file is missing is kept without pixels.
     public init(files: [String: Data]) throws {
-        guard let data = files[Self.characterFile] else {
-            throw CharacterFileError.missingFile(Self.characterFile)
+        guard let data = files[Self.presentationFile] else {
+            throw PresentationFileError.missingFile(Self.presentationFile)
         }
         let json: JSONValue
         do {
             json = try JSONValue(parsing: data)
         } catch let error as JSONParseError {
-            throw CharacterFileError.invalidJSON(error.description)
+            throw PresentationFileError.invalidJSON(error.description)
         }
-        let decoded = try CharacterFormat.decode(json)
+        let decoded = try PresentationFormat.decode(json)
         var images: [Int: Data] = [:]
         for (id, file) in decoded.referenceFiles {
             if let image = files[Self.normalizedPath(file)] { images[id] = image }
         }
-        self.init(drawing: decoded.drawing, referenceImages: images)
+        self.init(presentation: decoded.presentation, referenceImages: images)
     }
 
     /// The package's files. Reference images are named by their stacking order.
@@ -50,8 +53,8 @@ public struct CharacterPackage: Hashable, Sendable {
             names[ref.id] = name
             files[name] = image
         }
-        let json = CharacterFormat.encode(drawing, referenceFiles: names)
-        files[Self.characterFile] = Data(json.formatted().utf8)
+        let json = PresentationFormat.encode(presentation, referenceFiles: names)
+        files[Self.presentationFile] = Data(json.formatted().utf8)
         if let thumbnail { files[Self.thumbnailFile] = thumbnail }
         return files
     }

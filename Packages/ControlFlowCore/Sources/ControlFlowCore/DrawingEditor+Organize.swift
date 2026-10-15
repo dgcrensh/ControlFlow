@@ -455,7 +455,7 @@ extension DrawingEditor {
         // The global colors the copied shapes follow travel with them, by name.
         let used = Set(clip.layers.flatMap { $0.shapes.flatMap { [$0.fillGlobal, $0.stroke?.global].compactMap { $0 } } })
         clip.globalColors = drawing.globalColors.filter { used.contains($0.id) }
-        guard !clip.layers.isEmpty, case .object(var members) = CharacterFormat.encode(clip) else { return nil }
+        guard !clip.layers.isEmpty, case .object(var members) = PresentationFormat.encode(clip) else { return nil }
         members.append((key: "clipboard", value: .string(kind)))
         return JSONValue.object(members).formatted()
     }
@@ -467,13 +467,13 @@ extension DrawingEditor {
         return text
     }
 
-    /// Pastes file JSON (from `copySelection`, or a whole `character.json`).
+    /// Pastes file JSON (from `copySelection`, or a whole `presentation.json`).
     /// Copied shapes join the isolated or selected layer; copied layers arrive as new
     /// layers on top. A paste that would land exactly on art already there is moved 10
     /// points down and right. The pasted art is selected. False when `text` holds no art.
     @discardableResult
     public mutating func paste(_ text: String) -> Bool {
-        guard let json = try? JSONValue(parsing: text), let decoded = try? CharacterFormat.decode(json) else { return false }
+        guard let json = try? JSONValue(parsing: text), let decoded = try? PresentationFormat.decode(json) else { return false }
         let layers = decoded.drawing.layers.filter { !$0.shapes.isEmpty }
         guard !layers.isEmpty else { return false }
         cancelGesture()
