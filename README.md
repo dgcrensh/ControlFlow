@@ -168,7 +168,7 @@ The plan is [docs/plans/text.md](docs/plans/text.md).
 
 ## Arranging and aligning notes
 
-The plan is [docs/plans/arrange-align.md](docs/plans/arrange-align.md). Smart guides come in its second part.
+The plan is [docs/plans/arrange-align.md](docs/plans/arrange-align.md). Smart guides, its second part, are described with Snap under the Select tool notes.
 
 **Using it**
 
