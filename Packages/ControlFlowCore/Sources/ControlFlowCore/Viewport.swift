@@ -5,6 +5,9 @@ import Foundation
 /// keeps the infinite canvas and dims the art outside it; presenting shows only what is
 /// inside. It is also the area SVG and PNG export.
 public struct Viewport: Hashable, Sendable, Codable {
+    /// The viewport's object id, which keyframes use to change its background. 0 until
+    /// `Presentation` gives it one.
+    public var id = 0
     public var width: Double
     public var height: Double
     public var background: RGBAColor

@@ -135,7 +135,7 @@ public enum HandleMode: Hashable, Sendable, Codable {
 
 /// An anchor on a path. Handles are offsets from the anchor, matching the file
 /// format's `in` and `out`. `mode` says how the handles follow each other.
-public struct PathPoint: Hashable, Sendable, Codable {
+public struct PathPoint: Hashable, Sendable, Codable, Identifiable {
     /// The vertex's id, unique in the drawing and never reused in a session. 0 means
     /// none yet: `Drawing.assignVertexIDs` numbers new points when an edit is committed.
     /// Operations that keep a point keep its id; operations that make points leave 0.

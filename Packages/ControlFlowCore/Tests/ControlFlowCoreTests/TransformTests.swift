@@ -334,10 +334,11 @@ final class ObjectTransformTests: XCTestCase {
                                                             pivot: Vec2(50, 50))
         e.drawing.layers[0].transform = Transform(position: Vec2(5, 6), rotation: 12.5, scale: Vec2(1.5, 1.5),
                                                   pivot: Vec2(50, 50))
-        let text = CharacterFormat.encode(e.drawing).formatted()
-        XCTAssertFalse(CharacterFormat.encode(editor([square(0, 0)]).drawing).formatted().contains("transform"),
-                       "nothing is written without transforms")
-        let read = try CharacterFormat.decode(JSONValue(parsing: text)).drawing
+        let text = PresentationFormat.encode(e.drawing).formatted()
+        let plain = PresentationFormat.encode(editor([square(0, 0)]).drawing).formatted()
+        XCTAssertFalse(["position", "rotation", "scale"].contains { plain.contains("\"\($0)\"") },
+                       "nothing but the layer pivot is written without transforms")
+        let read = try PresentationFormat.decode(JSONValue(parsing: text)).drawing
         XCTAssertEqual(read.layers[0].transform, e.drawing.layers[0].transform)
         XCTAssertEqual(read.layers[0].groups[0].transform, group.transform)
         XCTAssertEqual(read.layers[0].shapes[0].transform, e.drawing.layers[0].shapes[0].transform)

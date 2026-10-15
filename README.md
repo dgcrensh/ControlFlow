@@ -10,10 +10,10 @@ Plan: [docs/plans/animation-app.md](docs/plans/animation-app.md).
 | --- | --- |
 | `ControlFlow.xcodeproj` | The iPad app project (Xcode 26 or later, iPadOS 26 deployment target). |
 | `ControlFlow/` | App sources: SwiftUI shell, Metal canvas view, renderer, shaders. |
-| `ControlFlow/Document/` | The document type (for now the `.charstudio` package) and its thumbnail. |
+| `ControlFlow/Document/` | The document type (the `.controlflow` package) and its thumbnail. |
 | `Config/Info.plist` | Document type and exported type declarations (merged with Xcode's generated Info.plist). |
-| `Packages/ControlFlowCore/` | UI-free Swift package: geometry, camera, curve fitting, Bézier paths, the drawing model, editing tools, undo, tessellation, touch routing and palm rejection, the viewport, and the JSON file format. Builds and tests on macOS or Linux. |
-| `Schema/` | The interim file format: JSON Schema, notes and an example. |
+| `Packages/ControlFlowCore/` | UI-free Swift package: geometry, camera, curve fitting, Bézier paths, the drawing model, editing tools, undo, keyframes and their interpolation, tessellation, touch routing and palm rejection, the viewport, and the JSON file format. Builds and tests on macOS or Linux. |
+| `Schema/` | The file format: JSON Schema, notes, an example and the interpolation test vectors. |
 
 ## Running
 
@@ -38,7 +38,7 @@ From [the plan](docs/plans/animation-app.md#11-milestones):
 
 1. **Strip and rename** (done; see the notes below): the character rigging is gone, the app is ControlFlow, and the viewport is in.
 2. **Identity and transforms** (done; see the notes below): vertex ids, layer, group and shape transforms, Apply Transform, and Part renamed to Layer.
-3. Keyframe core: sequences, deltas, interpolation and format 1.0.
+3. **Keyframe core** (done; see the notes below): sequences, deltas, interpolation and format 1.0, in the core with no UI yet.
 4. Timeline UI.
 5. Presenting.
 6. HTML export (later).
@@ -77,6 +77,22 @@ From [the plan](docs/plans/animation-app.md#11-milestones):
 - **Select** composes its drag into the right transform: `t·L` for a layer, `P⁻¹·t·P·S` for a shape under the parent matrix `P`, and the same for a group under its layer. `Transform(matrix:pivot:near:)` decomposes the result and returns nil for a skew, which is when the edit falls back to the points. `Drawing.apply(_:to:pivot:)` does this; `DrawingEditor.applyTransform()` is Apply Transform. Tests are in `ObjectTransformTests`.
 - **Vertex ids:** every `PathPoint` has an `id`. `Drawing.assignVertexIDs()` runs after every commit, on opening a document and in `DrawingEditor.init`: it gives a fresh id from the document's counter to any point with none, or whose id repeats an earlier one in draw order (a copy), so copied points get new ids and every other edit keeps them. Ids are not written to the file yet (format 1.0 will). Tests for each editing operation are in `VertexIDTests`.
 - **Format:** an attachment (layer), group and shape may have a `transform` object with any of `position`, `rotation`, `scale` and `pivot`, written only when it isn't the default; the attachment's `pivot` key still holds the layer's pivot. The example robot's antenna is turned 12 degrees. See [Schema/README.md](Schema/README.md#transforms).
+
+## Milestone 3 notes (keyframe core)
+
+**Using it**
+
+- **Files** are now `.controlflow` packages holding `presentation.json` (format 1.0). Character Studio and earlier ControlFlow `.charstudio` files no longer open.
+- There is no timeline yet (milestone 4), so the app edits the opening state as before. Files that hold keyframes open, keep them, and save them back; undo covers the whole presentation.
+
+**How it works**
+
+- **Model** (ControlFlowCore): a `Presentation` is the opening `Drawing` plus `KeyframeSequence`s of `Keyframe`s, each holding a `Transition` (duration and `TimingCurve`) and its `SceneChange`s from the state before it: `set` (dotted property keys into the object's JSON), `create`, `delete` and `order`. The opening drawing also holds what isn't keyed: names, editor hints, the palette, references, the viewport's size and global colors' names. The viewport now has an id so keyframes can set its background.
+- **Timeline** resolves the state at each keyframe on demand and keeps it until an edit before it. `record(_:at:)` turns an edited state into the keyframe's changes against the one before (`SceneDiff`), so a property set back drops out, later keyframes keep their own changes (edits carry forward until one sets the same property), and changes to objects the edit deleted are dropped. Names and hints edited at any keyframe change everywhere. The commands of the plan's §5.3 are there: insert a keyframe or sequence, split and merge sequences, delete a keyframe or sequence (folding its changes into the next), revert, duplicate as a hold, move (rebuilding every keyframe's changes so each looks as it did), set a transition, rename.
+- **Editor:** `DrawingEditor` edits the current keyframe (`selectKeyframe`, nil for the opening state) and commits edits into the timeline; undo stores the whole presentation and the current keyframe (`EditorSnapshot`), one step per gesture or command. The timeline commands, Revert to Previous and `changedObjects()` (for the Layers panel's changed dots) are in `DrawingEditor+Timeline.swift`, ready for milestone 4's UI.
+- **Interpolation:** `Timeline.transition(into:elapsed:)` and `playing(sequence:at:)` give the scene partway through a transition: numbers, points and sRGB colors lerp, other values snap at the start, created objects appear at the start and deleted ones leave at the end. `VertexMerge` lines up vertices by id so a point born on a segment starts on the old curve and a dying one rides the healed curve. See [Schema/README.md](Schema/README.md#transitions).
+- **Format 1.0:** `PresentationFormat` and `PresentationPackage` replace the Character Studio format. Ids are saved (vertices' included) and checked to be unique, and a change naming an object that isn't there is a load error with its path. The example is now [`Schema/examples/demo.controlflow`](Schema/examples/demo.controlflow), three sequences of the robot; the schema is [`controlflow-1.0.schema.json`](Schema/controlflow-1.0.schema.json).
+- **Test vectors:** [`Schema/vectors`](Schema/vectors) records the scenes expected while the example and a set of morphs play, for checking the planned HTML player against this one (`TestVectorTests`). Tests for the rest are in `KeyframeTests.swift` and `DocumentTests.swift`.
 
 ## Character Studio foundations
 
@@ -126,15 +142,15 @@ The notes below describe the editor ControlFlow inherits from Character Studio. 
 
 **Using it**
 
-- **Documents:** the app opens to the Files browser. Tap **+** (Create Document) for a new character, or open an existing `.charstudio`. Characters autosave a moment after each change; tap the back arrow to return to the browser, and tap the title to rename the file. Documents live wherever you browse to (On My iPad, iCloud Drive), and each has its own undo history.
+- **Documents:** the app opens to the Files browser. Tap **+** (Create Document) for a new presentation, or open an existing `.controlflow`. Presentations autosave a moment after each change; tap the back arrow to return to the browser, and tap the title to rename the file. Documents live wherever you browse to (On My iPad, iCloud Drive), and each has its own undo history.
 - **Layers** (stacked squares button, replacing the photo button): the document's name, then its layers. Tap a part to select it; long-press or swipe for Rename and Delete. Part names must be unique, so a clash gets a number added. The **Reference Images** section has the import buttons and the per-reference controls from milestone 2.
 - **Reference images** now save inside the document, at their imported resolution (JPEG for photos, PNG when they have transparency).
-- To look inside a file, copy it to a Mac and choose Show Package Contents; `character.json` is plain, readable JSON.
+- To look inside a file, copy it to a Mac and choose Show Package Contents; `presentation.json` is plain, readable JSON.
 
 **How it works**
 
-- **Format:** `character.json` follows Character Studio's layout (`formatVersion`, `bones`, `slots`, `drawOrder`, `skins`) plus `palette`, `references` and `viewport`. Each part is a slot on the root bone with one vector attachment in the default skin. See [Schema/README.md](Schema/README.md) and the [JSON Schema](Schema/character-0.3.schema.json).
-- **ControlFlowCore** owns the format: a small JSON reader and writer that keeps key order (`JSONValue`), the encoder, decoder and version checks (`CharacterFormat`), and the package as a map of paths to bytes (`CharacterPackage`). Damaged files fail with the JSON path of the problem, for example `skins.default.Head.Head.shapes[0].points[1].p is missing`.
+- **Format:** since milestone 3, `presentation.json` in format 1.0; see [Schema/README.md](Schema/README.md) and the [JSON Schema](Schema/controlflow-1.0.schema.json). Until then it was Character Studio's `character.json`.
+- **ControlFlowCore** owns the format: a small JSON reader and writer that keeps key order (`JSONValue`), the encoder, decoder and version checks (`PresentationFormat`), and the package as a map of paths to bytes (`PresentationPackage`). Damaged files fail with the JSON path of the problem, for example `opening.layers[1].shapes[0].points[1].p is missing`.
 - **App:** a SwiftUI `DocumentGroup` with a `FileDocument` that reads and writes the package folder. The editor keeps its own undo stack and hands the drawing to the document after each finished gesture or command, which marks it edited for autosave. A color picker or slider drag is handed over once, half a second after it stops (`DocumentHandOff`), and before the document closes or the app leaves the foreground.
 - Ids are never reused within a session (undo no longer rewinds the id counter), which also fixes a milestone 2 bug where importing a second reference after undoing the first could show the first image.
 - **Tests** cover the JSON reader and writer, a byte-for-byte re-save of the example, round trips of editor drawings, draw order, version checks, error paths, and the layer tree. CI also validates the example against the schema.

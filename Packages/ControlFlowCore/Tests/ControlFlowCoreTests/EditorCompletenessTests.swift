@@ -358,9 +358,9 @@ final class HideLockIsolateTests: XCTestCase {
         e.drawing.layers[1].isLocked = true
         e.selection = .shape(layer: ref.layer, shape: ref.shape)
         e.lockSelection()
-        let text = CharacterFormat.encode(e.drawing).formatted()
+        let text = PresentationFormat.encode(e.drawing).formatted()
         XCTAssertTrue(text.contains("\"locked\": true"))
-        let back = try CharacterFormat.decode(JSONValue(parsing: text)).drawing
+        let back = try PresentationFormat.decode(JSONValue(parsing: text)).drawing
         XCTAssertTrue(back.layers[1].isHidden && back.layers[1].isLocked)
         XCTAssertTrue(back.layers[0].shapes[1].isLocked)
         XCTAssertFalse(back.layers[0].shapes[0].isLocked || back.layers[0].isHidden)

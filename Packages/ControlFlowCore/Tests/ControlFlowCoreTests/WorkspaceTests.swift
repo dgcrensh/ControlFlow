@@ -89,15 +89,20 @@ final class ViewportTests: XCTestCase {
         var d = Drawing()
         addRect(&d, "Body", rect(0, 0, 100, 200))
         d.viewport = Viewport(width: 1080, height: 1920, background: RGBAColor(r: 0, g: 0, b: 0))
-        let json = CharacterFormat.encode(d)
+        let json = PresentationFormat.encode(d)
         XCTAssertEqual(json["viewport"]?["width"], JSONValue.number(1080))
-        XCTAssertEqual(try CharacterFormat.decode(json).drawing.viewport, d.viewport)
+        var read = try PresentationFormat.decode(json).drawing.viewport
+        XCTAssertGreaterThan(read.id, 0, "the viewport has an id, which keyframes use")
+        read.id = 0
+        XCTAssertEqual(read, d.viewport)
 
         // A file without one gets the default.
-        let bare = try JSONValue(parsing: #"{ "formatVersion": "0.3.0" }"#)
-        XCTAssertEqual(try CharacterFormat.decode(bare).drawing.viewport, Viewport())
-        let flat = try JSONValue(parsing: #"{ "formatVersion": "0.3.0", "viewport": { "width": 0, "height": 10 } }"#)
-        XCTAssertThrowsError(try CharacterFormat.decode(flat))
+        let bare = try JSONValue(parsing: #"{ "formatVersion": "1.0" }"#)
+        read = try PresentationFormat.decode(bare).drawing.viewport
+        read.id = 0
+        XCTAssertEqual(read, Viewport())
+        let flat = try JSONValue(parsing: #"{ "formatVersion": "1.0", "viewport": { "width": 0, "height": 10 } }"#)
+        XCTAssertThrowsError(try PresentationFormat.decode(flat))
     }
 }
 

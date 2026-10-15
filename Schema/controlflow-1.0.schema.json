@@ -1,0 +1,318 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/dgcrensh/ControlFlow/Schema/controlflow-1.0.schema.json",
+  "title": "ControlFlow presentation",
+  "description": "presentation.json inside a .controlflow package, format 1.0: the opening scene in full, then sequences of keyframes, each the changes from the state before it. Units are points with the y-axis down, angles are degrees (clockwise on screen), and colors are sRGB hex with straight alpha. Every id is a positive whole number used once in the file. Readers should ignore keys they do not know. See Schema/README.md for the rules the schema can't express (which ids changes may name, and how transitions play).",
+  "type": "object",
+  "required": ["formatVersion"],
+  "properties": {
+    "formatVersion": {
+      "description": "MAJOR.MINOR. Readers refuse a newer major version; a newer minor version only adds keys older readers can ignore.",
+      "type": "string",
+      "pattern": "^1\\.[0-9]+(\\.[0-9]+)?$"
+    },
+    "name": { "description": "The presentation's display name.", "type": "string" },
+    "viewport": {
+      "description": "The stage the presentation shows: a width × height box with its top-left at the world origin, filled with background. Also the area the editor exports. Defaults to 1920 × 1080 on white. Only background is keyed.",
+      "type": "object",
+      "required": ["width", "height"],
+      "properties": {
+        "id": { "description": "The id keyframes use to set background.", "$ref": "#/$defs/id" },
+        "width": { "type": "number", "exclusiveMinimum": 0 },
+        "height": { "type": "number", "exclusiveMinimum": 0 },
+        "background": { "$ref": "#/$defs/color" }
+      }
+    },
+    "palette": {
+      "description": "Editor-only reusable colors. Not keyed.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/color" }
+    },
+    "globalColors": {
+      "description": "Named colors that fills and outlines can follow. Their colors are keyed; their names aren't.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/globalColor" }
+    },
+    "references": {
+      "description": "Editor-only reference images, bottom to top. Not part of the presentation and not keyed.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/reference" }
+    },
+    "opening": {
+      "description": "The scene before the first keyframe.",
+      "type": "object",
+      "properties": {
+        "layers": { "description": "Back to front.", "type": "array", "items": { "$ref": "#/$defs/layer" } }
+      }
+    },
+    "sequences": {
+      "description": "Runs of keyframes, in playing order. One Advance plays one sequence.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/sequence" }
+    }
+  },
+  "$defs": {
+    "id": { "type": "integer", "minimum": 1 },
+    "vec2": {
+      "type": "array",
+      "items": { "type": "number" },
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "color": {
+      "description": "#RRGGBBAA (or #RRGGBB, opaque), straight alpha.",
+      "type": "string",
+      "pattern": "^#([0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$"
+    },
+    "globalColor": {
+      "type": "object",
+      "required": ["id", "name", "color"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "name": { "type": "string" },
+        "color": { "$ref": "#/$defs/color" }
+      }
+    },
+    "reference": {
+      "type": "object",
+      "required": ["file", "width", "height"],
+      "properties": {
+        "name": { "type": "string" },
+        "file": { "description": "Image file path inside the package, under references/.", "type": "string" },
+        "width": { "description": "Natural image size in points, before scale.", "type": "number", "exclusiveMinimum": 0 },
+        "height": { "type": "number", "exclusiveMinimum": 0 },
+        "x": { "description": "Center in world space.", "type": "number" },
+        "y": { "type": "number" },
+        "rotation": { "type": "number" },
+        "scale": { "type": "number", "exclusiveMinimum": 0 },
+        "opacity": { "type": "number", "minimum": 0, "maximum": 1 },
+        "hidden": { "type": "boolean" }
+      }
+    },
+    "transform": {
+      "description": "Places a layer, group or shape in its parent: it scales by scale and turns by rotation about pivot, then moves by position. Layers, groups and shapes compose in that order, and points are in the shape's own space. Written only when it moves something, and each key only when it isn't its default.",
+      "type": "object",
+      "properties": {
+        "position": { "description": "Defaults to [0, 0].", "$ref": "#/$defs/vec2" },
+        "rotation": { "description": "Degrees, clockwise on screen. Not wrapped: 720 is two turns. Defaults to 0.", "type": "number" },
+        "scale": { "description": "Negative flips. Defaults to [1, 1].", "$ref": "#/$defs/vec2" },
+        "pivot": { "description": "The point it turns and scales about, in the object's own space. Defaults to [0, 0].", "$ref": "#/$defs/vec2" }
+      },
+      "additionalProperties": false
+    },
+    "layer": {
+      "type": "object",
+      "required": ["id", "shapes"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "name": { "description": "Not keyed.", "type": "string" },
+        "transform": { "$ref": "#/$defs/transform" },
+        "hidden": { "description": "Editor hint, not keyed: hidden while editing. Defaults to false. Players draw it as usual.", "type": "boolean" },
+        "locked": { "description": "Editor hint, not keyed: can't be selected while editing. Defaults to false.", "type": "boolean" },
+        "groups": {
+          "description": "Groups of the layer's shapes, bottom to top. Written only when there are some. Groups don't nest and don't change how shapes draw, except for clipping.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/group" }
+        },
+        "shapes": { "description": "Back to front.", "type": "array", "items": { "$ref": "#/$defs/shape" } }
+      }
+    },
+    "group": {
+      "type": "object",
+      "required": ["id"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "name": { "description": "Not keyed.", "type": "string" },
+        "clipped": { "description": "The whole group draws only where the nearest shape below it that isn't clipped draws. Defaults to false.", "type": "boolean" },
+        "transform": { "$ref": "#/$defs/transform" },
+        "hidden": { "description": "Editor hint, not keyed. Defaults to false.", "type": "boolean" },
+        "locked": { "description": "Editor hint, not keyed. Defaults to false.", "type": "boolean" }
+      }
+    },
+    "shape": {
+      "type": "object",
+      "required": ["id", "points"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "group": { "description": "The id of the layer's group this shape belongs to. A group's shapes are next to each other in shapes.", "$ref": "#/$defs/id" },
+        "closed": { "description": "Defaults to false.", "type": "boolean" },
+        "fill": { "description": "Solid fill, closed paths only (non-zero winding). Absent means no fill. With a gradient, the color to show where gradients are not supported.", "$ref": "#/$defs/color" },
+        "fillGlobal": { "description": "The id of the global color the fill follows. fill holds its current value.", "$ref": "#/$defs/id" },
+        "gradient": { "description": "Draws the fill as a gradient. Only with a fill.", "$ref": "#/$defs/gradient" },
+        "stroke": { "$ref": "#/$defs/stroke" },
+        "opacity": { "description": "Multiplies the alpha of the fill and of the outline (each on its own). Defaults to 1.", "type": "number", "minimum": 0, "maximum": 1 },
+        "clipped": { "description": "The shape draws only where the nearest unclipped shape below it in the same layer (and group) draws. Defaults to false.", "type": "boolean" },
+        "transform": { "description": "The shape's transform, in its group (or layer). Its points are before it.", "$ref": "#/$defs/transform" },
+        "hidden": { "description": "Editor hint, not keyed. Defaults to false.", "type": "boolean" },
+        "locked": { "description": "Editor hint, not keyed. Defaults to false.", "type": "boolean" },
+        "points": {
+          "description": "Cubic Bézier anchors. Segment i runs from point i (p + out) to point i+1 (p + in); closed paths also join the last point to the first.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/vertex" }
+        }
+      }
+    },
+    "stroke": {
+      "description": "Outline. Absent means no outline.",
+      "type": "object",
+      "required": ["color", "width"],
+      "properties": {
+        "color": { "$ref": "#/$defs/color" },
+        "global": { "description": "The id of the global color the outline follows. color holds its current value.", "$ref": "#/$defs/id" },
+        "width": { "description": "Width in points; each point's w multiplies it.", "type": "number", "minimum": 0 },
+        "cap": { "description": "Ends of open paths and dashes. Defaults to round.", "enum": ["butt", "round", "square"] },
+        "join": { "description": "Corners. Defaults to round.", "enum": ["miter", "round", "bevel"] },
+        "miterLimit": { "description": "A miter longer than this many half-widths becomes a bevel. Defaults to 4.", "type": "number", "minimum": 1 },
+        "dash": { "description": "Dash and gap lengths in points, alternating from a dash; an odd list repeats twice. Absent means solid.", "type": "array", "items": { "type": "number", "minimum": 0 } },
+        "dashOffset": { "description": "How far into the dash pattern the path starts. Defaults to 0.", "type": "number" },
+        "align": { "description": "For closed paths: the outline centered on the path, inside the fill area or outside it. Defaults to center.", "enum": ["center", "inside", "outside"] }
+      }
+    },
+    "gradient": {
+      "description": "Points are in the shape's space, so the gradient moves with it.",
+      "type": "object",
+      "required": ["type", "start", "end", "stops"],
+      "properties": {
+        "type": { "description": "linear runs from start to end; radial runs from start (the center) out to the circle through end.", "enum": ["linear", "radial"] },
+        "start": { "$ref": "#/$defs/vec2" },
+        "end": { "$ref": "#/$defs/vec2" },
+        "stops": {
+          "description": "Colors by offset, 0 at start and 1 at end, interpolated in straight alpha.",
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["offset", "color"],
+            "properties": {
+              "offset": { "type": "number", "minimum": 0, "maximum": 1 },
+              "color": { "$ref": "#/$defs/color" }
+            }
+          }
+        }
+      }
+    },
+    "vertex": {
+      "type": "object",
+      "required": ["id", "p"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "p": { "description": "Anchor position.", "$ref": "#/$defs/vec2" },
+        "in": { "description": "Incoming handle, as an offset from p. Defaults to [0, 0].", "$ref": "#/$defs/vec2" },
+        "out": { "description": "Outgoing handle, as an offset from p. Defaults to [0, 0].", "$ref": "#/$defs/vec2" },
+        "w": { "description": "The outline width here as a multiple of the stroke width, blended linearly along each segment. Defaults to 1.", "type": "number", "minimum": 0 },
+        "smooth": { "description": "Editor hint: false for a corner point. Defaults to true.", "type": "boolean" },
+        "symmetric": { "description": "Editor hint: true when the handles are kept equally long and opposite. Defaults to false.", "type": "boolean" },
+        "stroked": { "description": "false leaves the segment from this point to the next without an outline; the fill still covers it. Defaults to true.", "type": "boolean" }
+      }
+    },
+    "sequence": {
+      "type": "object",
+      "required": ["id", "keyframes"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "name": { "type": "string" },
+        "keyframes": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/keyframe" } }
+      }
+    },
+    "keyframe": {
+      "type": "object",
+      "required": ["id"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "name": { "type": "string" },
+        "transition": { "$ref": "#/$defs/transition" },
+        "changes": {
+          "description": "What turns the state before this keyframe into its own, applied in order. Absent means none (a hold).",
+          "type": "array",
+          "items": { "$ref": "#/$defs/change" }
+        }
+      }
+    },
+    "transition": {
+      "description": "The animation into the keyframe. Defaults to 0.5 seconds of ease-in-out.",
+      "type": "object",
+      "properties": {
+        "duration": { "description": "Seconds; 0 is a cut. Defaults to 0.5.", "type": "number", "minimum": 0 },
+        "curve": {
+          "description": "A CSS timing function: one of the named curves, or the control points of a cubic-bezier. Defaults to ease-in-out.",
+          "oneOf": [
+            { "enum": ["linear", "ease", "ease-in", "ease-out", "ease-in-out"] },
+            {
+              "description": "[x1, y1, x2, y2]. x values are in 0 to 1; y values may leave it to overshoot.",
+              "type": "array",
+              "prefixItems": [
+                { "type": "number", "minimum": 0, "maximum": 1 },
+                { "type": "number" },
+                { "type": "number", "minimum": 0, "maximum": 1 },
+                { "type": "number" }
+              ],
+              "minItems": 4,
+              "maxItems": 4
+            }
+          ]
+        }
+      }
+    },
+    "change": {
+      "oneOf": [
+        {
+          "description": "Sets properties of an object there before this keyframe: a layer, group, shape or vertex, the viewport or a global color.",
+          "type": "object",
+          "required": ["set", "props"],
+          "properties": {
+            "set": { "$ref": "#/$defs/id" },
+            "props": {
+              "description": "Dotted keys into the object's JSON (transform.rotation, stroke.width, gradient.stops.1.color) and their new values. null removes a key that has no default (fill, stroke, gradient, group). Names, editor hints, ids and children can't be set.",
+              "type": "object",
+              "propertyNames": {
+                "pattern": "^(transform|stroke|gradient|group|closed|fill|fillGlobal|opacity|clipped|p|in|out|w|smooth|symmetric|stroked|background|color)(\\.[A-Za-z0-9]+)*$"
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "description": "Adds an object with everything under it.",
+          "type": "object",
+          "required": ["create"],
+          "properties": {
+            "create": {
+              "description": "A layer (no in), a group or shape (in a layer; a shape has points), or a vertex (in a shape).",
+              "anyOf": [
+                { "$ref": "#/$defs/layer" },
+                { "$ref": "#/$defs/group" },
+                { "$ref": "#/$defs/shape" },
+                { "$ref": "#/$defs/vertex" }
+              ]
+            },
+            "in": { "description": "The parent: a layer for groups and shapes, a shape for vertices. Absent for a layer.", "$ref": "#/$defs/id" },
+            "after": { "description": "The sibling it goes after; absent puts it first. Groups ignore it.", "$ref": "#/$defs/id" },
+            "before": { "description": "A vertex born on a segment: the segment's end, its next neighbour present before and after.", "$ref": "#/$defs/id" },
+            "t": { "description": "A vertex born on a segment: where on the segment (what is left of it after earlier born vertices) it splits, 0 to 1.", "type": "number", "minimum": 0, "maximum": 1 }
+          },
+          "additionalProperties": false
+        },
+        {
+          "description": "Removes an object and everything under it (a group's shapes stay, ungrouped). The viewport and global colors can't be deleted.",
+          "type": "object",
+          "required": ["delete"],
+          "properties": {
+            "delete": { "$ref": "#/$defs/id" },
+            "t": { "description": "A vertex dying on a segment: where on the healed segment it rides to, 0 to 1.", "type": "number", "minimum": 0, "maximum": 1 }
+          },
+          "additionalProperties": false
+        },
+        {
+          "description": "A new order for a parent's children: the layers (no in), a layer's shapes or a shape's points. Children not listed keep their places.",
+          "type": "object",
+          "required": ["order"],
+          "properties": {
+            "order": { "type": "array", "items": { "$ref": "#/$defs/id" }, "uniqueItems": true },
+            "in": { "$ref": "#/$defs/id" }
+          },
+          "additionalProperties": false
+        }
+      ]
+    }
+  }
+}

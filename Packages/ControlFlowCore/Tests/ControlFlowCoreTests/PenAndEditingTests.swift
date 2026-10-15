@@ -115,9 +115,9 @@ final class HandleModeTests: XCTestCase {
         path.closed = false
         d.layers = [Layer(id: 1, name: "A", shapes: [VectorShape(id: 2, path: path, stroke: StrokeStyle(color: .ink, width: 2))])]
         d.nextID = 3
-        let text = CharacterFormat.encode(d).formatted()
+        let text = PresentationFormat.encode(d).formatted()
         XCTAssertEqual(text.components(separatedBy: "\"symmetric\"").count - 1, 1, "only the symmetric point is marked")
-        let back = try CharacterFormat.decode(JSONValue(parsing: text)).drawing
+        let back = try PresentationFormat.decode(JSONValue(parsing: text)).drawing
         XCTAssertEqual(back.layers[0].shapes[0].path.points.map(\.mode), [.smooth, .symmetric, .corner])
     }
 }

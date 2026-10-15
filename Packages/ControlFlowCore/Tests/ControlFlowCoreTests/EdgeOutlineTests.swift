@@ -112,11 +112,11 @@ final class EdgeOutlineTests: XCTestCase {
         d.layers.append(Layer(id: d.makeID(), name: "Body", shapes: [
             VectorShape(id: d.makeID(), path: square(bare: [1]), fill: red, stroke: StrokeStyle(color: .ink, width: 2)),
         ]))
-        let text = CharacterFormat.encode(d).formatted()
+        let text = PresentationFormat.encode(d).formatted()
         XCTAssertTrue(text.contains("\"stroked\": false"), text)
-        let back = try CharacterFormat.decode(JSONValue(parsing: text)).drawing
+        let back = try PresentationFormat.decode(JSONValue(parsing: text)).drawing
         XCTAssertEqual(back.layers[0].shapes[0].path.points.map(\.stroked), [true, false, true, true])
-        XCTAssertEqual(CharacterFormat.encode(back).formatted(), text)
+        XCTAssertEqual(PresentationFormat.encode(back).formatted(), text)
     }
 
     func testSVGWritesTheOutlineWithoutBareEdges() throws {

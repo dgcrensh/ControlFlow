@@ -670,8 +670,8 @@ final class AppearanceFormatTests: XCTestCase {
         clipped.isClipped = true
         d.layers = [Layer(id: d.makeID(), name: "P", shapes: [shape, clipped])]
 
-        let text = CharacterFormat.encode(d).formatted()
-        let back = try CharacterFormat.decode(JSONValue(parsing: text)).drawing
+        let text = PresentationFormat.encode(d).formatted()
+        let back = try PresentationFormat.decode(JSONValue(parsing: text)).drawing
         XCTAssertEqual(back.palette, [blue])
         XCTAssertEqual(back.globalColors.map(\.name), ["Skin"])
         let s = back.layers[0].shapes[0]
@@ -684,61 +684,53 @@ final class AppearanceFormatTests: XCTestCase {
         XCTAssertEqual(s.path.points.map(\.width), [1, 0.25, 1, 1])
         XCTAssertTrue(back.layers[0].shapes[1].isClipped)
         // Saving again gives the same text.
-        XCTAssertEqual(CharacterFormat.encode(back).formatted(), text)
+        XCTAssertEqual(PresentationFormat.encode(back).formatted(), text)
     }
 
     func testDefaultsAreNotWritten() {
         var d = Drawing()
         let shape = VectorShape(id: d.makeID(), path: square(0, 0, 10), fill: red, stroke: StrokeStyle(color: blue, width: 2))
         d.layers = [Layer(id: d.makeID(), name: "P", shapes: [shape])]
-        let text = CharacterFormat.encode(d).formatted()
-        for key in ["\"w\"", "cap", "join", "miterLimit", "dash", "align", "opacity", "clipped", "gradient", "global"] {
+        let text = PresentationFormat.encode(d).formatted()
+        for key in ["\"w\"", "cap", "join", "miterLimit", "dash", "align", "opacity", "clipped", "gradient", "\"global\"", "fillGlobal"] {
             XCTAssertFalse(text.contains(key), key)
         }
     }
 
-    func testA01FileOpensAndSavesAsCurrent() throws {
+    func testCharacterStudioFilesDontOpen() throws {
         let old = try JSONValue(parsing: """
-        { "formatVersion": "0.1.0", "name": "Old",
+        { "formatVersion": "0.3.0", "name": "Old",
           "slots": [{ "id": "A", "bone": "root", "attachment": "A" }],
-          "skins": { "default": { "A": { "A": { "type": "vector", "shapes": [
-            { "closed": false, "stroke": { "color": "#000000FF", "width": 3 },
-              "points": [{ "p": [0, 0] }, { "p": [10, 0] }] }] } } } },
-          "palette": ["#FF0000FF"] }
+          "skins": { "default": { "A": { "A": { "type": "vector", "shapes": [] } } } } }
         """)
-        let migrated = try CharacterFormat.migrate(old)
-        XCTAssertEqual(migrated["formatVersion"], .string(CharacterFormat.version.description))
-        let d = try CharacterFormat.decode(old).drawing
-        XCTAssertEqual(d.layers[0].shapes[0].stroke, StrokeStyle(color: .black, width: 3))
-        XCTAssertEqual(d.palette, [red])
-        XCTAssertTrue(d.globalColors.isEmpty)
-        XCTAssertEqual(CharacterFormat.encode(d)["formatVersion"], .string(CharacterFormat.version.description))
+        XCTAssertThrowsError(try PresentationFormat.decode(old)) { error in
+            XCTAssertEqual(error as? PresentationFileError, .unsupportedVersion("0.3.0"))
+        }
     }
 
     func testBadAppearanceIsReportedWithItsPath() throws {
-        func error(_ shape: String) throws -> CharacterFileError? {
+        func error(_ shape: String) throws -> PresentationFileError? {
             let file = try JSONValue(parsing: """
-            { "formatVersion": "0.2.0", "slots": [{ "id": "A", "bone": "root", "attachment": "A" }],
-              "skins": { "default": { "A": { "A": { "type": "vector", "shapes": [\(shape)] } } } } }
+            { "formatVersion": "1.0", "opening": { "layers": [{ "id": 1, "name": "A", "shapes": [\(shape)] }] } }
             """)
             do {
-                _ = try CharacterFormat.decode(file)
+                _ = try PresentationFormat.decode(file)
                 return nil
             } catch {
-                return error as? CharacterFileError
+                return error as? PresentationFileError
             }
         }
-        let prefix = "skins.default.A.A.shapes[0]"
-        XCTAssertEqual(try error(##"{ "closed": false, "stroke": { "color": "#000", "width": 1 }, "points": [] }"##),
+        let prefix = "opening.layers[0].shapes[0]"
+        XCTAssertEqual(try error(##"{ "id": 2, "closed": false, "stroke": { "color": "#000", "width": 1 }, "points": [] }"##),
                        .invalid(path: prefix + ".stroke.color", problem: "is not a #RRGGBBAA color"))
-        XCTAssertEqual(try error(##"{ "closed": false, "stroke": { "color": "#000000", "width": 1, "cap": "flat" }, "points": [] }"##),
+        XCTAssertEqual(try error(##"{ "id": 2, "closed": false, "stroke": { "color": "#000000", "width": 1, "cap": "flat" }, "points": [] }"##),
                        .invalid(path: prefix + ".stroke.cap", problem: #"is not one of "butt", "round", "square""#))
-        XCTAssertEqual(try error(##"{ "closed": false, "points": [{ "p": [0, 0], "w": -1 }] }"##),
+        XCTAssertEqual(try error(##"{ "id": 2, "closed": false, "points": [{ "id": 3, "p": [0, 0], "w": -1 }] }"##),
                        .invalid(path: prefix + ".points[0].w", problem: "is negative"))
-        XCTAssertEqual(try error(##"{ "closed": true, "fill": "#000000", "gradient": { "type": "linear", "start": [0, 0], "end": [1, 0], "stops": [] }, "points": [] }"##),
+        XCTAssertEqual(try error(##"{ "id": 2, "closed": true, "fill": "#000000", "gradient": { "type": "linear", "start": [0, 0], "end": [1, 0], "stops": [] }, "points": [] }"##),
                        .invalid(path: prefix + ".gradient.stops", problem: "is empty"))
-        // An unknown global color name keeps the plain color.
-        XCTAssertNil(try error(##"{ "closed": true, "fill": "#000000", "fillGlobal": "Nope", "points": [] }"##))
+        // An unknown global color keeps the plain color.
+        XCTAssertNil(try error(##"{ "id": 2, "closed": true, "fill": "#000000", "fillGlobal": 99, "points": [] }"##))
     }
 }
 
@@ -978,12 +970,12 @@ final class GroupClipAndBehindTests: XCTestCase {
 
     func testTheFileKeepsClippedGroups() throws {
         let d = clippedGroup()
-        let text = CharacterFormat.encode(d).formatted()
-        let back = try CharacterFormat.decode(JSONValue(parsing: text)).drawing
+        let text = PresentationFormat.encode(d).formatted()
+        let back = try PresentationFormat.decode(JSONValue(parsing: text)).drawing
         XCTAssertEqual(back.layers[0].groups.first?.isClipped, true)
-        XCTAssertEqual(CharacterFormat.encode(back).formatted(), text)
+        XCTAssertEqual(PresentationFormat.encode(back).formatted(), text)
         // Off, the group's key isn't written; the clipped shape's still is.
-        let plain = CharacterFormat.encode(clippedGroup(groupClipped: false)).formatted()
+        let plain = PresentationFormat.encode(clippedGroup(groupClipped: false)).formatted()
         XCTAssertEqual(plain.components(separatedBy: "\"clipped\"").count, 2)
     }
 

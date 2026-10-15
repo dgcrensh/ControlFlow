@@ -125,7 +125,7 @@ final class CanvasStore {
     let ui = EditorUIState()
     /// Called with the document's new contents after each finished change, which
     /// marks the document edited so it autosaves.
-    var onDocumentChange: ((CharacterPackage) -> Void)?
+    var onDocumentChange: ((PresentationPackage) -> Void)?
     /// Encoded pixels (PNG or JPEG, as saved) for reference images, by id. Kept for
     /// the session so undo can bring a deleted reference back.
     private var referenceData: [Int: Data]
@@ -133,26 +133,26 @@ final class CanvasStore {
     private var decodedImages: [Int: CGImage] = [:]
     /// When to hand changes to the document, and the contents last handed to it.
     private var handOff: DocumentHandOff
-    private var document: CharacterPackage
+    private var document: PresentationPackage
     /// Hands a held change (a color picker drag) to the document once it goes quiet.
     private var handOffTimer: Task<Void, Never>?
     /// Versions recently handed to the document, newest last. One of them coming back
     /// is the system undoing the document behind the editor (its three-finger swipe or
     /// shake), not an edit made elsewhere.
-    private var sentDocuments: [CharacterPackage] = []
+    private var sentDocuments: [PresentationPackage] = []
     private var seenTapCommands = 0
     /// The drawing revision `ui`'s drawing-wide values (layers, hidden and locked art,
     /// the viewport) were last read at.
     private var refreshedRevision: Int?
     private var toastCount = 0
 
-    init(package: CharacterPackage = CharacterPackage()) {
+    init(package: PresentationPackage = PresentationPackage()) {
         var options = InputOptions()
         #if targetEnvironment(simulator)
         // The Simulator has no Pencil, so a lone finger (mouse) draws there.
         options.fingerDraws = true
         #endif
-        session = CanvasSession(options: options, drawing: package.drawing)
+        session = CanvasSession(options: options, presentation: package.presentation)
         session.editor.pressureWidth = UserDefaults.standard.bool(forKey: Self.pressureWidthKey)
         referenceData = package.referenceImages
         document = package
@@ -205,9 +205,9 @@ final class CanvasStore {
     private func sendDocument() {
         let interval = Signposts.canvas.beginInterval("Hand off")
         defer { Signposts.canvas.endInterval("Hand off", interval) }
-        let drawing = session.editor.drawing
-        let images = referenceData.filter { id, _ in drawing.referenceIndex(id) != nil }
-        document = CharacterPackage(drawing: drawing, referenceImages: images)
+        let presentation = session.editor.presentation
+        let images = referenceData.filter { id, _ in presentation.opening.referenceIndex(id) != nil }
+        document = PresentationPackage(presentation: presentation, referenceImages: images)
         sentDocuments.append(document)
         if sentDocuments.count > 32 { sentDocuments.removeFirst() }
         onDocumentChange?(document)
@@ -215,7 +215,7 @@ final class CanvasStore {
 
     /// Takes in a version of the document that changed outside the editor (for
     /// example, edited on another device). Undoable like any other change.
-    func documentChanged(_ package: CharacterPackage) {
+    func documentChanged(_ package: PresentationPackage) {
         let interval = Signposts.canvas.beginInterval("Document changed")
         defer { Signposts.canvas.endInterval("Document changed", interval) }
         guard package != document else { return }
@@ -224,16 +224,16 @@ final class CanvasStore {
             onDocumentChange?(document)
             return
         }
-        var drawing = package.drawing
-        drawing.nextID = max(drawing.nextID, session.editor.drawing.nextID)
+        var presentation = package.presentation
+        presentation.opening.nextID = max(presentation.opening.nextID, session.editor.drawing.nextID)
         // Fresh reference ids, so cached pixels and textures never mix up images.
-        for i in drawing.references.indices {
-            let old = drawing.references[i].id
-            let new = drawing.makeID()
-            drawing.references[i].id = new
+        for i in presentation.opening.references.indices {
+            let old = presentation.opening.references[i].id
+            let new = presentation.opening.makeID()
+            presentation.opening.references[i].id = new
             referenceData[new] = package.referenceImages[old]
         }
-        edit { $0.editor.replaceDrawing(drawing) }
+        edit { $0.editor.replacePresentation(presentation) }
     }
 
     /// Copies editor state into `ui` and redraws. The values read from the whole

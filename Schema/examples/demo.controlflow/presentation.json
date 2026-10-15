@@ -1,0 +1,312 @@
+{
+  "formatVersion": "1.0",
+  "name": "Demo",
+  "viewport": { "id": 56, "width": 1920, "height": 1080, "background": "#FFFFFFFF" },
+  "palette": ["#FFFFFF80"],
+  "globalColors": [
+    { "id": 1, "name": "Skin", "color": "#F2A65AFF" },
+    { "id": 2, "name": "Body", "color": "#5A8DEEFF" },
+    { "id": 3, "name": "Ink", "color": "#222222FF" }
+  ],
+  "references": [
+    {
+      "name": "Sketch",
+      "file": "references/reference-1.png",
+      "width": 4,
+      "height": 4,
+      "x": 1500,
+      "y": 300,
+      "rotation": 90,
+      "scale": 40,
+      "opacity": 0.35,
+      "hidden": false
+    }
+  ],
+  "opening": {
+    "layers": [
+      {
+        "id": 4,
+        "name": "Torso",
+        "transform": { "position": [960, 700], "scale": [3, 3], "pivot": [0, -40] },
+        "groups": [
+          { "id": 5, "name": "Shell" }
+        ],
+        "shapes": [
+          {
+            "id": 6,
+            "group": 5,
+            "closed": true,
+            "fill": "#5A8DEEFF",
+            "fillGlobal": 2,
+            "gradient": {
+              "type": "linear",
+              "start": [0, -90],
+              "end": [0, 8],
+              "stops": [
+                { "offset": 0, "color": "#5A8DEEFF" },
+                { "offset": 1, "color": "#3655A0FF" }
+              ]
+            },
+            "stroke": { "color": "#222222FF", "global": 3, "width": 3, "join": "miter" },
+            "points": [
+              { "id": 19, "p": [-30, -90], "in": [0, 0], "out": [0, 0], "smooth": false, "stroked": false },
+              { "id": 20, "p": [30, -90], "in": [0, 0], "out": [0, 0], "smooth": false },
+              { "id": 21, "p": [36, -10], "in": [0, -20], "out": [-8, 14] },
+              { "id": 22, "p": [0, 8], "in": [18, 0], "out": [-18, 0] },
+              { "id": 23, "p": [-36, -10], "in": [8, 14], "out": [0, -20] }
+            ]
+          },
+          {
+            "id": 7,
+            "group": 5,
+            "closed": true,
+            "fill": "#1A2A5040",
+            "clipped": true,
+            "points": [
+              { "id": 24, "p": [20, -60], "in": [0, -22], "out": [0, 22] },
+              { "id": 25, "p": [44, -20], "in": [-14, 0], "out": [14, 0] },
+              { "id": 26, "p": [64, -60], "in": [0, 22], "out": [0, -22] },
+              { "id": 27, "p": [44, -100], "in": [14, 0], "out": [-14, 0] }
+            ]
+          },
+          {
+            "id": 8,
+            "closed": true,
+            "fill": "#FFFFFF80",
+            "opacity": 0.8,
+            "points": [
+              { "id": 28, "p": [-12, -70], "in": [0, -6.5], "out": [0, 6.5] },
+              { "id": 29, "p": [0, -58], "in": [-6.5, 0], "out": [6.5, 0] },
+              { "id": 30, "p": [12, -70], "in": [0, 6.5], "out": [0, -6.5] },
+              { "id": 31, "p": [0, -82], "in": [6.5, 0], "out": [-6.5, 0] }
+            ]
+          },
+          {
+            "id": 9,
+            "closed": false,
+            "stroke": { "color": "#222222FF", "global": 3, "width": 1.5, "cap": "butt", "dash": [4, 3] },
+            "points": [
+              { "id": 32, "p": [-30, -30], "in": [0, 0], "out": [0, 0], "smooth": false },
+              { "id": 33, "p": [30, -30], "in": [0, 0], "out": [0, 0], "smooth": false }
+            ]
+          }
+        ]
+      },
+      {
+        "id": 10,
+        "name": "Head",
+        "transform": { "position": [960, 560], "scale": [3, 3], "pivot": [0, -110] },
+        "groups": [
+          { "id": 11, "name": "Visor", "clipped": true }
+        ],
+        "shapes": [
+          {
+            "id": 12,
+            "closed": true,
+            "fill": "#F2A65AFF",
+            "fillGlobal": 1,
+            "stroke": { "color": "#222222FF", "global": 3, "width": 3, "align": "inside" },
+            "points": [
+              { "id": 34, "p": [0, -150], "in": [-22.0914, 0], "out": [22.0914, 0] },
+              { "id": 35, "p": [40, -110], "in": [0, -22.0914], "out": [0, 22.0914] },
+              { "id": 36, "p": [0, -70], "in": [22.0914, 0], "out": [-22.0914, 0] },
+              { "id": 37, "p": [-40, -110], "in": [0, 22.0914], "out": [0, -22.0914] }
+            ]
+          },
+          {
+            "id": 13,
+            "group": 11,
+            "closed": true,
+            "fill": "#22334AFF",
+            "points": [
+              { "id": 38, "p": [-44, -114], "in": [0, 0], "out": [0, 0], "smooth": false },
+              { "id": 39, "p": [-44, -130], "in": [0, 0], "out": [0, 0], "smooth": false },
+              { "id": 40, "p": [44, -130], "in": [0, 0], "out": [0, 0], "smooth": false },
+              { "id": 41, "p": [44, -114], "in": [0, 0], "out": [0, 0], "smooth": false }
+            ]
+          },
+          {
+            "id": 14,
+            "group": 11,
+            "closed": true,
+            "fill": "#FFFFFF66",
+            "clipped": true,
+            "points": [
+              { "id": 42, "p": [-44, -124], "in": [0, 0], "out": [0, 0], "smooth": false },
+              { "id": 43, "p": [-44, -127], "in": [0, 0], "out": [0, 0], "smooth": false },
+              { "id": 44, "p": [44, -127], "in": [0, 0], "out": [0, 0], "smooth": false },
+              { "id": 45, "p": [44, -124], "in": [0, 0], "out": [0, 0], "smooth": false }
+            ]
+          },
+          {
+            "id": 15,
+            "closed": false,
+            "stroke": { "color": "#222222FF", "global": 3, "width": 2.5 },
+            "points": [
+              { "id": 46, "p": [-14, -96], "in": [0, 0], "out": [4, 5], "w": 0.3 },
+              { "id": 47, "p": [0, -89], "in": [-8, 0], "out": [8, 0], "w": 1.4 },
+              { "id": 48, "p": [14, -96], "in": [-4, 5], "out": [0, 0], "w": 0.3 }
+            ]
+          }
+        ]
+      },
+      {
+        "id": 16,
+        "name": "Antenna",
+        "transform": { "position": [960, 560], "rotation": 12, "scale": [3, 3], "pivot": [0, -110] },
+        "shapes": [
+          {
+            "id": 17,
+            "closed": false,
+            "stroke": { "color": "#222222FF", "global": 3, "width": 3 },
+            "points": [
+              { "id": 49, "p": [0, -140], "in": [0, 0], "out": [0, 0], "smooth": false },
+              { "id": 50, "p": [0, -168], "in": [0, 0], "out": [0, 0], "smooth": false }
+            ]
+          },
+          {
+            "id": 18,
+            "closed": true,
+            "fill": "#5A8DEEFF",
+            "fillGlobal": 2,
+            "stroke": { "color": "#222222FF", "global": 3, "width": 3 },
+            "points": [
+              { "id": 51, "p": [0, -180], "in": [-3.3137, 0], "out": [3.3137, 0] },
+              { "id": 52, "p": [6, -174], "in": [0, -3.3137], "out": [0, 3.3137] },
+              { "id": 53, "p": [0, -168], "in": [3.3137, 0], "out": [-3.3137, 0] },
+              { "id": 54, "p": [-6, -174], "in": [0, 3.3137], "out": [0, -3.3137] }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "sequences": [
+    {
+      "id": 57,
+      "name": "Hello",
+      "keyframes": [
+        {
+          "id": 58,
+          "name": "Tilt",
+          "transition": { "duration": 0.6, "curve": "ease-out" },
+          "changes": [
+            {
+              "set": 10,
+              "props": { "transform.rotation": -6 }
+            },
+            {
+              "set": 16,
+              "props": { "transform.rotation": -8 }
+            }
+          ]
+        },
+        {
+          "id": 59,
+          "transition": { "duration": 0.4, "curve": [0.3, 1.6, 0.6, 1] },
+          "changes": [
+            {
+              "set": 2,
+              "props": { "color": "#2BB673FF" }
+            },
+            {
+              "set": 6,
+              "props": { "fill": "#2BB673FF", "gradient.stops.0.color": "#2BB673FF" }
+            },
+            {
+              "set": 10,
+              "props": { "transform.rotation": 0 }
+            },
+            {
+              "set": 16,
+              "props": { "transform.rotation": 12 }
+            },
+            {
+              "set": 18,
+              "props": { "fill": "#2BB673FF" }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 60,
+      "name": "Speak",
+      "keyframes": [
+        {
+          "id": 61,
+          "transition": { "duration": 0, "curve": "linear" },
+          "changes": [
+            {
+              "create": {
+                "id": 62,
+                "name": "Bubble",
+                "transform": { "pivot": [1300, 360] },
+                "shapes": [
+                  {
+                    "id": 63,
+                    "closed": true,
+                    "fill": "#FFFFFFFF",
+                    "stroke": { "color": "#222222FF", "width": 6 },
+                    "opacity": 0,
+                    "points": [
+                      { "id": 64, "p": [1150, 260], "in": [0, 0], "out": [0, 0], "smooth": false },
+                      { "id": 65, "p": [1450, 260], "in": [0, 0], "out": [0, 0], "smooth": false },
+                      { "id": 66, "p": [1450, 460], "in": [0, 0], "out": [0, 0], "smooth": false },
+                      { "id": 67, "p": [1150, 460], "in": [0, 0], "out": [0, 0], "smooth": false }
+                    ]
+                  }
+                ]
+              },
+              "after": 16
+            }
+          ]
+        },
+        {
+          "id": 68,
+          "transition": { "duration": 0.5, "curve": "ease" },
+          "changes": [
+            {
+              "set": 56,
+              "props": { "background": "#F4F1E8FF" }
+            },
+            {
+              "set": 63,
+              "props": { "opacity": 1 }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 69,
+      "name": "Point",
+      "keyframes": [
+        {
+          "id": 70,
+          "transition": { "duration": 0.8, "curve": "ease-in-out" },
+          "changes": [
+            {
+              "create": { "id": 71, "p": [1244.8, 550], "in": [88.2, 0], "out": [-37.8, 0], "smooth": false },
+              "in": 63,
+              "after": 66,
+              "before": 67,
+              "t": 0.6253
+            }
+          ]
+        },
+        {
+          "id": 72,
+          "transition": { "duration": 0.3, "curve": "ease-in" },
+          "changes": [
+            { "delete": 62 },
+            {
+              "set": 56,
+              "props": { "background": "#FFFFFFFF" }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

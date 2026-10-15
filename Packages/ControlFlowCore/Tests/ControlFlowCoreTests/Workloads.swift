@@ -351,27 +351,27 @@ struct Workload: @unchecked Sendable {
 
     /// What an autosave writes, before the thumbnail.
     static let save = Workload(name: "Save: encode and format") { drawing in
-        { _ = CharacterFormat.encode(drawing).formatted() }
+        { _ = PresentationFormat.encode(drawing).formatted() }
     }
 
     /// What opening a document reads: the JSON text parsed and decoded into a drawing.
     static let open = Workload(name: "Open: parse and decode") { drawing in
-        let data = Data(CharacterFormat.encode(drawing).formatted().utf8)
+        let data = Data(PresentationFormat.encode(drawing).formatted().utf8)
         return {
-            _ = try! CharacterPackage(files: [CharacterPackage.characterFile: data])
+            _ = try! PresentationPackage(files: [PresentationPackage.presentationFile: data])
         }
     }
 
     /// The first half of opening: the JSON text into a `JSONValue`.
     static let openParse = Workload(name: "Open: parse only") { drawing in
-        let data = Data(CharacterFormat.encode(drawing).formatted().utf8)
+        let data = Data(PresentationFormat.encode(drawing).formatted().utf8)
         return { _ = try! JSONValue(parsing: data) }
     }
 
     /// The second half of opening: the `JSONValue` into a drawing.
     static let openDecode = Workload(name: "Open: decode only") { drawing in
-        let json = try! JSONValue(parsing: Data(CharacterFormat.encode(drawing).formatted().utf8))
-        return { _ = try! CharacterFormat.decode(json) }
+        let json = try! JSONValue(parsing: Data(PresentationFormat.encode(drawing).formatted().utf8))
+        return { _ = try! PresentationFormat.decode(json) }
     }
 
     static let svgExport = Workload(name: "SVG export") { drawing in

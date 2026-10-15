@@ -1,69 +1,109 @@
-# Document file format (interim)
+# Presentation file format 1.0
 
-ControlFlow still saves to the Character Studio package format, format 0.3, until its own presentation format replaces it (milestone 3 of [the plan](../docs/plans/animation-app.md)). It writes only the parts of that format it still uses, and reads older character files with their rig, keeping only the art.
-
-A document is a `.charstudio` package (a folder that Files shows as one document):
+A ControlFlow document is a `.controlflow` package (a folder that Files shows as one document):
 
 | File | What it is |
 | --- | --- |
-| `character.json` | The document. Validated by [`character-0.3.schema.json`](character-0.3.schema.json). |
-| `thumbnail.png` | Optional 512 x 512 preview of the art. |
+| `presentation.json` | The document. Validated by [`controlflow-1.0.schema.json`](controlflow-1.0.schema.json). |
+| `thumbnail.png` | Optional 512 x 512 preview of the opening state. |
 | `references/` | Pixels of editor-only reference images, named `reference-1.png`, `reference-2.jpg`, ... |
 
-[`examples/robo.charstudio`](examples/robo.charstudio) is a complete example. The core tests check that the app re-saves it byte for byte, and CI validates it against the schema (`python Schema/validate.py`, which needs `pip install jsonschema`).
+[`examples/demo.controlflow`](examples/demo.controlflow) is a complete example: a robot in three sequences that turns its head, changes color, pops up a speech bubble, grows a point on it and takes it away. The core tests check that the app re-saves it byte for byte, and CI validates it against the schema (`python Schema/validate.py`, which needs `pip install "jsonschema>=4.18"`). [`vectors/`](vectors) holds the [test vectors](#test-vectors).
+
+Character Studio's `.charstudio` files (formats 0.1 to 0.3), which ControlFlow saved until milestone 3, don't open.
 
 ## Conventions
 
 - Points, y-axis down. Angles in degrees, clockwise on screen. Colors are `#RRGGBBAA` sRGB with straight alpha.
 - Numbers are written with at most 4 decimal places. Keys are written in a fixed order, so saving twice gives the same file.
-- `formatVersion` is semantic. In 0.x a newer minor version may break compatibility, so the app refuses it. Older files are upgraded on open by the steps in `CharacterFormat.migrations`; a 0.1 or 0.2 file reads unchanged and is saved as 0.3.
+- `formatVersion` is `MAJOR.MINOR`. Readers refuse a newer major version; a newer minor version only adds keys, which older readers ignore. Older files are upgraded on open by the steps in `PresentationFormat.migrations` (none yet).
 - Readers should ignore keys they do not know.
+- **Ids** are positive whole numbers, each used once in the file: the viewport, global colors, layers, groups, shapes, vertices, sequences and keyframes all share one numbering. The one exception is an object created by a keyframe after an object with its id was deleted: a shape moved to another layer is deleted from one and created in the other with the same id, so it animates as one shape.
 
-## What the app writes
+## The document
 
 In this order:
 
 - `formatVersion` and `name`, the presentation's name.
-- `bones`: only `root`, with `parent: null`, `length: 0` and no transform, so every attachment is in world space.
-- `slots`: one per layer, all on `root`. A slot's id is the layer's name, kept unique.
-- `drawOrder`: slot ids from back to front.
-- `skins.default[slot][slot]`: a `vector` attachment with the layer's `pivot`, an optional `transform`, its `groups` and its `shapes`, back to front. Attachments and shapes may carry `hidden: true` and `locked: true`, editor hints written only when set.
-- A shape is `closed`, an optional `fill`, an optional `stroke` (`color`, `width`) and `points`. Each point has the anchor `p`, handles `in` and `out` as offsets from `p`, `smooth: false` on corner points, and `symmetric: true` on points whose handles are kept equally long.
-- `palette`: reusable colors. Plain `#RRGGBBAA` strings come first, then global colors as `{ "name", "color" }`.
-- `references`: editor-only reference images, bottom to top, with placement (`x`, `y` center, `rotation`, `scale`), `opacity` and `hidden`.
-- `viewport`: the stage the presentation shows, `{ "width", "height", "background" }`. Its top-left is at the world origin. It is the area the editor exports and the area outside it is dimmed while editing. A file without it opens with 1920 x 1080 on white.
+- `viewport`: the stage the presentation shows, `{ "id", "width", "height", "background" }`. Its top-left is at the world origin. It is the area the editor exports, and the area outside it is dimmed while editing. Only `background` is keyed.
+- `palette`: editor-only reusable colors.
+- `globalColors`: `{ "id", "name", "color" }`. A shape's `fillGlobal` and a stroke's `global` hold the id of the global color they follow, and `fill` and `color` hold its current value, so readers that ignore global colors draw the same thing. The colors are keyed, so everything following one animates with it; the names aren't.
+- `references`: editor-only reference images, bottom to top, with placement (`x`, `y` center, `rotation`, `scale`), `opacity` and `hidden`. Not keyed.
+- `opening`: the scene before the first keyframe, `{ "layers" }`.
+- `sequences`: `{ "id", "name", "keyframes" }`, in playing order. One Advance plays one sequence.
 
-## Reading older files
+### Scene objects
 
-Character Studio files can hold a skeleton, poses, weights, parameters, keyforms, accessories, variants, skins, switches, deformers and a character frame. ControlFlow opens them with each layer's art placed where the bones put it at rest, in world space, and drops the rest: only the default skin's shown attachment of each slot is read, accessories become plain layers, keyforms and weights are ignored, and `frame` is ignored. Saving writes the subset above.
+- A **layer** is `{ "id", "name", "transform", "groups", "shapes" }`, back to front. `groups` is written only when there are some.
+- A **group** is `{ "id", "name" }`, with `"clipped": true` on a clipped group and an optional `transform`. A shape's `group` holds its group's id; a group's shapes are next to each other in `shapes`, and groups don't nest.
+- A **shape** is `{ "id", "group", "closed", "fill", "fillGlobal", "gradient", "stroke", "opacity", "clipped", "transform", "points" }`, with only `id`, `closed` and `points` always written.
+- A **vertex** is `{ "id", "p", "in", "out" }`: the anchor `p` and its handles as offsets from `p`. Optional keys: `w` (the outline width there as a multiple of the stroke width, blended along each segment; default 1), `smooth: false` on corner points, `symmetric: true` on points whose handles are kept equally long, and `stroked: false` to leave the segment to the next point without an outline (the fill still covers it).
+- **Editor hints**: layers, groups and shapes may carry `hidden: true` and `locked: true`, written only when set. Like names, they are the same at every keyframe, and players draw hidden art as usual.
 
-## Appearance (0.2)
+### Appearance
 
-Every key here is optional and written only when it differs from its default, so a shape that uses none of them looks exactly like a 0.1 shape.
+Every key here is optional and written only when it differs from its default.
 
-- **Outline options** on `stroke`: `cap` (`butt`, `round`, `square`; default `round`), `join` (`miter`, `round`, `bevel`; default `round`), `miterLimit` (in half-widths; default 4), `dash` (dash and gap lengths in points, alternating from a dash; an odd list repeats twice), `dashOffset`, and `align` (`center`, `inside`, `outside`; closed paths only, default `center`).
-- **Variable width**: a point's `w` multiplies the stroke `width` there, blended linearly along each segment (default 1). The width lives on the path's centerline, not as an outlined shape.
-- **Unstroked edges**: `stroked: false` on a point leaves the segment from that point to the next without an outline, while the fill still covers it (default true). The outline is drawn as separate open runs over the stroked segments, each ending in the stroke's `cap`, and dashes start afresh on each run. On an open path the last point's flag is ignored.
-- **Gradients**: `gradient` replaces a shape's solid `fill` with `{ "type", "start", "end", "stops" }`. `linear` runs from `start` to `end`; `radial` runs from `start` (the center) out to the circle through `end`. Stops are `{ "offset", "color" }`, interpolated in straight alpha. The points are in the attachment's space, so the gradient moves, turns and scales with the shape. `fill` stays as the color for readers without gradients (the app keeps it equal to the first stop).
+- **Outline** `stroke`: `color`, `global`, `width`, then `cap` (`butt`, `round`, `square`; default `round`), `join` (`miter`, `round`, `bevel`; default `round`), `miterLimit` (in half-widths; default 4), `dash` (dash and gap lengths in points, alternating from a dash; an odd list repeats twice), `dashOffset`, and `align` (`center`, `inside`, `outside`; closed paths only, default `center`). The outline is drawn as separate open runs over the stroked segments, each ending in the stroke's `cap`, and dashes start afresh on each run.
+- **Gradients**: `gradient` replaces a shape's solid `fill` with `{ "type", "start", "end", "stops" }`. `linear` runs from `start` to `end`; `radial` runs from `start` (the center) out to the circle through `end`. Stops are `{ "offset", "color" }`, interpolated in straight alpha. The points are in the shape's space. `fill` stays as the color for readers without gradients (the app keeps it equal to the first stop).
 - **Opacity**: `opacity` (0 to 1) multiplies the alpha of the fill and of the outline, each on its own.
-- **Clipping**: a shape with `clipped: true` draws only where the nearest unclipped shape below it in the same attachment draws (its fill and outline), like a clipping mask. Several clipped shapes in a row share that base. A clipped shape with nothing below it draws unclipped. In a [group](#groups), the base is looked for only within the group, so a clipped shape at the bottom of its group draws unclipped. Outside a group, the shapes of a clipped group count as clipped, so a clipped shape above a clipped group shares the group's base.
-- **Global colors**: `fillGlobal` on a shape and `global` on a stroke name a global color in `palette`. `fill` and `color` still hold the current value, so readers that ignore global colors draw the same thing; the editor changes every follower when the global color changes.
+- **Clipping**: a shape with `clipped: true` draws only where the nearest unclipped shape below it in the same layer draws (its fill and outline). Several clipped shapes in a row share that base, and one with nothing below it draws unclipped. In a group the base is looked for only within the group. A clipped group draws only where the nearest shape below the group that isn't clipped (or in another clipped group) draws, and clipping inside it still works.
 
-## Transforms
-
-ControlFlow's layers, groups and shapes each have a transform, saved as an optional `transform` object on the attachment, on a group and on a shape. These keys are new in ControlFlow; the version stays 0.3, and a file without them reads as before.
+### Transforms
 
 - `transform` is `{ "position", "rotation", "scale", "pivot" }`: the object scales by `scale` and turns by `rotation` (degrees, clockwise) about `pivot`, then moves by `position`. As a matrix, `translate(position + pivot) · rotate(rotation) · scale(scale) · translate(-pivot)`.
-- They compose layer, then group, then shape, and a shape's `points` (and its gradient) are in the shape's own space, before its transform. An outline's width scales with the transform as the art does.
-- `transform` is written only when it moves something, and each key only when it isn't its default (`[0, 0]`, `0`, `[1, 1]`, `[0, 0]`). A layer's transform has no `pivot`: its pivot is the attachment's `pivot`.
+- They compose layer, then group, then shape, and a shape's `points` (and its gradient) are in the shape's own space. An outline's width scales with the transform as the art does.
+- `transform` is written only when it moves something, and each key only when it isn't its default (`[0, 0]`, `0`, `[1, 1]`, `[0, 0]`).
 - `rotation` is not wrapped, so `720` is two turns, and a negative `scale` flips.
 
-## Groups
+## Keyframes
 
-Added after 0.2 shipped, as optional keys, so the version stays 0.2. Both are written only when a part has groups.
+A keyframe is `{ "id", "name", "transition", "changes" }`. The scene at a keyframe is the opening scene with the changes of every keyframe up to it applied in order. A keyframe with no changes is a hold.
 
-- `groups` on a vector attachment lists the attachment's groups of shapes as `{ "id", "name" }`, bottom to top, with `"clipped": true` on a clipped group. Ids are whole numbers local to the attachment; the app numbers them from 1.
-- `group` on a shape names the group it belongs to. A group's shapes are next to each other in `shapes`, and groups don't nest.
-- Groups only say which shapes belong together for editing; they don't change how anything draws, except that a clipped shape looks for its base only within its group (see Clipping above), and a clipped group draws as a whole inside its base. Readers that ignore `groups` and `group` draw the same picture as long as no group is clipped.
-- **Clipped groups**: a group with `clipped: true` draws only where the nearest shape below the group that isn't clipped (or in another clipped group) draws, its fill and outline, as if each of its shapes were clipped to that base. Clipping inside the group still works: a clipped shape in the group draws inside both its base in the group and the group's base. A clipped group with nothing below it draws unclipped, and one whose base is hidden is hidden too.
-- Readers should treat a shape naming an unknown group as ungrouped, and drop groups no shape uses. The app reads a group whose shapes are not next to each other as one group per run of shapes, each with the group's name. Two groups with the same id in one attachment are an error.
+`transition` is the animation into the keyframe: `{ "duration", "curve" }`, defaulting to 0.5 seconds of `ease-in-out`. A `duration` of 0 is a cut. `curve` is one of CSS's `linear`, `ease`, `ease-in`, `ease-out` and `ease-in-out`, or `[x1, y1, x2, y2]` for CSS's `cubic-bezier`: the x values are in 0 to 1 and the y values may leave it to overshoot.
+
+### Changes
+
+Each change applies to the scene left by the changes before it, and must refer to objects that are there (a file whose change names a missing object doesn't open, and the error names the change's path).
+
+| Change | Meaning |
+| --- | --- |
+| `{ "set": id, "props": { ... } }` | Sets properties of a layer, group, shape or vertex, the viewport (`background`) or a global color (`color`). |
+| `{ "create": object, "in": parent, "after": sibling, "before": vertex, "t": t }` | Adds a layer (no `in`), a group or shape (`in` a layer) or a vertex (`in` a shape), with everything under it. |
+| `{ "delete": id, "t": t }` | Removes a layer, group, shape or vertex and everything under it. A group's shapes stay, ungrouped. |
+| `{ "order": [ids], "in": parent }` | A new order for the layers (no `in`), a layer's shapes or a shape's points. Children not listed keep their places. |
+
+- **`props`** keys are the object's own keys, with dotted paths into nested values: `transform.rotation`, `stroke.width`, `gradient.stops.1.color`. Setting a nested key creates the objects above it. A key set back to its default is written as the default (`"opacity": 1`); one with no default (`fill`, `stroke`, `gradient`, `group`, `fillGlobal`) is removed with `null`. Ids, names, editor hints and children (`points`, `shapes`, `groups`) can't be set; a shape's `closed` can. The app writes only the keys that change, comparing objects key by key and gradient stops one by one, and writes other arrays (`p`, `dash`) whole.
+- **`after`** places a created object after that sibling, or first without it. Groups have no order and ignore it.
+- **`before`** and **`t`** on a created vertex say where it was born: on the segment from `after` to `before`, at curve parameter `t`. When several are born on one segment, each `t` is measured on what is left of the segment after the one before. On a deleted vertex, `t` is where it sits on the healed segment. Both are hints for [transitions](#transitions): a reader that ignores them still gets the right scenes.
+- The app writes a keyframe's changes in the order removals, additions, property sets, orders.
+
+## Transitions
+
+A transition into a keyframe animates from the scene before it to its own over `duration` seconds. At `elapsed` seconds the progress is `p = curve(elapsed / duration)`, the curve's y where its x is that fraction, and each value is `a + (b - a) × p`:
+
+- **Numbers** (transform fields, opacity, outline width, miter limit, dash lengths and offset, per-point width, gradient points and stop offsets) and **points** (vertex positions and handle offsets) move linearly. Rotation is a plain number, so 0 to 720 turns twice.
+- **Colors** (fills, outlines, gradient stops, global colors, the viewport background) move componentwise in sRGB with straight alpha, as CSS does. Shapes following a global color follow it as it moves.
+- **Everything else** takes its new value at the **start**: `closed`, handle modes, ends, corners, outline position, gradient kind, clipping, fill or outline turned on or off, stroked edges, group membership and draw order. Dash lists and gradient stops that change length snap too.
+- **Created** objects appear at the start. **Deleted** objects stay, as they were, until the end, in their old place.
+- Values a curve carries past its ends are clamped where they must be: colors and opacity to 0 to 1, widths to 0 or more, the miter limit to 1 or more, and a scale to the sign both ends share.
+
+### Vertices born and dying
+
+A shape whose vertices change lines them up by id:
+
+- A vertex **born** on a segment between two vertices present at both ends starts on the old curve: the old segment is split at its `t` (de Casteljau, as inserting a point does), and the neighbours' handles take the split values, so the shape looks unchanged at the start and then moves to its new geometry. Several born on one segment split it in turn.
+- A vertex **dying** on a segment is mirrored: the healed segment is split at its `t`, so the vertex rides along the curve and vanishes at the end.
+- On an open path, a vertex born or dying past the last vertex present at both ends grows out of (or shrinks into) that end vertex, with no handles.
+- When there is no vertex in common, `closed` changes, the common vertices change order, or one segment both gains and loses vertices, the shape takes its new points at the start and only the vertices in common move.
+
+## Test vectors
+
+The files in [`vectors/`](vectors) check another player (such as the planned HTML export) against the app. Each holds a `document`, a path to a `presentation.json` relative to the file or the document itself, and `samples`: `{ "sequence", "time", "scene" }`, the scene expected `time` seconds into playing that sequence (by index) from the end of the one before it. Times are each sequence's start, a quarter, half and three quarters into each transition, and each keyframe's end.
+
+A `scene` is `{ "background", "globalColors", "layers" }`, in the file's own JSON for those objects, with numbers rounded to 4 decimals; compare numbers to within 0.0002. Layers include objects that are leaving.
+
+- `demo.json` plays the example.
+- `morph.json` exercises each rule: points born and dying on segments and at an open path's end, turns past 360, a flip, an overshooting curve and color, a cut, a shape created and one deleted, a new draw order and a shape that can't be merged.
+
+`TestVectorTests` checks them; run it with `UPDATE_VECTORS=1` to write them afresh after an intended change to these rules.

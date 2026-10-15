@@ -38,6 +38,39 @@ extension JSONValue: Equatable {
     }
 }
 
+extension JSONValue: Hashable {
+    public func hash(into hasher: inout Hasher) {
+        switch self {
+        case .null: hasher.combine(0)
+        case .bool(let b): hasher.combine(b)
+        case .number(let n): hasher.combine(n)
+        case .string(let s): hasher.combine(s)
+        case .array(let items): hasher.combine(items)
+        case .object(let members):
+            // Equality ignores key order, so the hash does too.
+            hasher.combine(members.count)
+            hasher.combine(members.reduce(0) { $0 ^ (31 &* $1.key.hashValue &+ $1.value.hashValue) })
+        }
+    }
+}
+
+extension JSONValue {
+    /// The value with every number rounded to `decimals` places (and -0 written as 0), as
+    /// files are written.
+    public func rounded(decimals: Int = 4) -> JSONValue {
+        switch self {
+        case .number(let n):
+            guard n.isFinite else { return .number(0) }
+            let k = pow(10, Double(decimals))
+            let r = (n * k).rounded() / k
+            return .number(r == 0 ? 0 : r)
+        case .array(let items): return .array(items.map { $0.rounded(decimals: decimals) })
+        case .object(let members): return .object(members.map { (key: $0.key, value: $0.value.rounded(decimals: decimals)) })
+        case .null, .bool, .string: return self
+        }
+    }
+}
+
 // MARK: Writing
 
 extension JSONValue {
