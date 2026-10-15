@@ -41,7 +41,7 @@ From [the plan](docs/plans/animation-app.md#11-milestones):
 3. **Keyframe core** (done; see the notes below): sequences, deltas, interpolation and format 1.0, in the core with no UI yet.
 4. **Timeline UI** (done; see the notes below): the timeline strip, Set Keyframe, transitions and their curve editor, scrubbing, Play Sequence, onion skin and changed indicators.
 5. **Presenting** (done; see the notes below): presentation mode, its keys, taps and pinch, and the external display with the presenter view.
-6. HTML export (later).
+6. **HTML export** (done; see the notes below): Export Web Page writes a folder that GitHub Pages or any web server plays as presentation mode does.
 
 ## Milestone 1 notes (strip and rename)
 
@@ -92,7 +92,7 @@ From [the plan](docs/plans/animation-app.md#11-milestones):
 - **Editor:** `DrawingEditor` edits the current keyframe (`selectKeyframe`, nil for the opening state) and commits edits into the timeline; undo stores the whole presentation and the current keyframe (`EditorSnapshot`), one step per gesture or command. The timeline commands, Revert to Previous and `changedObjects()` (for the Layers panel's changed dots) are in `DrawingEditor+Timeline.swift`, ready for milestone 4's UI.
 - **Interpolation:** `Timeline.transition(into:elapsed:)` and `playing(sequence:at:)` give the scene partway through a transition: numbers, points and sRGB colors lerp, other values snap at the start, created objects appear at the start and deleted ones leave at the end. `VertexMerge` lines up vertices by id so a point born on a segment starts on the old curve and a dying one rides the healed curve. See [Schema/README.md](Schema/README.md#transitions).
 - **Format 1.0:** `PresentationFormat` and `PresentationPackage` replace the Character Studio format. Ids are saved (vertices' included) and checked to be unique, and a change naming an object that isn't there is a load error with its path. The example is now [`Schema/examples/demo.controlflow`](Schema/examples/demo.controlflow), three sequences of the robot; the schema is [`controlflow-1.0.schema.json`](Schema/controlflow-1.0.schema.json).
-- **Test vectors:** [`Schema/vectors`](Schema/vectors) records the scenes expected while the example and a set of morphs play, for checking the planned HTML player against this one (`TestVectorTests`). Tests for the rest are in `KeyframeTests.swift` and `DocumentTests.swift`.
+- **Test vectors:** [`Schema/vectors`](Schema/vectors) records the scenes expected while the example and a set of morphs play, for checking the HTML player against this one (`TestVectorTests`). Tests for the rest are in `KeyframeTests.swift` and `DocumentTests.swift`.
 
 ## Milestone 4 notes (timeline UI)
 
@@ -113,6 +113,20 @@ From [the plan](docs/plans/animation-app.md#11-milestones):
 - **Playback** runs on the canvas's display link: each frame `CanvasStore.playbackFrame(at:)` asks for the scene at the frame's display time.
 - **Onion skin:** `DrawingEditor.onionSkin` is the previous keyframe's state while `showsOnionSkin` is on; the renderer builds it with its own `ArtBuilder`, every shape at the ghost view's opacity, and draws it under the art.
 - **Strip model:** `TimelineStrip` (chips, blocks, titles, durations), `Transition.durationLabel`, and `TimingCurve.moving(controlPoint:to:)`, `normalized` and `samples(count:)` for the curve editor and glyphs. `keyedProperties()` gives what the current keyframe keys on the selection, and `TimelineStrip.propertyNames` names it for the Inspector. Thumbnails are drawn off the main thread with `ThumbnailRenderer` once edits go quiet, only for keyframes whose scene changed. Tests are in `TimelineUITests.swift`.
+
+## Milestone 6 notes (HTML export)
+
+**Using it**
+
+- **More > Export Web Page** saves a folder named after the presentation, holding `index.html`, `player.js` and `presentation.json` (the same format 1.0 file, without reference images). Put the folder on GitHub Pages or any web server and open `index.html`; it needs no build step and uses only relative paths. Opened straight from disk (`file://`), browsers won't let the page read `presentation.json`, so it says to serve the folder instead (`python3 -m http.server` in the folder works).
+- It plays as presentation mode does: the opening state, then one sequence per Advance, letterboxed in black. Click or tap the right half, swipe left, or press Space, →, ↓, Page Down or Return to advance; click or tap the left half, swipe right, or press ←, ↑, Page Up or Backspace to go back. Home and End jump to the start and the end, and F toggles full screen.
+- The address's hash is the number of sequences played (`index.html#3` opens with three played), and it follows along as you present, so a reload or a shared link opens on the same step.
+- Hidden art is left out, as in presentation mode. Translucent gradient stops may blend slightly differently, since browsers mix gradient colors premultiplied.
+
+**How it works**
+
+- **`HTMLExport`** (ControlFlowCore) returns the folder's files; the page and player are the package resources in `Sources/ControlFlowCore/Player/`. Tests are in `HTMLExportTests.swift`.
+- **`player.js`** is a dependency-free port of the core: reading the file, applying keyframe changes (`SceneDiff`), timing curves, `Interpolation` and `VertexMerge` for playing, and `SVGWriter` with the `Stroker` for drawing each frame as SVG (variable-width outlines become triangles, inside and outside outlines and clipping become clip paths and masks). `Schema/test_player.js` plays every test vector sample with it and compares the scenes with the app's; CI runs it in the schema job. While porting, its drawing was checked to write the same SVG as `SVGWriter` for every vector scene.
 
 ## Milestone 5 notes (presenting)
 

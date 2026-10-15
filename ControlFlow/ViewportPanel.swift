@@ -54,12 +54,14 @@ struct ViewportPanel: View {
     }
 }
 
-/// An exported SVG or PNG handed to the system's file exporter.
+/// An exported SVG or PNG, or the web page's folder, handed to the system's file exporter.
 struct ExportFile: FileDocument {
     static let readableContentTypes: [UTType] = []
-    static let writableContentTypes: [UTType] = [.svg, .png]
+    static let writableContentTypes: [UTType] = [.svg, .png, .folder]
 
     var data = Data()
+    /// A folder's files by path within it, for a folder export.
+    var folder: [String: Data]?
     var type = UTType.svg
     var name = "Untitled"
 
@@ -71,11 +73,24 @@ struct ExportFile: FileDocument {
         self.name = name
     }
 
+    init(folder: [String: Data], name: String) {
+        self.folder = folder
+        self.type = .folder
+        self.name = name
+    }
+
     init(configuration: ReadConfiguration) throws {
         throw CocoaError(.fileReadUnsupportedScheme)
     }
 
     func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
-        FileWrapper(regularFileWithContents: data)
+        guard let folder else { return FileWrapper(regularFileWithContents: data) }
+        var children: [String: FileWrapper] = [:]
+        for (name, contents) in folder {
+            let file = FileWrapper(regularFileWithContents: contents)
+            file.preferredFilename = name
+            children[name] = file
+        }
+        return FileWrapper(directoryWithFileWrappers: children)
     }
 }

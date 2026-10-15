@@ -131,7 +131,7 @@ Only objects named in delta *k* (and their children) can change during the trans
 | --- | --- |
 | Numbers: transform fields, opacity, outline width, miter limit, per-point width, gradient angle, spread and stop offsets | Linear in `p`. Rotation is a plain number, so 0° → 720° spins twice. |
 | Points: vertex position, in and out handles | Componentwise. Handles are offsets, as in the file. |
-| Colors: fill, outline, gradient stops, global colors, viewport background | Componentwise RGBA in sRGB, not premultiplied. This matches CSS, which keeps the planned HTML export identical. |
+| Colors: fill, outline, gradient stops, global colors, viewport background | Componentwise RGBA in sRGB, not premultiplied. This matches CSS, which keeps the HTML export identical. |
 | Everything else: closed, handle mode, ends, corners, dash style, outline position, gradient kind, clipping, fill or outline on/off, stroked edges, group membership, draw order | Snaps to the new value at the **start** of the transition. |
 
 A shape that follows a global color animates when the global color animates. Values that overshoot from a curve with y outside [0, 1] are clamped where they must be: alpha and color to [0, 1], widths and scale to ≥ 0.
@@ -236,9 +236,9 @@ Inserting a point in the editor already preserves the curve (`BezierPath.insertP
 
 Property keys in `set` use the same names as the object's own JSON, with dotted paths into nested values (`transform.rotation`, `stroke.width`, `gradient.stops.1.color`). Only keys that change are written, and optional keys are written only when they differ from their defaults, as today.
 
-## 10. Static HTML export (later)
+## 10. Static HTML export
 
-The planned export is a self-contained directory that GitHub Pages can serve as is: `index.html`, `player.js`, `presentation.json` (the same 1.0 file) and the reference-free assets. It uses relative paths and needs no build step. It has the same inputs as §8, plus swipes and URL hashes (`#3`) for deep-linking to a sequence.
+The export is a self-contained directory that GitHub Pages can serve as is: `index.html`, `player.js`, `presentation.json` (the same 1.0 file) and the reference-free assets. It uses relative paths and needs no build step. It has the same inputs as §8, plus swipes and URL hashes (`#3`) for deep-linking to a sequence.
 
 Design choices now that keep this cheap later:
 - The interpolation rules in §6 are written to be portable: plain lerps, sRGB colors, CSS-identical curves and documented split rules.
@@ -283,7 +283,11 @@ Design choices now that keep this cheap later:
    - The external display is a `windowExternalDisplayNonInteractive` scene, which iPadOS gives the app when it would otherwise mirror (Stage Manager off). With Stage Manager on the iPad presents full-screen. The external display is black while nothing is presented.
    - The editor's keyboard shortcuts are off while presenting, since the arrows (nudge) and Escape (exit isolation) mean other things there.
    - `PerformanceTests.testPlaybackFrames` is the interpolation-and-tessellation workload: 50 shapes moving, recoloring and reshaping, one frame per call.
-6. **HTML export** (later): §10.
+6. **HTML export** (shipped): §10.
+   - **More > Export Web Page** writes the folder: `index.html`, `player.js` and `presentation.json` (format 1.0, written without reference images). `HTMLExport` in ControlFlowCore builds it from package resources in `Sources/ControlFlowCore/Player/`.
+   - `player.js` ports the resolver, interpolation, vertex merge and timing curves, and draws each frame as SVG by porting `SVGWriter` and the `Stroker`: variable-width outlines are baked to triangles per frame in JS, inside and outside outlines are doubled and clipped or masked. `Schema/test_player.js` checks it against the shared test vectors in CI (the schema job).
+   - The hash is the number of sequences played (`#3`) and follows the presentation. Swipes, Home, End and F (full screen) are added to §8's inputs; there is no pinch to exit, since the page has nothing to exit to.
+   - Hidden art is left out, as presentation mode does (Schema/README.md now says so).
 
 Following `CLAUDE.md`, this file is the plan of record: update it in the same PR when a plan changes or a milestone ships, and rewrite the README milestone notes as each milestone ships.
 

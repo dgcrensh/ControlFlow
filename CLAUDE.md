@@ -6,7 +6,8 @@ ControlFlow is a personal iPad app (SwiftUI + Metal) for drawing keyframed vecto
 
 - `ControlFlow/`: the app target. SwiftUI shell, panels, the Metal canvas (`Canvas/`), and the `.controlflow` document (`Document/`). Shaders are compiled at launch from `Canvas/ShaderSource.swift`; there are no `.metal` files.
 - `Packages/ControlFlowCore/`: a UI-free Swift package with everything that can be tested: geometry, camera, curve fitting, Bézier paths, the `Drawing` model and its `Viewport`, `DrawingEditor` and its commands, undo, keyframes (`Presentation`, `Timeline`) and their interpolation, tessellation, touch routing, snapping and the JSON file format. The app links it as a local package.
-- `Schema/`: JSON Schema for `presentation.json`, the `demo.controlflow` example, the interpolation test vectors and `validate.py`.
+- `Schema/`: JSON Schema for `presentation.json`, the `demo.controlflow` example, the interpolation test vectors, `validate.py` and `test_player.js`.
+- `Packages/ControlFlowCore/Sources/ControlFlowCore/Player/`: the HTML export's `index.html` and `player.js`, package resources that `HTMLExport` copies into each export. `player.js` ports the playing and drawing code to JavaScript, so a change to how transitions play or how art draws goes there too, checked by `node Schema/test_player.js`.
 - `.github/workflows/ci.yml`: the three CI jobs. `scripts/check.sh` runs the same three locally.
 - `docs/plans/`: planning docs (feature reviews, implementation plans). This is the source of truth for plans: read the relevant one before starting planned work, and update it in the same PR when a plan changes or an item ships. Don't keep plans only outside the repo.
 
@@ -35,7 +36,7 @@ The steps, if you want to run them by hand:
 | CI job | Local command |
 | --- | --- |
 | ControlFlowCore tests (Linux, `swift:6.1`) | `swift test --package-path Packages/ControlFlowCore` |
-| File format schema | `python3 -m venv .venv && .venv/bin/pip install "jsonschema>=4.18" && .venv/bin/python Schema/validate.py` |
+| File format schema (and the HTML player, Node 18+) | `python3 -m venv .venv && .venv/bin/pip install "jsonschema>=4.18" && .venv/bin/python Schema/validate.py && node Schema/test_player.js` |
 | App build (iPad Simulator, `macos-latest`) | `xcodebuild build -project ControlFlow.xcodeproj -scheme ControlFlow -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO` |
 
 Notes:
@@ -49,4 +50,4 @@ Notes:
 
 ## In the cloud (no Xcode)
 
-Cloud sessions run on Linux with no Xcode, so only the core tests and the schema check can run there. A SessionStart hook (`.claude/hooks/session-start.sh`) installs Swift 6.1 at session start, taken from the official `swift` image on Docker Hub because download.swift.org is blocked there, so `swift test` works without setup. The app target cannot be built off a Mac; CI's `app-build` job is the check for it. Say so plainly rather than claiming an app change was built.
+Cloud sessions run on Linux with no Xcode, so only the core tests, the schema check and the HTML player check (Node is installed) can run there. A SessionStart hook (`.claude/hooks/session-start.sh`) installs Swift 6.1 at session start, taken from the official `swift` image on Docker Hub because download.swift.org is blocked there, so `swift test` works without setup. The app target cannot be built off a Mac; CI's `app-build` job is the check for it. Say so plainly rather than claiming an app change was built.
