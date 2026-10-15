@@ -113,12 +113,12 @@ final class HandleModeTests: XCTestCase {
         var path = BezierPath(points: [PathPoint(Vec2(0, 0)), PathPoint(Vec2(50, 0), in: Vec2(-5, 5), out: Vec2(5, -5), mode: .symmetric),
                                        PathPoint(Vec2(100, 0), smooth: false)])
         path.closed = false
-        d.parts = [Part(id: 1, name: "A", shapes: [VectorShape(id: 2, path: path, stroke: StrokeStyle(color: .ink, width: 2))])]
+        d.layers = [Layer(id: 1, name: "A", shapes: [VectorShape(id: 2, path: path, stroke: StrokeStyle(color: .ink, width: 2))])]
         d.nextID = 3
         let text = CharacterFormat.encode(d).formatted()
         XCTAssertEqual(text.components(separatedBy: "\"symmetric\"").count - 1, 1, "only the symmetric point is marked")
         let back = try CharacterFormat.decode(JSONValue(parsing: text)).drawing
-        XCTAssertEqual(back.parts[0].shapes[0].path.points.map(\.mode), [.smooth, .symmetric, .corner])
+        XCTAssertEqual(back.layers[0].shapes[0].path.points.map(\.mode), [.smooth, .symmetric, .corner])
     }
 }
 
@@ -309,7 +309,7 @@ final class SnappingTests: XCTestCase {
         e.tool = .directSelect
         e.snap = grid
         drag(&e, Vec2(100, 0), Vec2(123, 41))
-        let path = e.drawing.parts[0].shapes[0].path
+        let path = e.drawing.layers[0].shapes[0].path
         assertClose(path.points[1].position, Vec2(120, 40))
 
         // Snapping to another shape's anchor, within 8 screen points at zoom 1.
@@ -317,7 +317,7 @@ final class SnappingTests: XCTestCase {
         penPath([Vec2(300, 300), Vec2(400, 300)], in: &e)
         e.tool = .directSelect
         drag(&e, Vec2(120, 40), Vec2(296, 304))
-        assertClose(e.drawing.parts[0].shapes[0].path.points[1].position, Vec2(300, 300))
+        assertClose(e.drawing.layers[0].shapes[0].path.points[1].position, Vec2(300, 300))
     }
 
     func testSnapRadiusShrinksWithZoom() {
@@ -329,7 +329,7 @@ final class SnappingTests: XCTestCase {
         e.pencilBegan(at: Vec2(100, 0), zoom: 4)
         e.pencilMoved(to: Vec2(113, 0))
         e.pencilEnded(at: Vec2(113, 0))
-        assertClose(e.drawing.parts[0].shapes[0].path.points[1].position, Vec2(113, 0))
+        assertClose(e.drawing.layers[0].shapes[0].path.points[1].position, Vec2(113, 0))
     }
 
     func testMoveSnapsTheSelectionFrame() {
@@ -356,19 +356,19 @@ final class PenToolTests: XCTestCase {
         tap(&e, Vec2(0, 0))
         tap(&e, Vec2(100, 0))
         tap(&e, Vec2(100, 100))
-        XCTAssertEqual(e.drawing.parts.count, 1)
-        let path = e.drawing.parts[0].shapes[0].path
+        XCTAssertEqual(e.drawing.layers.count, 1)
+        let path = e.drawing.layers[0].shapes[0].path
         XCTAssertEqual(path.points.map(\.position), [Vec2(0, 0), Vec2(100, 0), Vec2(100, 100)])
         XCTAssertEqual(path.points.map(\.mode), [.corner, .corner, .corner])
         XCTAssertFalse(path.closed)
         XCTAssertTrue(e.isPenActive)
         XCTAssertEqual(e.undoStack.undoStates.count, 3, "one undo step per anchor")
         e.undo()
-        XCTAssertEqual(e.drawing.parts[0].shapes[0].path.points.count, 2)
+        XCTAssertEqual(e.drawing.layers[0].shapes[0].path.points.count, 2)
         XCTAssertTrue(e.isPenActive)
         e.undo()
         e.undo()
-        XCTAssertTrue(e.drawing.parts.isEmpty)
+        XCTAssertTrue(e.drawing.layers.isEmpty)
         XCTAssertFalse(e.isPenActive)
     }
 
@@ -377,7 +377,7 @@ final class PenToolTests: XCTestCase {
         e.tool = .pen
         tap(&e, Vec2(0, 0))
         drag(&e, Vec2(100, 0), Vec2(130, 20))
-        let point = e.drawing.parts[0].shapes[0].path.points[1]
+        let point = e.drawing.layers[0].shapes[0].path.points[1]
         assertClose(point.position, Vec2(100, 0))
         assertClose(point.outHandle, Vec2(30, 20))
         assertClose(point.inHandle, Vec2(-30, -20))
@@ -389,7 +389,7 @@ final class PenToolTests: XCTestCase {
         var e = DrawingEditor()
         e.tool = .pen
         drag(&e, Vec2(0, 0), Vec2(2, 0))
-        let point = e.drawing.parts[0].shapes[0].path.points[0]
+        let point = e.drawing.layers[0].shapes[0].path.points[0]
         XCTAssertEqual(point.mode, .corner)
         XCTAssertEqual(point.outHandle, .zero)
     }
@@ -399,7 +399,7 @@ final class PenToolTests: XCTestCase {
         e.tool = .pen
         for p in [Vec2(0, 0), Vec2(100, 0), Vec2(100, 100)] { tap(&e, p) }
         tap(&e, Vec2(3, 4))
-        let shape = e.drawing.parts[0].shapes[0]
+        let shape = e.drawing.layers[0].shapes[0]
         XCTAssertTrue(shape.path.closed)
         XCTAssertEqual(shape.path.points.count, 3)
         XCTAssertNotNil(shape.visibleFill)
@@ -407,7 +407,7 @@ final class PenToolTests: XCTestCase {
         XCTAssertEqual(e.undoStack.undoStates.count, 4)
         // The next tap starts a new path.
         tap(&e, Vec2(300, 300))
-        XCTAssertEqual(e.drawing.parts.count, 2)
+        XCTAssertEqual(e.drawing.layers.count, 2)
     }
 
     func testTwoAnchorsDoNotCloseOnTheFirst() {
@@ -416,7 +416,7 @@ final class PenToolTests: XCTestCase {
         tap(&e, Vec2(0, 0))
         tap(&e, Vec2(100, 0))
         tap(&e, Vec2(2, 2))
-        XCTAssertFalse(e.drawing.parts[0].shapes[0].path.closed)
+        XCTAssertFalse(e.drawing.layers[0].shapes[0].path.closed)
     }
 
     func testDoneAndDoubleTapEndAnOpenPath() {
@@ -426,7 +426,7 @@ final class PenToolTests: XCTestCase {
         tap(&e, Vec2(100, 0))
         tap(&e, Vec2(100, 0))
         XCTAssertFalse(e.isPenActive, "tapping the end again finishes")
-        XCTAssertEqual(e.drawing.parts[0].shapes[0].path.points.count, 2)
+        XCTAssertEqual(e.drawing.layers[0].shapes[0].path.points.count, 2)
 
         tap(&e, Vec2(300, 0))
         tap(&e, Vec2(400, 0))
@@ -459,7 +459,7 @@ final class PenToolTests: XCTestCase {
         XCTAssertEqual(e.drawing.shapeCount, 1, "continuing adds nothing yet")
         tap(&e, Vec2(200, 100))
         XCTAssertEqual(e.drawing.shapeCount, 1)
-        XCTAssertEqual(e.drawing.parts[0].shapes[0].path.points.map(\.position.x), [0, 100, 100, 200])
+        XCTAssertEqual(e.drawing.layers[0].shapes[0].path.points.map(\.position.x), [0, 100, 100, 200])
     }
 
     func testContinuingFromTheStartExtendsThatEnd() {
@@ -468,36 +468,36 @@ final class PenToolTests: XCTestCase {
         tap(&e, Vec2(0, 0))
         tap(&e, Vec2(-100, 0))
         XCTAssertEqual(e.drawing.shapeCount, 1)
-        XCTAssertEqual(e.drawing.parts[0].shapes[0].path.points.map(\.position.x), [100, 0, -100])
+        XCTAssertEqual(e.drawing.layers[0].shapes[0].path.points.map(\.position.x), [100, 0, -100])
     }
 
     func testTappingAnotherOpenPathsEndJoinsThem() {
         var e = DrawingEditor()
         penPath([Vec2(0, 0), Vec2(100, 0)], in: &e)
         penPath([Vec2(300, 0), Vec2(400, 0)], in: &e)
-        XCTAssertEqual(e.drawing.parts.count, 2)
+        XCTAssertEqual(e.drawing.layers.count, 2)
         e.tool = .pen
         tap(&e, Vec2(100, 0))
         tap(&e, Vec2(300, 0))
-        XCTAssertEqual(e.drawing.parts.count, 1, "the emptied part is removed")
+        XCTAssertEqual(e.drawing.layers.count, 1, "the emptied layer is removed")
         XCTAssertEqual(e.drawing.shapeCount, 1)
-        XCTAssertEqual(e.drawing.parts[0].shapes[0].path.points.map(\.position.x), [0, 100, 300, 400])
+        XCTAssertEqual(e.drawing.layers[0].shapes[0].path.points.map(\.position.x), [0, 100, 300, 400])
         XCTAssertFalse(e.isPenActive)
         e.undo()
         XCTAssertEqual(e.drawing.shapeCount, 2)
     }
 
-    func testPathsStartNewPartsUnlessAutoJoinIsOn() {
+    func testPathsStartNewLayersUnlessAutoJoinIsOn() {
         var e = DrawingEditor()
         penPath([Vec2(0, 0), Vec2(100, 0)], in: &e)
         penPath([Vec2(0, 50), Vec2(100, 50)], in: &e)
-        XCTAssertEqual(e.drawing.parts.count, 2)
+        XCTAssertEqual(e.drawing.layers.count, 2)
 
-        e.autoJoinSelectedPart = true
-        e.selection = .layer(e.drawing.parts[0].id)
+        e.autoJoinSelectedLayer = true
+        e.selection = .layer(e.drawing.layers[0].id)
         penPath([Vec2(0, 200), Vec2(100, 200)], in: &e)
-        XCTAssertEqual(e.drawing.parts.count, 2)
-        XCTAssertEqual(e.drawing.parts[0].shapes.count, 2)
+        XCTAssertEqual(e.drawing.layers.count, 2)
+        XCTAssertEqual(e.drawing.layers[0].shapes.count, 2)
     }
 
     func testRubberBandRunsFromTheActiveEndToTheHover() {
@@ -519,10 +519,10 @@ final class PenToolTests: XCTestCase {
         e.style.outlineEnabled = false
         e.tool = .pen
         for p in [Vec2(0, 0), Vec2(100, 0), Vec2(100, 100)] { tap(&e, p) }
-        XCTAssertNotNil(e.drawing.parts[0].shapes[0].stroke, "visible while open")
+        XCTAssertNotNil(e.drawing.layers[0].shapes[0].stroke, "visible while open")
         tap(&e, Vec2(0, 0))
-        XCTAssertNil(e.drawing.parts[0].shapes[0].stroke)
-        XCTAssertNotNil(e.drawing.parts[0].shapes[0].fill)
+        XCTAssertNil(e.drawing.layers[0].shapes[0].stroke)
+        XCTAssertNotNil(e.drawing.layers[0].shapes[0].fill)
         XCTAssertFalse(e.style.outlineEnabled, "selecting the shape does not change the user's style")
     }
 
@@ -535,7 +535,7 @@ final class PenToolTests: XCTestCase {
         s.touchEnded(id: 1, location: Vec2(500, 400))
         s.touchBegan(id: 2, kind: .pencil, location: Vec2(600, 400))
         s.touchEnded(id: 2, location: Vec2(600, 400))
-        let placed = s.editor.drawing.parts[0].shapes[0].path.points.map(\.position)
+        let placed = s.editor.drawing.layers[0].shapes[0].path.points.map(\.position)
         XCTAssertEqual(placed.count, 2)
         assertClose(placed[0], Vec2(0, 0))
         assertClose(placed[1], Vec2(100, 0))
@@ -556,7 +556,7 @@ final class PenToolTests: XCTestCase {
 }
 
 final class SelectionTests: XCTestCase {
-    /// Two wide lines in separate parts, y = 0 and y = 300.
+    /// Two wide lines in separate layers, y = 0 and y = 300.
     private func twoLines() -> DrawingEditor {
         var e = DrawingEditor()
         e.addStroke([Vec2(0, 0), Vec2(400, 0)], zoom: 1)
@@ -565,17 +565,17 @@ final class SelectionTests: XCTestCase {
     }
 
     func testCoveringNormalizesTheSet() {
-        let a = ShapeRef(part: 1, shape: 2), b = ShapeRef(part: 1, shape: 3)
+        let a = ShapeRef(layer: 1, shape: 2), b = ShapeRef(layer: 1, shape: 3)
         XCTAssertEqual(Selection.covering([]), Selection.none)
-        XCTAssertEqual(Selection.covering([a]), .shape(part: 1, shape: 2))
+        XCTAssertEqual(Selection.covering([a]), .shape(layer: 1, shape: 2))
         XCTAssertEqual(Selection.covering([a, b]), .shapes([a, b]))
     }
 
-    func testMarqueeSelectsTouchedShapesAndPromotesWholeParts() {
+    func testMarqueeSelectsTouchedShapesAndPromotesWholeLayers() {
         var e = twoLines()
         e.tool = .select
         drag(&e, Vec2(-20, -20), Vec2(420, 100))
-        XCTAssertEqual(e.selection, .layer(e.drawing.parts[0].id), "one whole part")
+        XCTAssertEqual(e.selection, .layer(e.drawing.layers[0].id), "one whole layer")
         XCTAssertNil(e.marquee)
 
         drag(&e, Vec2(-20, -20), Vec2(420, 320))
@@ -594,7 +594,7 @@ final class SelectionTests: XCTestCase {
         e.tool = .select
         // Neither end of the line is inside the rectangle.
         drag(&e, Vec2(150, -30), Vec2(250, 30))
-        XCTAssertEqual(e.selection, .layer(e.drawing.parts[0].id))
+        XCTAssertEqual(e.selection, .layer(e.drawing.layers[0].id))
     }
 
     func testAddToggleBuildsAndShrinksTheSelection() {
@@ -602,13 +602,13 @@ final class SelectionTests: XCTestCase {
         e.tool = .select
         e.addToSelection = true
         tap(&e, Vec2(100, 0))
-        let first = e.drawing.parts[0].shapes[0]
-        XCTAssertEqual(e.selection, .shape(part: e.drawing.parts[0].id, shape: first.id))
+        let first = e.drawing.layers[0].shapes[0]
+        XCTAssertEqual(e.selection, .shape(layer: e.drawing.layers[0].id, shape: first.id))
         tap(&e, Vec2(100, 300))
         guard case .shapes(let refs) = e.selection else { return XCTFail("expected two shapes") }
         XCTAssertEqual(refs.count, 2)
         tap(&e, Vec2(100, 0))
-        XCTAssertEqual(e.selection, .shape(part: e.drawing.parts[1].id, shape: e.drawing.parts[1].shapes[0].id))
+        XCTAssertEqual(e.selection, .shape(layer: e.drawing.layers[1].id, shape: e.drawing.layers[1].shapes[0].id))
         // Tapping empty canvas with Add on keeps the selection.
         tap(&e, Vec2(-300, -300))
         XCTAssertNotEqual(e.selection, Selection.none)
@@ -620,9 +620,9 @@ final class SelectionTests: XCTestCase {
         drag(&e, Vec2(-20, -20), Vec2(420, 320))
         let before = e.drawing
         drag(&e, Vec2(100, 150), Vec2(130, 190))
-        for (i, part) in e.drawing.parts.enumerated() {
-            let a = before.parts[i].shapes[0].path.points[0].position
-            assertClose(part.shapes[0].path.points[0].position, a + Vec2(30, 40))
+        for (i, layer) in e.drawing.layers.enumerated() {
+            let a = before.layers[i].shapes[0].path.points[0].position
+            assertClose(layer.shapes[0].path.points[0].position, a + Vec2(30, 40))
         }
         XCTAssertEqual(e.undoStack.undoStates.count, 3)
         e.undo()
@@ -634,18 +634,18 @@ final class SelectionTests: XCTestCase {
         e.tool = .select
         drag(&e, Vec2(-20, -20), Vec2(420, 320))
         e.setOutlineWidth(9)
-        XCTAssertEqual(e.drawing.parts.map { $0.shapes[0].stroke?.width }, [9, 9])
+        XCTAssertEqual(e.drawing.layers.map { $0.shapes[0].stroke?.width }, [9, 9])
         e.deleteSelection()
-        XCTAssertTrue(e.drawing.parts.isEmpty)
+        XCTAssertTrue(e.drawing.layers.isEmpty)
         e.undo()
-        XCTAssertEqual(e.drawing.parts.count, 2)
+        XCTAssertEqual(e.drawing.layers.count, 2)
     }
 
     func testDirectSelectShowsAnchorsOfTheTappedShapeAtOnce() {
         var e = twoLines()
         e.tool = .directSelect
         e.pencilBegan(at: Vec2(100, 300), zoom: 1)
-        XCTAssertEqual(e.selection, .shape(part: e.drawing.parts[1].id, shape: e.drawing.parts[1].shapes[0].id),
+        XCTAssertEqual(e.selection, .shape(layer: e.drawing.layers[1].id, shape: e.drawing.layers[1].shapes[0].id),
                        "selected on press, before any tap completes")
         e.pencilEnded(at: Vec2(100, 300))
         XCTAssertFalse(EditorOverlay.vertices(for: e, zoom: 1).isEmpty)
@@ -663,7 +663,7 @@ final class SelectionTests: XCTestCase {
         XCTAssertNil(e.selectedAnchor)
 
         drag(&e, Vec2(100, 0), Vec2(100, 30))
-        let points = e.drawing.parts[0].shapes[0].path.points
+        let points = e.drawing.layers[0].shapes[0].path.points
         assertClose(points[0].position, Vec2(0, 30))
         assertClose(points[1].position, Vec2(100, 30))
         assertClose(points[2].position, Vec2(100, 100))
@@ -683,7 +683,7 @@ final class SelectionTests: XCTestCase {
         drag(&e, Vec2(-20, -20), Vec2(420, 320))
         e.tool = .directSelect
         tap(&e, Vec2(400, 300))
-        XCTAssertEqual(e.activeShape, ShapeRef(part: e.drawing.parts[1].id, shape: e.drawing.parts[1].shapes[0].id))
+        XCTAssertEqual(e.activeShape, ShapeRef(layer: e.drawing.layers[1].id, shape: e.drawing.layers[1].shapes[0].id))
         XCTAssertEqual(e.selectedAnchors.count, 1)
     }
 }
@@ -705,14 +705,14 @@ final class PointEditingTests: XCTestCase {
         XCTAssertEqual(e.selectedAnchors, [1, 2])
         XCTAssertTrue(e.canDeleteSelectedAnchor)
         e.deleteSelectedAnchors()
-        XCTAssertEqual(e.drawing.parts[0].shapes[0].path.points.map(\.position), [Vec2(0, 0), Vec2(0, 100)])
+        XCTAssertEqual(e.drawing.layers[0].shapes[0].path.points.map(\.position), [Vec2(0, 0), Vec2(0, 100)])
         XCTAssertTrue(e.selectedAnchors.isEmpty)
         XCTAssertNotEqual(e.selection, Selection.none)
 
         // Too few points left deletes the shape.
         tap(&e, Vec2(0, 0))
         e.deleteSelectedAnchors()
-        XCTAssertTrue(e.drawing.parts.isEmpty)
+        XCTAssertTrue(e.drawing.layers.isEmpty)
         e.undo()
         XCTAssertEqual(e.drawing.shapeCount, 1)
     }
@@ -725,10 +725,10 @@ final class PointEditingTests: XCTestCase {
         drag(&e, Vec2(200, 0), Vec2(250, 0))
         e.penFinish()
         e.tool = .directSelect
-        let before = e.drawing.parts[0].shapes[0].path
+        let before = e.drawing.layers[0].shapes[0].path
         tap(&e, Vec2(100, 100))
         e.deleteSelectedAnchors()
-        let after = e.drawing.parts[0].shapes[0].path
+        let after = e.drawing.layers[0].shapes[0].path
         XCTAssertEqual(after.points.count, 2)
         // The neighbours keep their handle directions.
         XCTAssertEqual(after.points[0].outHandle, before.points[0].outHandle)
@@ -744,12 +744,12 @@ final class PointEditingTests: XCTestCase {
         XCTAssertEqual(e.selectedAnchorMode, .corner)
         e.setSelectedAnchorMode(.symmetric)
         XCTAssertEqual(e.selectedAnchorMode, .symmetric)
-        XCTAssertEqual(e.drawing.parts[0].shapes[0].path.points.map(\.mode), [.corner, .symmetric, .symmetric, .corner])
+        XCTAssertEqual(e.drawing.layers[0].shapes[0].path.points.map(\.mode), [.corner, .symmetric, .symmetric, .corner])
         e.setSelectedAnchorMode(.smooth)
         XCTAssertEqual(e.selectedAnchorIsSmooth, true)
         e.breakSelectedAnchorHandles()
         XCTAssertEqual(e.selectedAnchorMode, .corner)
-        XCTAssertEqual(e.drawing.parts[0].shapes[0].path.points[1].outHandle, .zero)
+        XCTAssertEqual(e.drawing.layers[0].shapes[0].path.points[1].outHandle, .zero)
         e.undo()
         XCTAssertEqual(e.selectedAnchorMode, .smooth)
     }
@@ -758,10 +758,10 @@ final class PointEditingTests: XCTestCase {
         var e = fourPointPath()
         tap(&e, Vec2(100, 0))
         e.setSelectedAnchorMode(.symmetric)
-        let path = e.drawing.parts[0].shapes[0].path
+        let path = e.drawing.layers[0].shapes[0].path
         let handle = path.points[1].outControl
         drag(&e, handle, handle + Vec2(0, 40))
-        let after = e.drawing.parts[0].shapes[0].path.points[1]
+        let after = e.drawing.layers[0].shapes[0].path.points[1]
         assertClose(after.inHandle, -after.outHandle, tolerance: 1e-6)
     }
 
@@ -771,13 +771,13 @@ final class PointEditingTests: XCTestCase {
         e.tool = .directSelect
         let steps = e.undoStack.undoStates.count
         drag(&e, Vec2(50, 0), Vec2(50, 40))
-        let path = e.drawing.parts[0].shapes[0].path
+        let path = e.drawing.layers[0].shapes[0].path
         XCTAssertEqual(path.points.count, 2, "a drag reshapes; only a tap inserts a point")
         XCTAssertEqual(path.segment(0).point(at: 0.5).y, 40, accuracy: 0.5)
         assertClose(path.points[0].position, Vec2(0, 0))
         XCTAssertEqual(e.undoStack.undoStates.count, steps + 1)
         e.undo()
-        XCTAssertEqual(e.drawing.parts[0].shapes[0].path.points[0].outHandle, .zero)
+        XCTAssertEqual(e.drawing.layers[0].shapes[0].path.points[0].outHandle, .zero)
     }
 
     func testSplitAndJoinCommands() {
@@ -787,13 +787,13 @@ final class PointEditingTests: XCTestCase {
         XCTAssertTrue(e.canJoinSelection, "a single open path can be closed")
         e.splitAtSelectedAnchor()
         XCTAssertEqual(e.drawing.shapeCount, 2)
-        XCTAssertEqual(e.drawing.parts[0].shapes.map(\.path.points.count), [2, 3])
+        XCTAssertEqual(e.drawing.layers[0].shapes.map(\.path.points.count), [2, 3])
         guard case .shapes = e.selection else { return XCTFail("both pieces selected") }
 
         XCTAssertTrue(e.canJoinSelection)
         e.joinSelection()
         XCTAssertEqual(e.drawing.shapeCount, 1)
-        XCTAssertEqual(e.drawing.parts[0].shapes[0].path.points.map(\.position),
+        XCTAssertEqual(e.drawing.layers[0].shapes[0].path.points.map(\.position),
                        [Vec2(0, 0), Vec2(100, 0), Vec2(100, 100), Vec2(0, 100)])
         e.undo()
         XCTAssertEqual(e.drawing.shapeCount, 2)
@@ -803,22 +803,22 @@ final class PointEditingTests: XCTestCase {
 
     func testJoinOnASingleOpenShapeClosesIt() {
         var e = fourPointPath()
-        e.selection = .layer(e.drawing.parts[0].id)
+        e.selection = .layer(e.drawing.layers[0].id)
         XCTAssertTrue(e.canJoinSelection)
         e.joinSelection()
-        XCTAssertTrue(e.drawing.parts[0].shapes[0].path.closed)
+        XCTAssertTrue(e.drawing.layers[0].shapes[0].path.closed)
         XCTAssertFalse(e.canJoinSelection)
     }
 
-    func testJoinAcrossPartsPicksNearestEnds() {
+    func testJoinAcrossLayersPicksNearestEnds() {
         var e = DrawingEditor()
         penPath([Vec2(0, 0), Vec2(100, 0)], in: &e)
         penPath([Vec2(500, 0), Vec2(120, 0)], in: &e)
-        e.selection = .covering(Set(e.drawing.parts.flatMap { part in part.shapes.map { ShapeRef(part: part.id, shape: $0.id) } }))
+        e.selection = .covering(Set(e.drawing.layers.flatMap { layer in layer.shapes.map { ShapeRef(layer: layer.id, shape: $0.id) } }))
         e.joinSelection()
         XCTAssertEqual(e.drawing.shapeCount, 1)
-        XCTAssertEqual(e.drawing.parts.count, 1)
-        XCTAssertEqual(e.drawing.parts[0].shapes[0].path.points.map(\.position.x), [0, 100, 120, 500])
+        XCTAssertEqual(e.drawing.layers.count, 1)
+        XCTAssertEqual(e.drawing.layers[0].shapes[0].path.points.map(\.position.x), [0, 100, 120, 500])
     }
 
     func testNudgeMovesAnchorsOrTheSelection() {
@@ -826,12 +826,12 @@ final class PointEditingTests: XCTestCase {
         tap(&e, Vec2(100, 0))
         e.nudge(by: Vec2(1, 0))
         e.nudge(by: Vec2(1, 0))
-        assertClose(e.drawing.parts[0].shapes[0].path.points[1].position, Vec2(102, 0))
+        assertClose(e.drawing.layers[0].shapes[0].path.points[1].position, Vec2(102, 0))
         XCTAssertEqual(e.undoStack.undoStates.count, 5, "repeated nudges share an undo step")
         e.selectedAnchors = []
         e.nudge(by: Vec2(0, 5))
-        assertClose(e.drawing.parts[0].shapes[0].path.points[0].position, Vec2(0, 5))
-        assertClose(e.drawing.parts[0].shapes[0].path.points[1].position, Vec2(102, 5))
+        assertClose(e.drawing.layers[0].shapes[0].path.points[0].position, Vec2(0, 5))
+        assertClose(e.drawing.layers[0].shapes[0].path.points[1].position, Vec2(102, 5))
     }
 
     func testAnchorPositionFields() {
@@ -840,13 +840,13 @@ final class PointEditingTests: XCTestCase {
         assertClose(e.selectedAnchorsCentroid!, Vec2(100, 0))
         e.setSelectedAnchorsPosition(x: 150)
         e.setSelectedAnchorsPosition(y: 20)
-        assertClose(e.drawing.parts[0].shapes[0].path.points[1].position, Vec2(150, 20))
+        assertClose(e.drawing.layers[0].shapes[0].path.points[1].position, Vec2(150, 20))
         // Two anchors move as a group about their middle.
         e.addToSelection = true
         tap(&e, Vec2(100, 100))
         e.addToSelection = false
         e.setSelectedAnchorsPosition(x: 0)
-        let points = e.drawing.parts[0].shapes[0].path.points
+        let points = e.drawing.layers[0].shapes[0].path.points
         XCTAssertEqual(points[1].position.x - points[2].position.x, 50, accuracy: 1e-9, "relative placement is kept")
         assertClose(e.selectedAnchorsCentroid!, Vec2(0, (20 + 100) / 2))
     }
@@ -889,7 +889,7 @@ final class TransformTests: XCTestCase {
 
     func testNumericSizeAndOrigin() throws {
         var e = editorWithSquare()
-        e.selection = .layer(e.drawing.parts[0].id)
+        e.selection = .layer(e.drawing.layers[0].id)
         let steps = e.undoStack.undoStates.count
         e.setSelectionOrigin(x: 10)
         e.setSelectionOrigin(y: 20)
@@ -908,11 +908,11 @@ final class TransformTests: XCTestCase {
     func testFlipMirrorsAboutTheFrameCenter() throws {
         var e = DrawingEditor()
         e.addStroke([Vec2(0, 0), Vec2(100, 40)], zoom: 1)
-        e.selection = .layer(e.drawing.parts[0].id)
-        let before = e.drawing.parts[0].shapes[0]
+        e.selection = .layer(e.drawing.layers[0].id)
+        let before = e.drawing.layers[0].shapes[0]
         let c = try XCTUnwrap(e.drawing.frame(of: e.selection)).center
         e.flipSelection(horizontal: true)
-        let flipped = e.drawing.parts[0].shapes[0]
+        let flipped = e.drawing.layers[0].shapes[0]
         for (a, b) in zip(before.path.points, flipped.path.points) {
             assertClose(b.position, Vec2(2 * c.x - a.position.x, a.position.y))
             assertClose(b.outHandle, Vec2(-a.outHandle.x, a.outHandle.y))
@@ -920,11 +920,11 @@ final class TransformTests: XCTestCase {
         XCTAssertEqual(flipped.stroke?.width, before.stroke?.width)
 
         e.flipSelection(horizontal: false)
-        let both = e.drawing.parts[0].shapes[0]
+        let both = e.drawing.layers[0].shapes[0]
         assertClose(both.path.points[0].position, Vec2(2 * c.x - before.path.points[0].position.x, 2 * c.y - before.path.points[0].position.y))
         e.flipSelection(horizontal: true)
         e.flipSelection(horizontal: false)
-        assertClose(e.drawing.parts[0].shapes[0].path.points[0].position, before.path.points[0].position)
+        assertClose(e.drawing.layers[0].shapes[0].path.points[0].position, before.path.points[0].position)
         XCTAssertEqual(e.undoStack.undoStates.count, 5)
     }
 
@@ -937,26 +937,26 @@ final class TransformTests: XCTestCase {
         XCTAssertEqual(e.drawing, before)
     }
 
-    func testPivotDefaultsToThePartPivotAndCanBeDragged() throws {
+    func testPivotDefaultsToTheLayerPivotAndCanBeDragged() throws {
         var e = editorWithSquare()
         e.tool = .select
         tap(&e, Vec2(50, 50))
-        let part = e.drawing.parts[0]
-        assertClose(try XCTUnwrap(e.pivot), part.pivot)
+        let layer = e.drawing.layers[0]
+        assertClose(try XCTUnwrap(e.pivot), layer.pivot)
 
-        drag(&e, part.pivot, Vec2(70, 60))
-        assertClose(e.drawing.parts[0].pivot, Vec2(70, 60), tolerance: 1e-6)
+        drag(&e, layer.pivot, Vec2(70, 60))
+        assertClose(e.drawing.layers[0].pivot, Vec2(70, 60), tolerance: 1e-6)
         assertClose(try XCTUnwrap(e.pivot), Vec2(70, 60), tolerance: 1e-6)
-        XCTAssertEqual(e.selection, .layer(part.id), "dragging the pivot does not change the selection")
+        XCTAssertEqual(e.selection, .layer(layer.id), "dragging the pivot does not change the selection")
         e.undo()
-        assertClose(e.drawing.parts[0].pivot, part.pivot)
+        assertClose(e.drawing.layers[0].pivot, layer.pivot)
 
         // Rotation turns about the pivot.
-        drag(&e, part.pivot, Vec2(70, 60))
-        let first = e.drawing.parts[0].shapes[0].path.points[0].position
+        drag(&e, layer.pivot, Vec2(70, 60))
+        let first = e.drawing.layers[0].shapes[0].path.points[0].position
         e.rotateSelection(byDegrees: 90)
         let expected = (Affine2D.translation(Vec2(70, 60)) * Affine2D.rotation(.pi / 2) * Affine2D.translation(Vec2(-70, -60))).apply(first)
-        assertClose(e.drawing.parts[0].shapes[0].path.points[0].position, expected, tolerance: 1e-6)
+        assertClose(e.drawing.layers[0].shapes[0].path.points[0].position, expected, tolerance: 1e-6)
     }
 
     func testPivotOfASingleShapeIsTransientAndSelectionResetsIt() throws {
@@ -965,10 +965,10 @@ final class TransformTests: XCTestCase {
         tap(&e, Vec2(50, 50))
         tap(&e, Vec2(50, 50))
         guard case .shape = e.selection else { return XCTFail("shape not selected") }
-        let partPivot = e.drawing.parts[0].pivot
+        let layerPivot = e.drawing.layers[0].pivot
         drag(&e, Vec2(50, 50), Vec2(20, 20))
         assertClose(try XCTUnwrap(e.pivot), Vec2(20, 20))
-        XCTAssertEqual(e.drawing.parts[0].pivot, partPivot)
+        XCTAssertEqual(e.drawing.layers[0].pivot, layerPivot)
         let before = e.undoStack.undoStates.count
         e.selection = .none
         XCTAssertNil(e.customPivot)

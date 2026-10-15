@@ -272,10 +272,10 @@ private struct EditMenu: View {
                 }
             }
             if ui.canMoveShapes {
-                Button("Move to New Part", systemImage: "rectangle.badge.plus") { store.moveSelectionToNewPart() }
-                Menu("Move to Part", systemImage: "arrow.right.square") {
-                    ForEach(ui.layers.parts) { part in
-                        Button(part.name) { store.moveSelection(toPart: part.id) }
+                Button("Move to New Layer", systemImage: "rectangle.badge.plus") { store.moveSelectionToNewLayer() }
+                Menu("Move to Layer", systemImage: "arrow.right.square") {
+                    ForEach(ui.layers.layers) { layer in
+                        Button(layer.name) { store.moveSelection(toLayer: layer.id) }
                     }
                 }
             }
@@ -293,11 +293,11 @@ private struct EditMenu: View {
             }
 
             Divider()
-            if ui.isolatedPart != nil {
+            if ui.isolatedLayer != nil {
                 Button("Exit Isolation", systemImage: "scope") { store.exitIsolation() }
             } else {
-                Button("Isolate Part", systemImage: "scope") { store.isolateSelection() }
-                    .disabled(ui.selectedPart == nil)
+                Button("Isolate Layer", systemImage: "scope") { store.isolateSelection() }
+                    .disabled(ui.selectedLayer == nil)
             }
         } label: {
             Label("Edit", systemImage: "square.on.square.dashed")
@@ -363,23 +363,23 @@ private struct ContextBar: View {
 
     private var controls: some View {
         HStack(spacing: 14) {
-            if ui.isolatedPart != nil {
+            if ui.isolatedLayer != nil {
                 Button { store.stepOutOfIsolation() } label: {
                     HStack(spacing: 6) {
                         Image(systemName: "scope")
-                        Text("Exit \(ui.isolatedPartName)").lineLimit(1)
+                        Text("Exit \(ui.isolatedLayerName)").lineLimit(1)
                     }
                 }
                 .accessibilityLabel("Exit isolation")
                 Divider().frame(height: 24)
             }
-            if ui.isolatedPart == nil, ui.activeLayer != nil, [Tool.pencil, .pen, .shape].contains(ui.tool) {
+            if ui.isolatedLayer == nil, ui.activeLayer != nil, [Tool.pencil, .pen, .shape].contains(ui.tool) {
                 // Where new art goes, chosen in the layers panel (or by auto-join).
                 HStack(spacing: 6) {
                     Image(systemName: "square.3.layers.3d")
                     Text("Into \(ui.activeLayerName)").lineLimit(1)
                     if ui.activeLayerIsChosen {
-                        Button("Draw New Parts", systemImage: "xmark.circle.fill") { store.clearActiveLayer() }
+                        Button("Draw New Layers", systemImage: "xmark.circle.fill") { store.clearActiveLayer() }
                             .labelStyle(.iconOnly)
                             .foregroundStyle(.secondary)
                     }
@@ -394,7 +394,7 @@ private struct ContextBar: View {
             switch ui.tool {
             case .pencil:
                 Toggle(isOn: Binding(get: { ui.autoJoin }, set: { store.setAutoJoin($0) })) {
-                    Label("Auto-join selected part", systemImage: "rectangle.on.rectangle")
+                    Label("Auto-join selected layer", systemImage: "rectangle.on.rectangle")
                 }
                 .toggleStyle(.button)
             case .pen:
@@ -422,13 +422,13 @@ private struct ContextBar: View {
 
             if [Tool.pen, .shape, .select, .directSelect].contains(ui.tool) { snapMenu }
             if [Tool.pencil, .pen, .shape].contains(ui.tool) { symmetryMenu }
-            if ui.tool == .select, let group = ui.selectedGroupID, let part = ui.selectedGroupPart {
+            if ui.tool == .select, let group = ui.selectedGroupID, let layer = ui.selectedGroupLayer {
                 Divider().frame(height: 24)
                 Label("Group", systemImage: "square.on.square.squareshape.controlhandles")
                     .labelStyle(.iconOnly)
                     .foregroundStyle(.secondary)
                 NameField(placeholder: "Group name", name: ui.selectedGroupName) {
-                    store.renameGroup(group, inPart: part, to: $0)
+                    store.renameGroup(group, inLayer: layer, to: $0)
                 }
             }
 

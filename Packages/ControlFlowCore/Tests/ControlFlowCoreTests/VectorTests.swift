@@ -194,12 +194,12 @@ final class DrawingTests: XCTestCase {
 
     func testHitTestFindsTopmostShape() {
         var d = Drawing()
-        d.parts = [
-            Part(id: 1, name: "Body", shapes: [square(id: 10, at: .zero, size: 100)]),
-            Part(id: 2, name: "Head", shapes: [square(id: 20, at: Vec2(50, 50), size: 100)]),
+        d.layers = [
+            Layer(id: 1, name: "Body", shapes: [square(id: 10, at: .zero, size: 100)]),
+            Layer(id: 2, name: "Head", shapes: [square(id: 20, at: Vec2(50, 50), size: 100)]),
         ]
-        XCTAssertEqual(d.hitTest(Vec2(75, 75), tolerance: 1)?.part, 2)
-        XCTAssertEqual(d.hitTest(Vec2(25, 25), tolerance: 1)?.part, 1)
+        XCTAssertEqual(d.hitTest(Vec2(75, 75), tolerance: 1)?.layer, 2)
+        XCTAssertEqual(d.hitTest(Vec2(25, 25), tolerance: 1)?.layer, 1)
         XCTAssertNil(d.hitTest(Vec2(300, 300), tolerance: 1))
     }
 
@@ -293,44 +293,44 @@ final class DrawingEditorTests: XCTestCase {
         e.pencilEnded(at: b)
     }
 
-    func testClosedStrokeMakesPartWithFill() {
+    func testClosedStrokeMakesLayerWithFill() {
         let e = editorWithSquare()
-        XCTAssertEqual(e.drawing.parts.count, 1)
-        let shape = e.drawing.parts[0].shapes[0]
+        XCTAssertEqual(e.drawing.layers.count, 1)
+        let shape = e.drawing.layers[0].shapes[0]
         XCTAssertTrue(shape.path.closed)
         XCTAssertEqual(shape.fill, e.style.fill)
         XCTAssertEqual(shape.stroke?.width, e.style.outlineWidth)
     }
 
-    func testStrokesJoinTheSelectedPartWhenTheyOverlap() {
+    func testStrokesJoinTheSelectedLayerWhenTheyOverlap() {
         var e = editorWithSquare()
-        let partID = e.drawing.parts[0].id
-        e.selection = .layer(partID)
-        // Off by default: the stroke starts its own part.
+        let layerID = e.drawing.layers[0].id
+        e.selection = .layer(layerID)
+        // Off by default: the stroke starts its own layer.
         e.addStroke([Vec2(20, 50), Vec2(80, 50)], zoom: 1)
-        XCTAssertEqual(e.drawing.parts.count, 2)
+        XCTAssertEqual(e.drawing.layers.count, 2)
         e.undo()
-        e.autoJoinSelectedPart = true
+        e.autoJoinSelectedLayer = true
         e.addStroke([Vec2(20, 50), Vec2(80, 50)], zoom: 1)
-        XCTAssertEqual(e.drawing.parts.count, 1)
-        XCTAssertEqual(e.drawing.parts[0].shapes.count, 2)
+        XCTAssertEqual(e.drawing.layers.count, 1)
+        XCTAssertEqual(e.drawing.layers[0].shapes.count, 2)
 
         e.addStroke([Vec2(500, 500), Vec2(600, 500)], zoom: 1)
-        XCTAssertEqual(e.drawing.parts.count, 2)
+        XCTAssertEqual(e.drawing.layers.count, 2)
 
         e.selection = .none
         e.addStroke([Vec2(20, 60), Vec2(80, 60)], zoom: 1)
-        XCTAssertEqual(e.drawing.parts.count, 3)
+        XCTAssertEqual(e.drawing.layers.count, 3)
     }
 
-    func testTapSelectsPartThenShape() {
+    func testTapSelectsLayerThenShape() {
         var e = editorWithSquare()
         e.tool = .select
-        let part = e.drawing.parts[0]
+        let layer = e.drawing.layers[0]
         tap(&e, Vec2(50, 50))
-        XCTAssertEqual(e.selection, .layer(part.id))
+        XCTAssertEqual(e.selection, .layer(layer.id))
         tap(&e, Vec2(50, 50))
-        XCTAssertEqual(e.selection, .shape(part: part.id, shape: part.shapes[0].id))
+        XCTAssertEqual(e.selection, .shape(layer: layer.id, shape: layer.shapes[0].id))
         tap(&e, Vec2(400, 400))
         XCTAssertEqual(e.selection, Selection.none)
     }
@@ -358,9 +358,9 @@ final class DrawingEditorTests: XCTestCase {
         let c = frame.center
         // A quarter turn clockwise: the handle above the center moves to its right.
         let target = c + Vec2(handle.distance(to: c), 0)
-        let before = e.drawing.parts[0].shapes[0].path.points[0].position
+        let before = e.drawing.layers[0].shapes[0].path.points[0].position
         drag(&e, handle, target)
-        let after = e.drawing.parts[0].shapes[0].path.points[0].position
+        let after = e.drawing.layers[0].shapes[0].path.points[0].position
         let expected = (Affine2D.translation(c) * Affine2D.rotation(.pi / 2) * Affine2D.translation(-c)).apply(before)
         XCTAssertTrue(after.isApproximately(expected, tolerance: 1e-6))
     }
@@ -370,12 +370,12 @@ final class DrawingEditorTests: XCTestCase {
         e.tool = .directSelect
         tap(&e, Vec2(50, 50))
         guard case .shape = e.selection else { return XCTFail("shape not selected") }
-        let path = e.drawing.parts[0].shapes[0].path
+        let path = e.drawing.layers[0].shapes[0].path
         let corner = try XCTUnwrap(path.points.firstIndex { $0.position.isApproximately(Vec2(100, 100), tolerance: 1) })
 
         drag(&e, path.points[corner].position, Vec2(130, 120))
         XCTAssertEqual(e.selectedAnchor, corner)
-        XCTAssertTrue(e.drawing.parts[0].shapes[0].path.points[corner].position.isApproximately(Vec2(130, 120), tolerance: 1.5))
+        XCTAssertTrue(e.drawing.layers[0].shapes[0].path.points[corner].position.isApproximately(Vec2(130, 120), tolerance: 1.5))
 
         XCTAssertEqual(e.selectedAnchorIsSmooth, false)
         // Tapping the selected anchor no longer changes its mode; the mode control does.
@@ -387,53 +387,53 @@ final class DrawingEditorTests: XCTestCase {
         e.undo()
         XCTAssertEqual(e.selectedAnchorIsSmooth, false)
         e.undo()
-        XCTAssertTrue(e.drawing.parts[0].shapes[0].path.points[corner].position.isApproximately(Vec2(100, 100), tolerance: 1))
+        XCTAssertTrue(e.drawing.layers[0].shapes[0].path.points[corner].position.isApproximately(Vec2(100, 100), tolerance: 1))
     }
 
     func testDirectSelectInsertsAndDeletesPoints() throws {
         var e = editorWithSquare()
         e.tool = .directSelect
         tap(&e, Vec2(50, 50))
-        let count = e.drawing.parts[0].shapes[0].path.points.count
+        let count = e.drawing.layers[0].shapes[0].path.points.count
         // Tap on the top edge, between corners.
         tap(&e, Vec2(50, 0.5))
-        XCTAssertEqual(e.drawing.parts[0].shapes[0].path.points.count, count + 1)
+        XCTAssertEqual(e.drawing.layers[0].shapes[0].path.points.count, count + 1)
         let inserted = try XCTUnwrap(e.selectedAnchor)
-        XCTAssertTrue(e.drawing.parts[0].shapes[0].path.points[inserted].position.isApproximately(Vec2(50, 0), tolerance: 1.5))
+        XCTAssertTrue(e.drawing.layers[0].shapes[0].path.points[inserted].position.isApproximately(Vec2(50, 0), tolerance: 1.5))
         XCTAssertTrue(e.canDeleteSelectedAnchor)
         e.deleteSelectedAnchor()
-        XCTAssertEqual(e.drawing.parts[0].shapes[0].path.points.count, count)
+        XCTAssertEqual(e.drawing.layers[0].shapes[0].path.points.count, count)
         XCTAssertNil(e.selectedAnchor)
     }
 
     func testStyleChangesApplyToSelectionAndCoalesce() {
         var e = editorWithSquare()
-        e.selection = .layer(e.drawing.parts[0].id)
+        e.selection = .layer(e.drawing.layers[0].id)
         let undoCount = e.undoStack.undoStates.count
         e.setFill(.black)
         e.setFill(.white)
-        XCTAssertEqual(e.drawing.parts[0].shapes[0].fill, .white)
+        XCTAssertEqual(e.drawing.layers[0].shapes[0].fill, .white)
         XCTAssertEqual(e.undoStack.undoStates.count, undoCount + 1)
         e.setOutlineWidth(9)
-        XCTAssertEqual(e.drawing.parts[0].shapes[0].stroke?.width, 9)
+        XCTAssertEqual(e.drawing.layers[0].shapes[0].stroke?.width, 9)
         XCTAssertEqual(e.selectionStyle?.outlineWidth, 9)
         e.setOutlineEnabled(false)
-        XCTAssertNil(e.drawing.parts[0].shapes[0].stroke)
+        XCTAssertNil(e.drawing.layers[0].shapes[0].stroke)
         // A shape with no outline keeps its fill, so it never becomes invisible.
         e.setFillEnabled(false)
-        XCTAssertNotNil(e.drawing.parts[0].shapes[0].fill)
+        XCTAssertNotNil(e.drawing.layers[0].shapes[0].fill)
     }
 
     func testDeleteAndUndoRestoresSelectionTarget() {
         var e = editorWithSquare()
-        e.selection = .layer(e.drawing.parts[0].id)
+        e.selection = .layer(e.drawing.layers[0].id)
         e.deleteSelection()
-        XCTAssertTrue(e.drawing.parts.isEmpty)
+        XCTAssertTrue(e.drawing.layers.isEmpty)
         XCTAssertEqual(e.selection, Selection.none)
         e.undo()
-        XCTAssertEqual(e.drawing.parts.count, 1)
+        XCTAssertEqual(e.drawing.layers.count, 1)
         e.redo()
-        XCTAssertTrue(e.drawing.parts.isEmpty)
+        XCTAssertTrue(e.drawing.layers.isEmpty)
     }
 
     func testReferenceImagesAreLockedButAdjustable() {

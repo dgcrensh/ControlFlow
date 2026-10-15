@@ -5,29 +5,29 @@ private func rect(_ x: Double, _ y: Double, _ w: Double, _ h: Double) -> Rect {
     Rect(minPoint: Vec2(x, y), maxPoint: Vec2(x + w, y + h))
 }
 
-/// Adds a part named `name` holding `count` filled rectangles, and returns its id.
+/// Adds a layer named `name` holding `count` filled rectangles, and returns its id.
 @discardableResult
-private func addPart(_ d: inout Drawing, _ name: String, _ r: Rect, count: Int = 1) -> Int {
+private func addLayer(_ d: inout Drawing, _ name: String, _ r: Rect, count: Int = 1) -> Int {
     let shapes = (0..<count).map { _ in VectorShape(id: d.makeID(), path: ShapePrimitives.rectangle(r), fill: .ink) }
-    let part = Part(id: d.makeID(), name: name, shapes: shapes, pivot: r.center)
-    d.parts.append(part)
-    return part.id
+    let layer = Layer(id: d.makeID(), name: name, shapes: shapes, pivot: r.center)
+    d.layers.append(layer)
+    return layer.id
 }
 
-private func names(_ d: Drawing) -> [String] { d.parts.map(\.name) }
+private func names(_ d: Drawing) -> [String] { d.layers.map(\.name) }
 
-private func id(_ d: Drawing, _ name: String) -> Int { d.parts.first { $0.name == name }!.id }
+private func id(_ d: Drawing, _ name: String) -> Int { d.layers.first { $0.name == name }!.id }
 
 /// Back to front: Back Hair, Torso, Head, Fringe, Hat. The torso holds two shapes so it
 /// can hold a group.
 private func character() -> DrawingEditor {
     var d = Drawing()
     d.name = "Robo"
-    addPart(&d, "Back Hair", rect(-30, -120, 60, 120))
-    addPart(&d, "Torso", rect(-25, -50, 50, 80), count: 2)
-    addPart(&d, "Head", rect(-20, -110, 40, 40))
-    addPart(&d, "Fringe", rect(-20, -115, 40, 15))
-    addPart(&d, "Hat", rect(-25, -130, 50, 20))
+    addLayer(&d, "Back Hair", rect(-30, -120, 60, 120))
+    addLayer(&d, "Torso", rect(-25, -50, 50, 80), count: 2)
+    addLayer(&d, "Head", rect(-20, -110, 40, 40))
+    addLayer(&d, "Fringe", rect(-20, -115, 40, 15))
+    addLayer(&d, "Hat", rect(-25, -130, 50, 20))
     var e = DrawingEditor(drawing: d)
     e.tool = .select
     return e
@@ -44,7 +44,7 @@ final class LayersPanelTests: XCTestCase {
     func testTreeListsLayersFrontToBack() {
         let tree = LayerTree(drawing: character().drawing)
         XCTAssertEqual(tree.name, "Robo")
-        XCTAssertEqual(tree.parts.map(\.name), ["Hat", "Fringe", "Head", "Torso", "Back Hair"])
+        XCTAssertEqual(tree.layers.map(\.name), ["Hat", "Fringe", "Head", "Torso", "Back Hair"])
     }
 
     func testTreeRowsOpenToGroups() {
@@ -72,13 +72,13 @@ final class LayersPanelTests: XCTestCase {
         XCTAssertEqual(e.drawing.shapeIndices(in: e.selection).count, 3)
 
         e.hideSelection()
-        XCTAssertTrue(e.drawing.part(hat)!.isHidden && e.drawing.part(torso)!.isHidden)
+        XCTAssertTrue(e.drawing.layer(hat)!.isHidden && e.drawing.layer(torso)!.isHidden)
         XCTAssertEqual(e.selection, .none)
         // Hidden layers can't be picked.
         e.selectLayers([hat, head])
         XCTAssertEqual(e.selection, .layer(head))
         e.undo()
-        XCTAssertFalse(e.drawing.part(hat)!.isHidden)
+        XCTAssertFalse(e.drawing.layer(hat)!.isHidden)
 
         e.selectLayers([hat, head])
         e.deleteSelection()
@@ -94,8 +94,8 @@ final class LayersPanelTests: XCTestCase {
         let frame = try! XCTUnwrap(e.drawing.frame(of: e.selection))
         XCTAssertEqual(Rect(points: frame.corners), rect(-25, -130, 50, 160))
         e.drawing.apply(.translation(Vec2(10, 0)), to: e.selection)
-        XCTAssertEqual(e.drawing.part(hat)!.pivot.x, 10, accuracy: 1e-9)
-        XCTAssertEqual(e.drawing.part(head)!.pivot.x, 0, accuracy: 1e-9)
+        XCTAssertEqual(e.drawing.layer(hat)!.pivot.x, 10, accuracy: 1e-9)
+        XCTAssertEqual(e.drawing.layer(head)!.pivot.x, 0, accuracy: 1e-9)
 
         e.arrange(.sendToBack)
         XCTAssertEqual(names(e.drawing), ["Torso", "Hat", "Back Hair", "Head", "Fringe"])
@@ -107,13 +107,13 @@ final class LayersPanelTests: XCTestCase {
         e.selectLayers([head, fringe, hat])
         let clip = try XCTUnwrap(e.copySelection())
         e.duplicateSelection()
-        XCTAssertEqual(e.drawing.parts.count, 5 + 3)
+        XCTAssertEqual(e.drawing.layers.count, 5 + 3)
         guard case .layers(let copies) = e.selection else { return XCTFail("copies selected") }
-        XCTAssertEqual(copies.compactMap { e.drawing.part($0)?.name }.sorted(), ["Fringe 2", "Hat 2", "Head 2"])
+        XCTAssertEqual(copies.compactMap { e.drawing.layer($0)?.name }.sorted(), ["Fringe 2", "Hat 2", "Head 2"])
 
         e.selection = .none
         XCTAssertTrue(e.paste(clip))
-        XCTAssertEqual(e.drawing.parts.count, 8 + 3)
+        XCTAssertEqual(e.drawing.layers.count, 8 + 3)
     }
 
     func testNewArtGoesIntoTheActiveLayer() {
@@ -121,35 +121,35 @@ final class LayersPanelTests: XCTestCase {
         let torso = id(e.drawing, "Torso")
         XCTAssertNil(e.activeLayer)
         e.addPath(ShapePrimitives.ellipse(rect(200, 200, 10, 10)))
-        XCTAssertEqual(e.drawing.parts.count, 6, "with no active layer, new art starts a part")
+        XCTAssertEqual(e.drawing.layers.count, 6, "with no active layer, new art starts a layer")
         e.undo()
 
         e.setActiveLayer(torso)
         XCTAssertEqual(e.activeLayer, torso)
         e.addPath(ShapePrimitives.ellipse(rect(200, 200, 10, 10)))
-        XCTAssertEqual(e.drawing.part(torso)?.shapes.count, 3, "joins the active layer even far from its art")
+        XCTAssertEqual(e.drawing.layer(torso)?.shapes.count, 3, "joins the active layer even far from its art")
         e.tool = .pen
         e.pencilBegan(at: Vec2(300, 300), zoom: 1)
         e.pencilEnded(at: Vec2(300, 300))
-        XCTAssertEqual(e.drawing.part(torso)?.shapes.count, 4)
+        XCTAssertEqual(e.drawing.layer(torso)?.shapes.count, 4)
         e.penFinish()
 
         // Isolation wins while it lasts.
         let hat = id(e.drawing, "Hat")
-        e.isolate(part: hat)
+        e.isolate(layer: hat)
         XCTAssertEqual(e.activeLayer, hat)
         e.exitIsolation()
 
         // A hidden or locked layer takes no art; it is still remembered.
-        e.setPartLocked(torso, true)
+        e.setLayerLocked(torso, true)
         XCTAssertNil(e.activeLayer)
-        e.setPartLocked(torso, false)
+        e.setLayerLocked(torso, false)
         XCTAssertEqual(e.activeLayer, torso)
 
         e.setActiveLayer(nil)
         XCTAssertNil(e.activeLayer)
         e.setActiveLayer(torso)
-        e.deletePart(torso)
+        e.deleteLayer(torso)
         XCTAssertNil(e.targetLayer, "forgotten when the layer goes")
     }
 
@@ -183,18 +183,18 @@ final class LayersPanelTests: XCTestCase {
         let torso = id(e.drawing, "Torso")
         e.selection = .covering(Set(e.drawing.shapeRefs(in: .layer(torso))))
         e.groupSelection(name: "Belly")
-        let group = try! XCTUnwrap(e.drawing.part(torso)?.groups.first?.id)
+        let group = try! XCTUnwrap(e.drawing.layer(torso)?.groups.first?.id)
         e.selection = .none
-        e.selectGroup(group, inPart: torso)
+        e.selectGroup(group, inLayer: torso)
         XCTAssertEqual(e.selectedGroup?.group.name, "Belly")
 
-        e.setGroupHidden(group, inPart: torso, true)
+        e.setGroupHidden(group, inLayer: torso, true)
         XCTAssertEqual(e.selection, .none)
-        XCTAssertTrue(LayerTree(drawing: e.drawing).parts[3].groups[0].isHidden)
-        e.setGroupHidden(group, inPart: torso, false)
-        e.setGroupLocked(group, inPart: torso, true)
-        XCTAssertTrue(e.drawing.part(torso)!.shapes.allSatisfy(\.isLocked))
-        e.selectGroup(group, inPart: torso)
+        XCTAssertTrue(LayerTree(drawing: e.drawing).layers[3].groups[0].isHidden)
+        e.setGroupHidden(group, inLayer: torso, false)
+        e.setGroupLocked(group, inLayer: torso, true)
+        XCTAssertTrue(e.drawing.layer(torso)!.shapes.allSatisfy(\.isLocked))
+        e.selectGroup(group, inLayer: torso)
         XCTAssertEqual(e.selection, .none, "locked shapes can't be picked")
     }
 }

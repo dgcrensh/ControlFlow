@@ -1,31 +1,31 @@
 import Foundation
 @testable import ControlFlowCore
 
-/// A large, deterministic character for the performance tests: a grid of parts, each
+/// A large, deterministic character for the performance tests: a grid of layers, each
 /// a stack of wobbly closed shapes with fills and outlines, some dashed outlines, a
-/// clipped group per few parts, and accessories. The same arguments always make the
+/// clipped group per few layers, and accessories. The same arguments always make the
 /// same drawing, so timings are comparable from run to run.
 enum StressDrawing {
-    /// The size the performance audit asks for, 40 parts × 60 shapes × 24 anchors, when
-    /// the environment sets `STRESS_DRAWING=full`. Otherwise a quarter of the parts and
+    /// The size the performance audit asks for, 40 layers × 60 shapes × 24 anchors, when
+    /// the environment sets `STRESS_DRAWING=full`. Otherwise a quarter of the layers and
     /// shapes, so the debug build `swift test` runs on every CI job stays quick.
     static let isFull = ProcessInfo.processInfo.environment["STRESS_DRAWING"] == "full"
-    static let parts = isFull ? 40 : 10
-    static let shapesPerPart = isFull ? 60 : 15
+    static let layers = isFull ? 40 : 10
+    static let shapesPerLayer = isFull ? 60 : 15
     static let anchorsPerShape = 24
-    /// Spacing of the part grid, in points.
+    /// Spacing of the layer grid, in points.
     static let cell = 220.0
     static let columns = 8
 
-    static func make(parts: Int = parts, shapesPerPart: Int = shapesPerPart,
+    static func make(layers: Int = layers, shapesPerLayer: Int = shapesPerLayer,
                      anchorsPerShape: Int = anchorsPerShape) -> Drawing {
         var random = SeededRandom(seed: 0x5EED)
         var d = Drawing()
         d.name = "Stress"
-        for p in 0..<parts {
+        for p in 0..<layers {
             let center = Vec2(Double(p % columns) * cell, Double(p / columns) * cell)
-            var part = Part(id: d.makeID(), name: "Part \(p + 1)", pivot: center)
-            for s in 0..<shapesPerPart {
+            var layer = Layer(id: d.makeID(), name: "Layer \(p + 1)", pivot: center)
+            for s in 0..<shapesPerLayer {
                 let radius = 25 + random.next() * 70
                 let offset = Vec2(random.next() - 0.5, random.next() - 0.5) * 60
                 let path = blob(center: center + offset, radius: radius, anchors: anchorsPerShape, random: &random)
@@ -35,23 +35,23 @@ enum StressDrawing {
                     stroke = StrokeStyle(color: .ink, width: 1 + random.next() * 4)
                     if s % 10 == 0 { stroke!.dash = [6, 4] }
                 }
-                part.shapes.append(VectorShape(id: d.makeID(), path: path, fill: fill, stroke: stroke))
+                layer.shapes.append(VectorShape(id: d.makeID(), path: path, fill: fill, stroke: stroke))
             }
-            // Every fourth part ends in a group of three: a base and two shapes clipped to it.
-            if p % 4 == 0, part.shapes.count >= 3 {
+            // Every fourth layer ends in a group of three: a base and two shapes clipped to it.
+            if p % 4 == 0, layer.shapes.count >= 3 {
                 let group = ShapeGroup(id: d.makeID(), name: "Group 1")
-                part.groups = [group]
-                for i in part.shapes.count - 3..<part.shapes.count { part.shapes[i].group = group.id }
-                part.shapes[part.shapes.count - 2].isClipped = true
-                part.shapes[part.shapes.count - 1].isClipped = true
+                layer.groups = [group]
+                for i in layer.shapes.count - 3..<layer.shapes.count { layer.shapes[i].group = group.id }
+                layer.shapes[layer.shapes.count - 2].isClipped = true
+                layer.shapes[layer.shapes.count - 1].isClipped = true
             }
-            d.parts.append(part)
+            d.layers.append(layer)
         }
         return d
     }
 
-    /// The middle of the part grid's bounds, on top of plenty of shapes.
-    static func busyPoint(parts: Int = parts) -> Vec2 { Vec2(cell * 2, cell * Double(max(parts / columns - 1, 0)) / 2) }
+    /// The middle of the layer grid's bounds, on top of plenty of shapes.
+    static func busyPoint(layers: Int = layers) -> Vec2 { Vec2(cell * 2, cell * Double(max(layers / columns - 1, 0)) / 2) }
 
     /// Well outside every shape.
     static let emptyPoint = Vec2(-1000, -1000)

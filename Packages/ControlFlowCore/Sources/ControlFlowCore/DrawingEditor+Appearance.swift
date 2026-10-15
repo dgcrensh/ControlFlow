@@ -54,7 +54,7 @@ extension DrawingEditor {
     /// The appearance of the first selected shape.
     public var selectionAppearance: ShapeAppearance? {
         guard let first = drawing.shapeIndices(in: selection).first else { return nil }
-        let shape = drawing.parts[first.0].shapes[first.1]
+        let shape = drawing.layers[first.0].shapes[first.1]
         let gradient = shape.visibleFill != nil ? shape.gradient : nil
         return ShapeAppearance(opacity: shape.opacity, gradient: gradient,
                                gradientSpan: gradient.map { Self.span(of: $0, in: shape.path.bounds()) },
@@ -63,7 +63,7 @@ extension DrawingEditor {
                                isClosed: shape.path.closed)
     }
 
-    /// True when some selected shape has a shape below it in its part to clip to.
+    /// True when some selected shape has a shape below it in its layer to clip to.
     public var canClipSelection: Bool {
         drawing.shapeIndices(in: selection).contains { $0.1 > 0 }
     }
@@ -120,7 +120,7 @@ extension DrawingEditor {
         guard !targets.isEmpty else { return }
         let before = drawing
         for (p, s) in targets where !clipped || s > 0 {
-            drawing.parts[p].shapes[s].isClipped = clipped
+            drawing.layers[p].shapes[s].isClipped = clipped
         }
         commit(from: before)
     }
@@ -244,8 +244,8 @@ extension DrawingEditor {
         guard let ref = activeShape, let idx = drawing.indices(ref), !selectedAnchors.isEmpty else { return }
         let width = min(max(width, 0), 4)
         let before = drawing
-        for i in selectedAnchors where drawing.parts[idx.0].shapes[idx.1].path.points.indices.contains(i) {
-            drawing.parts[idx.0].shapes[idx.1].path.points[i].width = width
+        for i in selectedAnchors where drawing.layers[idx.0].shapes[idx.1].path.points.indices.contains(i) {
+            drawing.layers[idx.0].shapes[idx.1].path.points[i].width = width
         }
         commit(from: before, key: "anchorWidth-\(ref)")
     }
@@ -293,8 +293,8 @@ extension DrawingEditor {
         guard let i = drawing.globalColors.firstIndex(where: { $0.id == id }) else { return }
         let before = drawing
         drawing.globalColors[i].color = color
-        for p in drawing.parts.indices {
-            drawing.parts[p].updateAllShapes { shape in
+        for p in drawing.layers.indices {
+            drawing.layers[p].updateAllShapes { shape in
                 if shape.fillGlobal == id, shape.fill != nil {
                     shape.fill = color
                     if shape.gradient != nil { shape.gradient!.stops[0].color = color }
@@ -311,8 +311,8 @@ extension DrawingEditor {
         guard drawing.globalColor(id) != nil else { return }
         let before = drawing
         drawing.globalColors.removeAll { $0.id == id }
-        for p in drawing.parts.indices {
-            drawing.parts[p].updateAllShapes { shape in
+        for p in drawing.layers.indices {
+            drawing.layers[p].updateAllShapes { shape in
                 if shape.fillGlobal == id { shape.fillGlobal = nil }
                 if shape.stroke?.global == id { shape.stroke!.global = nil }
             }

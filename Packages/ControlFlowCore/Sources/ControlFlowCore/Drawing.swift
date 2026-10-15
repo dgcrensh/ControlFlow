@@ -14,7 +14,7 @@ public struct VectorShape: Hashable, Sendable, Codable, Identifiable {
     public var stroke: StrokeStyle?
     /// Multiplies the alpha of the fill and the outline (each on its own).
     public var opacity: Double = 1
-    /// Draws only where the nearest unclipped shape below it in the same part draws
+    /// Draws only where the nearest unclipped shape below it in the same layer draws
     /// (its fill and outline), like a clipping mask. Shapes above a clipped shape can
     /// be clipped to the same base.
     public var isClipped = false
@@ -22,7 +22,7 @@ public struct VectorShape: Hashable, Sendable, Codable, Identifiable {
     /// neither a hidden nor a locked shape can be tapped, selected or erased.
     public var isHidden: Bool
     public var isLocked: Bool
-    /// The group (a `ShapeGroup` id in the same part) this shape belongs to, if any.
+    /// The group (a `ShapeGroup` id in the same layer) this shape belongs to, if any.
     public var group: Int?
 
     public init(id: Int, path: BezierPath, fill: RGBAColor? = nil, stroke: StrokeStyle? = nil,
@@ -117,7 +117,7 @@ public func windingNumber(of p: Vec2, polygon: [Vec2]) -> Int {
     return wn
 }
 
-/// Every shape's clip bases in one part, from `Part.clipPlan()`.
+/// Every shape's clip bases in one layer, from `Layer.clipPlan()`.
 public struct ClipPlan: Hashable, Sendable {
     /// `clipBase(of:)` by shape index.
     public let bases: [Int?]
@@ -135,14 +135,14 @@ public struct ClipPlan: Hashable, Sendable {
     }
 }
 
-/// A named set of shapes inside one part, such as an eye's white, iris and highlight.
+/// A named set of shapes inside one layer, such as an eye's white, iris and highlight.
 /// They select, hide and arrange together. Shapes point at their group with
-/// `VectorShape.group`, and a group's shapes are always next to each other in the part.
+/// `VectorShape.group`, and a group's shapes are always next to each other in the layer.
 public struct ShapeGroup: Hashable, Sendable, Codable, Identifiable {
     public var id: Int
     public var name: String
     /// Draws the whole group only where the nearest shape below it draws, like a
-    /// clipped shape (see `Part.clipBase(ofGroup:)`). Clipping inside the group still works.
+    /// clipped shape (see `Layer.clipBase(ofGroup:)`). Clipping inside the group still works.
     public var isClipped = false
 
     public init(id: Int, name: String, isClipped: Bool = false) {
@@ -153,16 +153,16 @@ public struct ShapeGroup: Hashable, Sendable, Codable, Identifiable {
 }
 
 /// A layer: shapes drawn together, in order, with their groups.
-public struct Part: Hashable, Sendable, Codable, Identifiable {
+public struct Layer: Hashable, Sendable, Codable, Identifiable {
     public var id: Int
     public var name: String
     public var shapes: [VectorShape]
     /// The point the layer rotates and scales about.
     public var pivot: Vec2
-    /// Editor hints, saved in the file, that apply to every shape in the part.
+    /// Editor hints, saved in the file, that apply to every shape in the layer.
     public var isHidden: Bool
     public var isLocked: Bool
-    /// The part's groups of shapes, in no particular order (the shapes keep the order).
+    /// The layer's groups of shapes, in no particular order (the shapes keep the order).
     public var groups: [ShapeGroup] = []
 
     public init(id: Int, name: String, shapes: [VectorShape] = [], pivot: Vec2 = .zero,
@@ -175,7 +175,7 @@ public struct Part: Hashable, Sendable, Codable, Identifiable {
         self.isLocked = isLocked
     }
 
-    /// Changes every shape in the part.
+    /// Changes every shape in the layer.
     public mutating func updateAllShapes(_ body: (inout VectorShape) -> Void) {
         for i in shapes.indices { body(&shapes[i]) }
     }
@@ -225,7 +225,7 @@ public struct Part: Hashable, Sendable, Codable, Identifiable {
     }
 
     /// `clipBase(of:)` and `groupClipBase(of:)` for every shape, in one pass. Use it when
-    /// walking the whole part, where asking shape by shape would be quadratic.
+    /// walking the whole layer, where asking shape by shape would be quadratic.
     public func clipPlan() -> ClipPlan {
         var bases: [Int?] = [], groupBases: [Int?] = []
         bases.reserveCapacity(shapes.count)
@@ -266,7 +266,7 @@ public struct Part: Hashable, Sendable, Codable, Identifiable {
         return seen.compactMap { id in group(id).map { ($0, members(ofGroup: id)) } }
     }
 
-    /// `base`, or `base 2`, `base 3`... so no other group in the part has the same name.
+    /// `base`, or `base 2`, `base 3`... so no other group in the layer has the same name.
     public func uniqueGroupName(_ base: String, excluding id: Int? = nil) -> String {
         let taken = Set(groups.filter { $0.id != id }.map(\.name))
         var name = base
@@ -339,30 +339,30 @@ public struct ReferenceImage: Hashable, Sendable, Codable, Identifiable {
     }
 }
 
-/// The address of one shape: its part and its own id.
+/// The address of one shape: its layer and its own id.
 public struct ShapeRef: Hashable, Sendable, Comparable {
-    public var part: Int
+    public var layer: Int
     public var shape: Int
 
-    public init(part: Int, shape: Int) {
-        self.part = part
+    public init(layer: Int, shape: Int) {
+        self.layer = layer
         self.shape = shape
     }
 
     public static func < (a: ShapeRef, b: ShapeRef) -> Bool {
-        a.part != b.part ? a.part < b.part : a.shape < b.shape
+        a.layer != b.layer ? a.layer < b.layer : a.shape < b.shape
     }
 }
 
 /// What the Pencil has selected.
 public enum Selection: Hashable, Sendable {
     case none
-    /// A whole part (a layer).
+    /// A whole layer (a layer).
     case layer(Int)
     /// Several whole layers, picked in the layers panel. Use `coveringLayers` to build
     /// one, so a single layer is always `.layer`.
     case layers(Set<Int>)
-    case shape(part: Int, shape: Int)
+    case shape(layer: Int, shape: Int)
     /// Several shapes picked one by one or with a marquee. Use `covering` to build
     /// one, so a single shape is always `.shape`.
     case shapes(Set<ShapeRef>)
@@ -372,7 +372,7 @@ public enum Selection: Hashable, Sendable {
     public static func covering(_ refs: Set<ShapeRef>) -> Selection {
         switch refs.count {
         case 0: .none
-        case 1: .shape(part: refs.first!.part, shape: refs.first!.shape)
+        case 1: .shape(layer: refs.first!.layer, shape: refs.first!.shape)
         default: .shapes(refs)
         }
     }
@@ -433,7 +433,7 @@ public struct Drawing: Hashable, Sendable, Codable {
     /// The fixed-aspect stage the presentation shows.
     public var viewport = Viewport()
     /// Back to front: this is the draw order.
-    public var parts: [Part] = []
+    public var layers: [Layer] = []
     /// Bottom to top.
     public var references: [ReferenceImage] = []
     /// Colors kept for reuse.
@@ -449,22 +449,22 @@ public struct Drawing: Hashable, Sendable, Codable {
         return nextID
     }
 
-    public var shapeCount: Int { parts.reduce(0) { $0 + $1.shapes.count } }
+    public var shapeCount: Int { layers.reduce(0) { $0 + $1.shapes.count } }
 
-    public func partIndex(_ id: Int) -> Int? { parts.firstIndex { $0.id == id } }
+    public func layerIndex(_ id: Int) -> Int? { layers.firstIndex { $0.id == id } }
 
-    public func indices(part: Int, shape: Int) -> (Int, Int)? {
-        guard let p = partIndex(part), let s = parts[p].shapes.firstIndex(where: { $0.id == shape }) else { return nil }
+    public func indices(layer: Int, shape: Int) -> (Int, Int)? {
+        guard let p = layerIndex(layer), let s = layers[p].shapes.firstIndex(where: { $0.id == shape }) else { return nil }
         return (p, s)
     }
 
-    public func shape(part: Int, shape: Int) -> VectorShape? {
-        indices(part: part, shape: shape).map { parts[$0.0].shapes[$0.1] }
+    public func shape(layer: Int, shape: Int) -> VectorShape? {
+        indices(layer: layer, shape: shape).map { layers[$0.0].shapes[$0.1] }
     }
 
-    public func shape(_ ref: ShapeRef) -> VectorShape? { shape(part: ref.part, shape: ref.shape) }
+    public func shape(_ ref: ShapeRef) -> VectorShape? { shape(layer: ref.layer, shape: ref.shape) }
 
-    public func indices(_ ref: ShapeRef) -> (Int, Int)? { indices(part: ref.part, shape: ref.shape) }
+    public func indices(_ ref: ShapeRef) -> (Int, Int)? { indices(layer: ref.layer, shape: ref.shape) }
 
     public func referenceIndex(_ id: Int) -> Int? { references.firstIndex { $0.id == id } }
 
@@ -483,10 +483,10 @@ public struct Drawing: Hashable, Sendable, Codable {
         return name
     }
 
-    /// `base`, or `base 2`, `base 3`... so no other part has the same name. Part names
+    /// `base`, or `base 2`, `base 3`... so no other layer has the same name. Layer names
     /// become slot ids in the file, so they are kept unique.
-    public func uniquePartName(_ base: String, excluding id: Int? = nil) -> String {
-        let taken = Set(parts.filter { $0.id != id }.map(\.name))
+    public func uniqueLayerName(_ base: String, excluding id: Int? = nil) -> String {
+        let taken = Set(layers.filter { $0.id != id }.map(\.name))
         var name = base
         var n = 2
         while taken.contains(name) {
@@ -496,26 +496,26 @@ public struct Drawing: Hashable, Sendable, Codable {
         return name
     }
 
-    /// The topmost editable shape under `p`, only in part `within` when it is given,
+    /// The topmost editable shape under `p`, only in layer `within` when it is given,
     /// and only in its group `group` when that is given too. Hidden and locked shapes,
     /// and reference images, are never hit.
-    public func hitTest(_ p: Vec2, tolerance: Double, within: Int? = nil, group: Int? = nil) -> (part: Int, shape: Int)? {
-        for part in parts.reversed() where within == nil || part.id == within {
-            for i in part.shapes.indices.reversed() where (group == nil || part.shapes[i].group == group) &&
-                part.isEditable(i) && part.shape(i, contains: p, tolerance: tolerance) {
-                return (part.id, part.shapes[i].id)
+    public func hitTest(_ p: Vec2, tolerance: Double, within: Int? = nil, group: Int? = nil) -> (layer: Int, shape: Int)? {
+        for layer in layers.reversed() where within == nil || layer.id == within {
+            for i in layer.shapes.indices.reversed() where (group == nil || layer.shapes[i].group == group) &&
+                layer.isEditable(i) && layer.shape(i, contains: p, tolerance: tolerance) {
+                return (layer.id, layer.shapes[i].id)
             }
         }
         return nil
     }
 
-    /// Every editable shape, in draw order, only in part `within` when it is given,
+    /// Every editable shape, in draw order, only in layer `within` when it is given,
     /// and only in its group `group` when that is given too.
     public func editableShapeRefs(within: Int? = nil, group: Int? = nil) -> [ShapeRef] {
         var out: [ShapeRef] = []
-        for part in parts where within == nil || part.id == within {
-            for i in part.shapes.indices where (group == nil || part.shapes[i].group == group) && part.isEditable(i) {
-                out.append(ShapeRef(part: part.id, shape: part.shapes[i].id))
+        for layer in layers where within == nil || layer.id == within {
+            for i in layer.shapes.indices where (group == nil || layer.shapes[i].group == group) && layer.isEditable(i) {
+                out.append(ShapeRef(layer: layer.id, shape: layer.shapes[i].id))
             }
         }
         return out
@@ -524,9 +524,9 @@ public struct Drawing: Hashable, Sendable, Codable {
     public func exists(_ selection: Selection) -> Bool {
         switch selection {
         case .none: true
-        case .layer(let id): partIndex(id) != nil
-        case .layers(let ids): !ids.isEmpty && ids.allSatisfy { partIndex($0) != nil }
-        case .shape(let p, let s): indices(part: p, shape: s) != nil
+        case .layer(let id): layerIndex(id) != nil
+        case .layers(let ids): !ids.isEmpty && ids.allSatisfy { layerIndex($0) != nil }
+        case .shape(let p, let s): indices(layer: p, shape: s) != nil
         case .shapes(let refs): !refs.isEmpty && refs.allSatisfy { indices($0) != nil }
         case .reference(let id): referenceIndex(id) != nil
         }
@@ -537,36 +537,36 @@ public struct Drawing: Hashable, Sendable, Codable {
         case .none:
             return nil
         case .layer(let id):
-            let bounds = partIndex(id).map { parts[$0].bounds } ?? .null
+            let bounds = layerIndex(id).map { layers[$0].bounds } ?? .null
             return bounds.isNull ? nil : SelectionFrame(rect: bounds)
         case .layers(let ids):
-            let bounds = parts.filter { ids.contains($0.id) }.reduce(Rect.null) { $0.union($1.bounds) }
+            let bounds = layers.filter { ids.contains($0.id) }.reduce(Rect.null) { $0.union($1.bounds) }
             return bounds.isNull ? nil : SelectionFrame(rect: bounds)
         case .shape(let p, let s):
-            return shape(part: p, shape: s).map { SelectionFrame(rect: $0.bounds) }
+            return shape(layer: p, shape: s).map { SelectionFrame(rect: $0.bounds) }
         case .shapes:
-            let bounds = shapeIndices(in: selection).reduce(Rect.null) { $0.union(parts[$1.0].shapes[$1.1].bounds) }
+            let bounds = shapeIndices(in: selection).reduce(Rect.null) { $0.union(layers[$1.0].shapes[$1.1].bounds) }
             return bounds.isNull ? nil : SelectionFrame(rect: bounds)
         case .reference(let id):
             return referenceIndex(id).map { SelectionFrame(corners: references[$0].corners) }
         }
     }
 
-    /// The shapes a selection covers, as (part index, shape index).
+    /// The shapes a selection covers, as (layer index, shape index).
     public func shapeIndices(in selection: Selection) -> [(Int, Int)] {
         switch selection {
         case .layer(let id):
-            guard let p = partIndex(id) else { return [] }
-            return parts[p].shapes.indices.map { (p, $0) }
+            guard let p = layerIndex(id) else { return [] }
+            return layers[p].shapes.indices.map { (p, $0) }
         case .layers(let ids):
-            return parts.indices.filter { ids.contains(parts[$0].id) }.flatMap { p in parts[p].shapes.indices.map { (p, $0) } }
+            return layers.indices.filter { ids.contains(layers[$0].id) }.flatMap { p in layers[p].shapes.indices.map { (p, $0) } }
         case .shape(let p, let s):
-            return indices(part: p, shape: s).map { [$0] } ?? []
+            return indices(layer: p, shape: s).map { [$0] } ?? []
         case .shapes(let refs):
             // In draw order, whatever the set's own order.
             var out: [(Int, Int)] = []
-            for (pi, part) in parts.enumerated() {
-                for (si, shape) in part.shapes.enumerated() where refs.contains(ShapeRef(part: part.id, shape: shape.id)) {
+            for (pi, layer) in layers.enumerated() {
+                for (si, shape) in layer.shapes.enumerated() where refs.contains(ShapeRef(layer: layer.id, shape: shape.id)) {
                     out.append((pi, si))
                 }
             }
@@ -578,7 +578,7 @@ public struct Drawing: Hashable, Sendable, Codable {
 
     /// The shapes a selection covers, in draw order.
     public func shapeRefs(in selection: Selection) -> [ShapeRef] {
-        shapeIndices(in: selection).map { ShapeRef(part: parts[$0.0].id, shape: parts[$0.0].shapes[$0.1].id) }
+        shapeIndices(in: selection).map { ShapeRef(layer: layers[$0.0].id, shape: layers[$0.0].shapes[$0.1].id) }
     }
 
     /// The selection's bounds without outline width, for numeric position and size.
@@ -586,7 +586,7 @@ public struct Drawing: Hashable, Sendable, Codable {
         if case .reference(let id) = selection {
             return referenceIndex(id).map { Rect(points: references[$0].corners) }
         }
-        let bounds = shapeIndices(in: selection).reduce(Rect.null) { $0.union(parts[$1.0].shapes[$1.1].path.bounds()) }
+        let bounds = shapeIndices(in: selection).reduce(Rect.null) { $0.union(layers[$1.0].shapes[$1.1].path.bounds()) }
         return bounds.isNull ? nil : bounds
     }
 
@@ -595,25 +595,25 @@ public struct Drawing: Hashable, Sendable, Codable {
         case .none:
             break
         case .layer(let id):
-            applyToLayers(t, partIndex(id).map { [$0] } ?? [])
+            applyToLayers(t, layerIndex(id).map { [$0] } ?? [])
         case .layers(let ids):
-            applyToLayers(t, parts.indices.filter { ids.contains(parts[$0].id) })
+            applyToLayers(t, layers.indices.filter { ids.contains(layers[$0].id) })
         case .shape(let pid, let sid):
-            guard let idx = indices(part: pid, shape: sid) else { return }
-            parts[idx.0].shapes[idx.1].apply(t)
+            guard let idx = indices(layer: pid, shape: sid) else { return }
+            layers[idx.0].shapes[idx.1].apply(t)
         case .shapes:
-            for (p, s) in shapeIndices(in: selection) { parts[p].shapes[s].apply(t) }
+            for (p, s) in shapeIndices(in: selection) { layers[p].shapes[s].apply(t) }
         case .reference(let id):
             guard let r = referenceIndex(id) else { return }
             references[r].apply(t)
         }
     }
 
-    /// Transforms whole layers (part indices) and their pivots.
+    /// Transforms whole layers (layer indices) and their pivots.
     private mutating func applyToLayers(_ t: Affine2D, _ indices: [Int]) {
         for p in indices {
-            for s in parts[p].shapes.indices { parts[p].shapes[s].apply(t) }
-            parts[p].pivot = t.apply(parts[p].pivot)
+            for s in layers[p].shapes.indices { layers[p].shapes[s].apply(t) }
+            layers[p].pivot = t.apply(layers[p].pivot)
         }
     }
 

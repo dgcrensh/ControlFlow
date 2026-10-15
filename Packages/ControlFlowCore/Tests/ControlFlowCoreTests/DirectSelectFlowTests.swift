@@ -30,7 +30,7 @@ private struct Rig {
     }
 
     var editor: DrawingEditor { s.editor }
-    var path: BezierPath { s.editor.drawing.parts[0].shapes[0].path }
+    var path: BezierPath { s.editor.drawing.layers[0].shapes[0].path }
     var undoSteps: Int { s.editor.undoStack.undoStates.count }
 
     func screen(_ world: Vec2) -> Vec2 { s.camera.toScreen(world) }
@@ -77,8 +77,8 @@ final class DirectSelectFlowTests: XCTestCase {
 
         // Tap on the line between two anchors.
         rig.tap(Vec2(50, 0))
-        let part = rig.editor.drawing.parts[0]
-        XCTAssertEqual(rig.editor.selection, .shape(part: part.id, shape: part.shapes[0].id))
+        let layer = rig.editor.drawing.layers[0]
+        XCTAssertEqual(rig.editor.selection, .shape(layer: layer.id, shape: layer.shapes[0].id))
         XCTAssertTrue(rig.editor.selectedAnchors.isEmpty)
         XCTAssertEqual(rig.path.points.count, 4, "the tap that selects must not insert a point")
         XCTAssertEqual(rig.undoSteps, steps, "selecting is not an edit")
@@ -255,7 +255,7 @@ final class DirectSelectFlowTests: XCTestCase {
     func testAShortHandleDoesNotStealThePressFromItsAnchor() {
         var rig = Rig.withPath()
         rig.tap(Vec2(100, 0))
-        rig.s.editor.drawing.parts[0].shapes[0].path.points[1] =
+        rig.s.editor.drawing.layers[0].shapes[0].path.points[1] =
             PathPoint(Vec2(100, 0), in: Vec2(-4, 0), out: Vec2(4, 0), mode: .smooth)
         // One point left of the anchor: the anchor is nearer than either handle.
         rig.drag(from: Vec2(99, 0), to: Vec2(99, 30))
@@ -412,7 +412,7 @@ final class DirectSelectFlowTests: XCTestCase {
         XCTAssertTrue(rig.editor.canSplitAtSelectedAnchor)
         rig.s.editor.splitAtSelectedAnchor()
         XCTAssertEqual(rig.editor.drawing.shapeCount, 2)
-        XCTAssertEqual(rig.editor.drawing.parts[0].shapes.map(\.path.points.count), [2, 3])
+        XCTAssertEqual(rig.editor.drawing.layers[0].shapes.map(\.path.points.count), [2, 3])
         rig.s.undo()
         XCTAssertEqual(rig.editor.drawing.shapeCount, 1)
     }

@@ -11,8 +11,8 @@ public struct FormatVersion: Hashable, Sendable, Comparable, CustomStringConvert
     /// Parses `MAJOR.MINOR.PATCH`; pre-release and build suffixes are ignored.
     public init?(_ text: String) {
         let core = text.split(whereSeparator: { $0 == "-" || $0 == "+" }).first ?? ""
-        let parts = core.split(separator: ".", omittingEmptySubsequences: false)
-        guard parts.count == 3, let a = Int(parts[0]), let b = Int(parts[1]), let c = Int(parts[2]),
+        let layers = core.split(separator: ".", omittingEmptySubsequences: false)
+        guard layers.count == 3, let a = Int(layers[0]), let b = Int(layers[1]), let c = Int(layers[2]),
               a >= 0, b >= 0, c >= 0 else { return nil }
         self.init(a, b, c)
     }
@@ -57,7 +57,7 @@ public struct DecodedCharacter: Sendable {
 /// Reads and writes the interim JSON format (see `Schema/` in the repository), a subset
 /// of Character Studio's 0.3 format that ControlFlow saves until its own format arrives.
 ///
-/// Every part becomes a slot on the root bone with one vector attachment in the default
+/// Every layer becomes a slot on the root bone with one vector attachment in the default
 /// skin, and the slot list order is the draw order. The viewport is written as
 /// `viewport`. Files from Character Studio open with their art in place, without the rig.
 public enum CharacterFormat {
@@ -71,13 +71,13 @@ public enum CharacterFormat {
 
     /// `referenceFiles` names the package file holding each reference image's pixels.
     public static func encode(_ drawing: Drawing, referenceFiles: [Int: String] = [:]) -> JSONValue {
-        let names = slotNames(for: drawing.parts)
+        let names = slotNames(for: drawing.layers)
         let globals = Dictionary(drawing.globalColors.map { ($0.id, $0.name) }, uniquingKeysWith: { a, _ in a })
         var slots: [JSONValue] = []
         var skin: [(key: String, value: JSONValue)] = []
-        for (part, name) in zip(drawing.parts, names) {
+        for (layer, name) in zip(drawing.layers, names) {
             slots.append(obj(["id": .string(name), "bone": .string(rootBone), "attachment": .string(name)]))
-            skin.append((key: name, value: .object([(key: name, value: attachment(part, globals: globals))])))
+            skin.append((key: name, value: .object([(key: name, value: attachment(layer, globals: globals))])))
         }
         let rootBoneValue = obj([
             "id": .string(rootBone), "parent": .null, "length": 0,
@@ -113,11 +113,11 @@ public enum CharacterFormat {
         .object(members.map { (key: $0.key, value: $0.value) })
     }
 
-    /// Slot ids from part names, made unique and non-empty.
-    static func slotNames(for parts: [Part]) -> [String] {
+    /// Slot ids from layer names, made unique and non-empty.
+    static func slotNames(for layers: [Layer]) -> [String] {
         var used = Set<String>()
-        return parts.map { part in
-            let base = part.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Part" : part.name
+        return layers.map { layer in
+            let base = layer.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Layer" : layer.name
             var name = base
             var n = 2
             while used.contains(name) {
@@ -129,15 +129,15 @@ public enum CharacterFormat {
         }
     }
 
-    private static func attachment(_ part: Part, globals: [Int: String]) -> JSONValue {
+    private static func attachment(_ layer: Layer, globals: [Int: String]) -> JSONValue {
         var members: [(key: String, value: JSONValue)] = [
             (key: "type", value: .string("vector")),
-            (key: "pivot", value: vec(part.pivot)),
+            (key: "pivot", value: vec(layer.pivot)),
         ]
-        members += editorHints(hidden: part.isHidden, locked: part.isLocked)
+        members += editorHints(hidden: layer.isHidden, locked: layer.isLocked)
         // Groups are numbered from 1 within the attachment, bottom to top, and written
-        // only when the part has some.
-        let runs = part.groupRuns
+        // only when the layer has some.
+        let runs = layer.groupRuns
         var groupNumbers: [Int: Int] = [:]
         for (i, run) in runs.enumerated() { groupNumbers[run.group.id] = i + 1 }
         if !runs.isEmpty {
@@ -149,7 +149,7 @@ public enum CharacterFormat {
             }
             members.append((key: "groups", value: .array(groups)))
         }
-        members.append((key: "shapes", value: .array(part.shapes.map { shape($0, globals: globals, groups: groupNumbers) })))
+        members.append((key: "shapes", value: .array(layer.shapes.map { shape($0, globals: globals, groups: groupNumbers) })))
         return .object(members)
     }
 
@@ -313,18 +313,18 @@ public enum CharacterFormat {
                 attachments.append((name, node))
             }
             guard let node = (attachments.first { $0.name == slot.attachment } ?? attachments.first)?.node else { continue }
-            var part = Part(id: drawing.makeID(), name: slot.id)
-            if let pivot = try node.vec2("pivot") { part.pivot = pivot }
-            part.isHidden = try node.bool("hidden") ?? false
-            part.isLocked = try node.bool("locked") ?? false
-            (part.shapes, part.groups) = try art(node, globals: globals, drawing: &drawing)
+            var layer = Layer(id: drawing.makeID(), name: slot.id)
+            if let pivot = try node.vec2("pivot") { layer.pivot = pivot }
+            layer.isHidden = try node.bool("hidden") ?? false
+            layer.isLocked = try node.bool("locked") ?? false
+            (layer.shapes, layer.groups) = try art(node, globals: globals, drawing: &drawing)
             // Attachments are in their bone's space; the editor works in world space.
             let transform = world[slot.bone ?? rootBone] ?? world[rootBone] ?? .identity
             if !transform.isApproximately(.identity, tolerance: 0) {
-                part.updateAllShapes { $0.apply(transform) }
-                part.pivot = transform.apply(part.pivot)
+                layer.updateAllShapes { $0.apply(transform) }
+                layer.pivot = transform.apply(layer.pivot)
             }
-            drawing.parts.append(part)
+            drawing.layers.append(layer)
         }
         // A group whose shapes aren't together is read as one group per run; unused groups go.
         if !drawing.groupsAreValid { drawing.repairGroups() }

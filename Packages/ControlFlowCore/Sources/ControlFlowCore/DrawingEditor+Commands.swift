@@ -19,9 +19,9 @@ extension DrawingEditor {
             selection = .none
         } else {
             if let idx = drawing.indices(ref),
-               let changed = changingPoints(of: drawing.parts[idx.0].shapes[idx.1],
+               let changed = changingPoints(of: drawing.layers[idx.0].shapes[idx.1],
                                             { var p = $0; p.removePoints(at: doomed); return p }) {
-                drawing.parts[idx.0].shapes[idx.1] = changed
+                drawing.layers[idx.0].shapes[idx.1] = changed
             }
             selectedAnchors = []
         }
@@ -104,22 +104,22 @@ extension DrawingEditor {
     }
 
     /// Cuts the shape at the selected anchor into separate shapes (or opens a closed
-    /// one). The pieces keep the shape's style and part, and are selected.
+    /// one). The pieces keep the shape's style and layer, and are selected.
     public mutating func splitAtSelectedAnchor() {
         guard let ref = activeShape, let a = selectedAnchor, let shape = drawing.shape(ref),
               shape.path.split(at: a) != nil, let idx = drawing.indices(ref) else { return }
         cancelGesture()
         guard let pieces = changingPoints(of: shape, { $0.split(at: a) }) else { return }
         let before = drawing
-        drawing.parts[idx.0].shapes[idx.1] = pieces[0]
+        drawing.layers[idx.0].shapes[idx.1] = pieces[0]
         var refs: Set<ShapeRef> = [ref]
         var insertAt = idx.1 + 1
         for piece in pieces.dropFirst() {
             var copy = piece
             copy.id = drawing.makeID()
-            drawing.parts[idx.0].shapes.insert(copy, at: insertAt)
+            drawing.layers[idx.0].shapes.insert(copy, at: insertAt)
             insertAt += 1
-            refs.insert(ShapeRef(part: ref.part, shape: copy.id))
+            refs.insert(ShapeRef(layer: ref.layer, shape: copy.id))
         }
         selection = .covering(refs)
         commit(from: before)
@@ -140,12 +140,12 @@ extension DrawingEditor {
         let before = drawing
         if refs.count == 1 {
             if let idx = drawing.indices(first) {
-                let shape = drawing.parts[idx.0].shapes[idx.1]
+                let shape = drawing.layers[idx.0].shapes[idx.1]
                 let ends = (shape.path.endPoint(.start), shape.path.endPoint(.end))
                 let merge = ends.0.flatMap { a in ends.1.map { a.distance(to: $0) <= 1e-6 } } ?? false
                 if let closed = changingPoints(of: shape,
                                                { $0.closedByJoiningEnds(mergeWithin: merge ? .infinity : -1) }) {
-                    drawing.parts[idx.0].shapes[idx.1] = closed
+                    drawing.layers[idx.0].shapes[idx.1] = closed
                 }
             }
         } else {
@@ -168,7 +168,7 @@ extension DrawingEditor {
             }
         }
         let saved = style
-        selection = .shape(part: first.part, shape: first.shape)
+        selection = .shape(layer: first.layer, shape: first.shape)
         style = saved
         commit(from: before)
     }
@@ -206,12 +206,12 @@ extension DrawingEditor {
         transformSelection(turn)
     }
 
-    /// Resets a dragged pivot: a part's goes back to the middle of its art.
+    /// Resets a dragged pivot: a layer's goes back to the middle of its art.
     public mutating func resetPivot() {
         customPivot = nil
-        guard case .layer(let id) = selection, let i = drawing.partIndex(id), let frame = drawing.frame(of: selection) else { return }
+        guard case .layer(let id) = selection, let i = drawing.layerIndex(id), let frame = drawing.frame(of: selection) else { return }
         let before = drawing
-        drawing.parts[i].pivot = frame.center
+        drawing.layers[i].pivot = frame.center
         commit(from: before)
     }
 

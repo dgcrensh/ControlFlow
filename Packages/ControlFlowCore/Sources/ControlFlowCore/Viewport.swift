@@ -89,8 +89,8 @@ extension Drawing {
     /// The shapes the editor shows, with their outlines.
     public var visibleArtBounds: Rect {
         var bounds = Rect.null
-        for part in parts {
-            for i in part.shapes.indices where part.isShown(i) { bounds = bounds.union(part.shapes[i].bounds) }
+        for layer in layers {
+            for i in layer.shapes.indices where layer.isShown(i) { bounds = bounds.union(layer.shapes[i].bounds) }
         }
         return bounds
     }

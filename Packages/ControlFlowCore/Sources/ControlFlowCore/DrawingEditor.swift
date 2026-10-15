@@ -6,7 +6,7 @@ public enum Tool: String, Hashable, Sendable, CaseIterable {
     case pencil
     /// Place anchors one by one; drag after placing to pull a handle.
     case pen
-    /// Select parts and shapes; move, scale, rotate and flip them with handles.
+    /// Select layers and shapes; move, scale, rotate and flip them with handles.
     case select
     /// Edit the anchors and handles of the tapped shapes.
     case directSelect
@@ -101,11 +101,11 @@ public enum EditorMetrics {
 /// right after continuing a path from its start, when the path is reversed on the
 /// next placement.
 public struct PenPath: Hashable, Sendable {
-    public var part: Int
+    public var layer: Int
     public var shape: Int
     public var fromStart: Bool
-    /// The pen made the part, so its pivot follows the path.
-    public var createdPart: Bool
+    /// The pen made the layer, so its pivot follows the path.
+    public var createdLayer: Bool
 }
 
 /// The vector editing state: the drawing, selection, tools, styles and undo.
@@ -117,10 +117,10 @@ public struct DrawingEditor: Sendable {
     public var drawing = Drawing() {
         didSet {
             revision &+= 1
-            // Isolation ends when its part goes (deleted, erased, merged or undone away).
-            if let id = isolatedPart, drawing.partIndex(id) == nil { isolatedPart = nil }
-            if let id = isolatedGroup, isolatedPart.flatMap({ drawing.part($0)?.group(id) }) == nil { isolatedGroup = nil }
-            if let id = targetLayer, drawing.partIndex(id) == nil { targetLayer = nil }
+            // Isolation ends when its layer goes (deleted, erased, merged or undone away).
+            if let id = isolatedLayer, drawing.layerIndex(id) == nil { isolatedLayer = nil }
+            if let id = isolatedGroup, isolatedLayer.flatMap({ drawing.layer($0)?.group(id) }) == nil { isolatedGroup = nil }
+            if let id = targetLayer, drawing.layerIndex(id) == nil { targetLayer = nil }
         }
     }
     /// Increments on every change to `drawing`, so renderers know to rebuild.
@@ -164,15 +164,15 @@ public struct DrawingEditor: Sendable {
     public var shapeOptions = ShapeToolOptions()
     /// Held modifier keys (hardware keyboard or the modifier strip).
     public var modifiers: EditorModifiers = []
-    /// The part being edited on its own: everything else is dimmed and can't be touched,
-    /// and new shapes join this part.
-    public internal(set) var isolatedPart: Int?
-    /// The group of `isolatedPart` being edited on its own, one level further in: only
+    /// The layer being edited on its own: everything else is dimmed and can't be touched,
+    /// and new shapes join this layer.
+    public internal(set) var isolatedLayer: Int?
+    /// The group of `isolatedLayer` being edited on its own, one level further in: only
     /// its shapes can be picked, and new shapes join it.
     public internal(set) var isolatedGroup: Int?
     /// The layer made active in the layers panel: new strokes, pen paths, shapes and
     /// pasted shapes go into it (see `activeLayer`). Nil means each new piece of art
-    /// starts a new part, unless isolation or auto-join says otherwise.
+    /// starts a new layer, unless isolation or auto-join says otherwise.
     public internal(set) var targetLayer: Int?
     /// Fill and outline colors used lately, newest first, for the squeeze palette.
     public internal(set) var recentColors: [RGBAColor] = []
@@ -184,9 +184,9 @@ public struct DrawingEditor: Sendable {
     /// When on, Pencil pressure sets the outline width along new freehand strokes.
     /// Off by default: outlines are uniform.
     public var pressureWidth = false
-    /// When on, a new freehand stroke or pen path joins the selected part instead of
-    /// starting a new one. Freehand strokes also need to overlap that part.
-    public var autoJoinSelectedPart = false
+    /// When on, a new freehand stroke or pen path joins the selected layer instead of
+    /// starting a new one. Freehand strokes also need to overlap that layer.
+    public var autoJoinSelectedLayer = false
     /// When on, tapping or marquee-dragging adds to (or removes from) the selection.
     public var addToSelection = false
     public var snap = SnapSettings()
@@ -195,7 +195,7 @@ public struct DrawingEditor: Sendable {
     public internal(set) var notice: String?
     public private(set) var undoStack = UndoStack<Drawing>()
 
-    /// A pivot the user dragged for a selection that is not a part. Parts keep theirs in `Part.pivot`.
+    /// A pivot the user dragged for a selection that is not a layer. Layers keep theirs in `Layer.pivot`.
     public internal(set) var customPivot: Vec2?
     /// The marquee rectangle while one is being dragged.
     public private(set) var marquee: Rect?
@@ -254,23 +254,23 @@ public struct DrawingEditor: Sendable {
         return refs.count == 1 ? refs[0] : nil
     }
 
-    /// The part new shapes would join: the isolated part, the active layer, the
-    /// selected part, or the first selected shape's.
-    var selectedPartID: Int? {
-        if let id = isolatedPart ?? usableTargetLayer { return id }
+    /// The layer new shapes would join: the isolated layer, the active layer, the
+    /// selected layer, or the first selected shape's.
+    var selectedLayerID: Int? {
+        if let id = isolatedLayer ?? usableTargetLayer { return id }
         return switch selection {
         case .layer(let id), .shape(let id, _): id
-        case .shapes(let refs): refs.min()?.part
+        case .shapes(let refs): refs.min()?.layer
         case .none, .layers, .reference: nil
         }
     }
 
-    /// The point rotation turns about: a dragged pivot, a part's own pivot, or the
+    /// The point rotation turns about: a dragged pivot, a layer's own pivot, or the
     /// middle of the selection.
     public var pivot: Vec2? {
         if let customPivot { return customPivot }
-        if case .layer(let id) = selection, let i = drawing.partIndex(id), !drawing.parts[i].shapes.isEmpty {
-            return drawing.parts[i].pivot
+        if case .layer(let id) = selection, let i = drawing.layerIndex(id), !drawing.layers[i].shapes.isEmpty {
+            return drawing.layers[i].pivot
         }
         return drawing.frame(of: selection)?.center
     }
@@ -407,11 +407,11 @@ public struct DrawingEditor: Sendable {
             drawing.nextID = max(drawing.nextID, nextID)
 
         case .pivot(let target, _, let grab, _):
-            var part: Int?
-            if case .layer(let id) = target { part = id }
-            let q = pivotSnapped(p + grab, part: part)
-            if case .layer(let id) = target, let i = drawing.partIndex(id) {
-                drawing.parts[i].pivot = q
+            var layer: Int?
+            if case .layer(let id) = target { layer = id }
+            let q = pivotSnapped(p + grab, layer: layer)
+            if case .layer(let id) = target, let i = drawing.layerIndex(id) {
+                drawing.layers[i].pivot = q
             } else {
                 customPivot = q
             }
@@ -422,7 +422,7 @@ public struct DrawingEditor: Sendable {
             if let edge = edgeClosing(original, dragging: primary, to: p) {
                 // Over the other end: the anchor stays put and the closing edge shows.
                 closingEdge = edge
-                drawing.parts[idx.0].shapes[idx.1].path = original
+                drawing.layers[idx.0].shapes[idx.1].path = original
                 return
             }
             closingEdge = nil
@@ -432,25 +432,25 @@ public struct DrawingEditor: Sendable {
             for i in selectedAnchors where path.points.indices.contains(i) {
                 path.moveAnchor(i, to: original.points[i].position + delta)
             }
-            drawing.parts[idx.0].shapes[idx.1].path = path
+            drawing.layers[idx.0].shapes[idx.1].path = path
 
         case .segment(let ref, let index, let t, let before, let start):
             guard let idx = drawing.indices(ref), var path = before.shape(ref)?.path else { return }
             path.reshapeSegment(index, t: t, by: p - start)
-            drawing.parts[idx.0].shapes[idx.1].path = path
+            drawing.layers[idx.0].shapes[idx.1].path = path
 
         case .handle(let ref, let index, let side, _, let grab):
             guard let idx = drawing.indices(ref),
-                  drawing.parts[idx.0].shapes[idx.1].path.points.indices.contains(index) else { return }
-            drawing.parts[idx.0].shapes[idx.1].path.setHandle(index, side, to: p + grab)
+                  drawing.layers[idx.0].shapes[idx.1].path.points.indices.contains(index) else { return }
+            drawing.layers[idx.0].shapes[idx.1].path.setHandle(index, side, to: p + grab)
 
         case .marquee(let start, _, _, _):
             marquee = Rect(from: start, to: p)
 
         case .penPlace(let ref, let index, _, _):
             guard let idx = drawing.indices(ref),
-                  drawing.parts[idx.0].shapes[idx.1].path.points.indices.contains(index) else { return }
-            var point = drawing.parts[idx.0].shapes[idx.1].path.points[index]
+                  drawing.layers[idx.0].shapes[idx.1].path.points.indices.contains(index) else { return }
+            var point = drawing.layers[idx.0].shapes[idx.1].path.points[index]
             let drag = p - point.position
             if drag.length > EditorMetrics.tapSlop / gestureZoom {
                 // Pulling out of a fresh anchor makes a symmetric handle: out follows the drag.
@@ -462,7 +462,7 @@ public struct DrawingEditor: Sendable {
                 point.inHandle = .zero
                 point.mode = .corner
             }
-            drawing.parts[idx.0].shapes[idx.1].path.points[index] = point
+            drawing.layers[idx.0].shapes[idx.1].path.points[index] = point
 
         case .shapeDraw(let start, let ref, let before):
             self.gesture = .shapeDraw(start: start, ref: drawShape(from: start, to: p, ref: ref), before: before)
@@ -500,8 +500,8 @@ public struct DrawingEditor: Sendable {
             commit(from: before)
         case .anchors(let ref, _, let before, _):
             if closing != nil, let idx = drawing.indices(ref),
-               let closed = drawing.parts[idx.0].shapes[idx.1].path.closedWithStraightEdge() {
-                drawing.parts[idx.0].shapes[idx.1].path = closed
+               let closed = drawing.layers[idx.0].shapes[idx.1].path.closedWithStraightEdge() {
+                drawing.layers[idx.0].shapes[idx.1].path = closed
             }
             commit(from: undoBase ?? before)
             undoBase = nil
@@ -581,7 +581,7 @@ public struct DrawingEditor: Sendable {
             }
         }
         if let hit = hitShape(at: p, tolerance: EditorMetrics.shapeHit * px) {
-            return .pending(.shape(ShapeRef(part: hit.part, shape: hit.shape)), start: p)
+            return .pending(.shape(ShapeRef(layer: hit.layer, shape: hit.shape)), start: p)
         }
         return .pending(.empty, start: p)
     }
@@ -593,19 +593,19 @@ public struct DrawingEditor: Sendable {
     }
 
     /// With the select tool, double-tapping goes one level in: into a grouped shape's
-    /// group, or else into the shape's part (isolating it). Double-tapping empty canvas
+    /// group, or else into the shape's layer (isolating it). Double-tapping empty canvas
     /// goes one level out.
     private mutating func doubleTap(at p: Vec2) {
         guard tool == .select else { return }
         if let hit = hitShape(at: p, tolerance: EditorMetrics.shapeHit / gestureZoom) {
-            let ref = ShapeRef(part: hit.part, shape: hit.shape)
+            let ref = ShapeRef(layer: hit.layer, shape: hit.shape)
             if let group = tapGroup(of: ref) {
-                isolate(group: group, inPart: hit.part)
-                selection = .shape(part: hit.part, shape: hit.shape)
-            } else if isolatedPart != hit.part {
-                isolate(part: hit.part)
+                isolate(group: group, inLayer: hit.layer)
+                selection = .shape(layer: hit.layer, shape: hit.shape)
+            } else if isolatedLayer != hit.layer {
+                isolate(layer: hit.layer)
             }
-        } else if isolatedPart != nil {
+        } else if isolatedLayer != nil {
             stepOutOfIsolation()
         }
     }
@@ -617,29 +617,29 @@ public struct DrawingEditor: Sendable {
         return group
     }
 
-    /// What a select-tool tap on `ref` picks once its part is selected: the shape's whole
+    /// What a select-tool tap on `ref` picks once its layer is selected: the shape's whole
     /// group, or the shape itself.
     func tapTarget(_ ref: ShapeRef) -> Selection {
-        guard let group = tapGroup(of: ref), let p = drawing.partIndex(ref.part) else {
-            return .shape(part: ref.part, shape: ref.shape)
+        guard let group = tapGroup(of: ref), let p = drawing.layerIndex(ref.layer) else {
+            return .shape(layer: ref.layer, shape: ref.shape)
         }
-        let part = drawing.parts[p]
-        let refs = part.members(ofGroup: group).filter(part.isEditable).map { ShapeRef(part: part.id, shape: part.shapes[$0].id) }
+        let layer = drawing.layers[p]
+        let refs = layer.members(ofGroup: group).filter(layer.isEditable).map { ShapeRef(layer: layer.id, shape: layer.shapes[$0].id) }
         return .covering(Set(refs).union([ref]))
     }
 
-    /// True when the selection is part `id`, or a shape or one group inside it, so the
+    /// True when the selection is layer `id`, or a shape or one group inside it, so the
     /// next tap there goes one level down. Inside an isolated group taps always reach shapes.
-    private func selectionIsInside(part id: Int) -> Bool {
+    private func selectionIsInside(layer id: Int) -> Bool {
         if isolatedGroup != nil { return true }
         return switch selection {
         case .layer(let p), .shape(let p, _): p == id
-        case .shapes(let refs): refs.allSatisfy { $0.part == id } && drawing.selectedGroup(selection) != nil
+        case .shapes(let refs): refs.allSatisfy { $0.layer == id } && drawing.selectedGroup(selection) != nil
         case .none, .layers, .reference: false
         }
     }
 
-    /// Tapping a shape selects its part; tapping again inside the selected part selects
+    /// Tapping a shape selects its layer; tapping again inside the selected layer selects
     /// the shape's group, or the single shape when it has none. Tapping empty canvas
     /// clears the selection. With `addToSelection`, tapping toggles the shape (or its
     /// whole group) in and out of the selection.
@@ -648,12 +648,12 @@ public struct DrawingEditor: Sendable {
             if !addToSelection { selection = .none }
             return
         }
-        let ref = ShapeRef(part: hit.part, shape: hit.shape)
+        let ref = ShapeRef(layer: hit.layer, shape: hit.shape)
         if addToSelection {
             toggleInSelection(Set(drawing.shapeRefs(in: tapTarget(ref))))
             return
         }
-        selection = selectionIsInside(part: hit.part) ? tapTarget(ref) : .layer(hit.part)
+        selection = selectionIsInside(layer: hit.layer) ? tapTarget(ref) : .layer(hit.layer)
     }
 
     private mutating func toggleInSelection(_ ref: ShapeRef) {
@@ -683,17 +683,17 @@ public struct DrawingEditor: Sendable {
         if tool == .select {
             // A marquee touching a grouped shape takes its whole group.
             for ref in refs { refs.formUnion(drawing.shapeRefs(in: tapTarget(ref))) }
-            selection = promotedToPart(refs)
+            selection = promotedToLayer(refs)
         } else {
             selection = Selection.covering(refs)
         }
     }
 
-    /// `.layer` when `refs` is every shape of exactly one part, so a marquee around a
-    /// whole part selects the part the way tapping it does.
-    private func promotedToPart(_ refs: Set<ShapeRef>) -> Selection {
-        let parts = Set(refs.map(\.part))
-        if parts.count == 1, let id = parts.first, let i = drawing.partIndex(id), drawing.parts[i].shapes.count == refs.count {
+    /// `.layer` when `refs` is every shape of exactly one layer, so a marquee around a
+    /// whole layer selects the layer the way tapping it does.
+    private func promotedToLayer(_ refs: Set<ShapeRef>) -> Selection {
+        let layers = Set(refs.map(\.layer))
+        if layers.count == 1, let id = layers.first, let i = drawing.layerIndex(id), drawing.layers[i].shapes.count == refs.count {
             return .layer(id)
         }
         return .covering(refs)
@@ -733,13 +733,13 @@ public struct DrawingEditor: Sendable {
         guard let hit = hitShape(at: p, tolerance: EditorMetrics.shapeHit * px) else {
             return .pending(.empty, start: p)
         }
-        let ref = ShapeRef(part: hit.part, shape: hit.shape)
+        let ref = ShapeRef(layer: hit.layer, shape: hit.shape)
         if addToSelection || refs.contains(ref) {
             return .pending(.shape(ref), start: p)
         }
         // A shape that was not selected shows its anchors at once, so the same press
         // can already grab one of them or drag a segment.
-        selection = .shape(part: ref.part, shape: ref.shape)
+        selection = .shape(layer: ref.layer, shape: ref.shape)
         if let picked = pickAnchorOrCurve(at: p, among: [ref], px: px) {
             if case .curve(let r, let segment, let t, _) = picked {
                 return .pending(.curve(r, segment: segment, t: t, insertsOnTap: false), start: p)
@@ -791,8 +791,8 @@ public struct DrawingEditor: Sendable {
     private mutating func beginPen(at p: Vec2, px: Double) -> Gesture {
         let reach = EditorMetrics.anchorHit * px
         var activeRef: ShapeRef?
-        if let pen = penPath, let shape = drawing.shape(part: pen.part, shape: pen.shape), !shape.path.points.isEmpty {
-            activeRef = ShapeRef(part: pen.part, shape: pen.shape)
+        if let pen = penPath, let shape = drawing.shape(layer: pen.layer, shape: pen.shape), !shape.path.points.isEmpty {
+            activeRef = ShapeRef(layer: pen.layer, shape: pen.shape)
             let points = shape.path.points
             let active = pen.fromStart ? 0 : points.count - 1
             let far = pen.fromStart ? points.count - 1 : 0
@@ -809,7 +809,7 @@ public struct DrawingEditor: Sendable {
     /// The nearest end of any open path other than `excluded`.
     private func openEndpoint(near p: Vec2, reach: Double, excluding excluded: ShapeRef?) -> (ref: ShapeRef, end: PathEnd)? {
         var best: (ref: ShapeRef, end: PathEnd, distance: Double)?
-        for ref in drawing.editableShapeRefs(within: isolatedPart, group: isolatedGroup) where ref != excluded {
+        for ref in drawing.editableShapeRefs(within: isolatedLayer, group: isolatedGroup) where ref != excluded {
             guard let shape = drawing.shape(ref), !shape.path.closed, !shape.path.points.isEmpty else { continue }
             for end in [PathEnd.start, .end] {
                 guard let position = shape.path.endPoint(end) else { continue }
@@ -827,22 +827,22 @@ public struct DrawingEditor: Sendable {
         let penBefore = penPath
         let point = PathPoint(snapped(p), in: .zero, out: .zero, mode: .corner)
         let ref: ShapeRef
-        if var pen = penPath, let idx = drawing.indices(part: pen.part, shape: pen.shape) {
+        if var pen = penPath, let idx = drawing.indices(layer: pen.layer, shape: pen.shape) {
             if pen.fromStart {
-                drawing.parts[idx.0].shapes[idx.1].path = drawing.parts[idx.0].shapes[idx.1].path.reversed()
+                drawing.layers[idx.0].shapes[idx.1].path = drawing.layers[idx.0].shapes[idx.1].path.reversed()
                 pen.fromStart = false
                 penPath = pen
             }
-            drawing.parts[idx.0].shapes[idx.1].path.points.append(point)
-            ref = ShapeRef(part: pen.part, shape: pen.shape)
-            if pen.createdPart { drawing.parts[idx.0].pivot = drawing.parts[idx.0].bounds.center }
+            drawing.layers[idx.0].shapes[idx.1].path.points.append(point)
+            ref = ShapeRef(layer: pen.layer, shape: pen.shape)
+            if pen.createdLayer { drawing.layers[idx.0].pivot = drawing.layers[idx.0].bounds.center }
         } else {
             ref = startPenShape(with: point)
         }
         // Selecting the shape lets the style controls restyle it while it grows, but
         // must not rewrite the style the user has set.
         let saved = style
-        selection = .shape(part: ref.part, shape: ref.shape)
+        selection = .shape(layer: ref.layer, shape: ref.shape)
         style = saved
         let count = drawing.shape(ref)?.path.points.count ?? 1
         return .penPlace(ref, index: count - 1, before: before, penBefore: penBefore)
@@ -853,23 +853,23 @@ public struct DrawingEditor: Sendable {
         shape.fill = style.fillEnabled ? style.fill : nil
         // Outlined while open so the path is visible; closing may drop the outline.
         shape.stroke = style.makeStroke()
-        if let target = activeLayer, let p = drawing.partIndex(target) {
-            addToActiveLayer(&shape, part: p)
-            penPath = PenPath(part: target, shape: shape.id, fromStart: false, createdPart: false)
-            return ShapeRef(part: target, shape: shape.id)
+        if let target = activeLayer, let p = drawing.layerIndex(target) {
+            addToActiveLayer(&shape, layer: p)
+            penPath = PenPath(layer: target, shape: shape.id, fromStart: false, createdLayer: false)
+            return ShapeRef(layer: target, shape: shape.id)
         }
         let id = drawing.makeID()
-        let name = drawing.uniquePartName("Part \(drawing.parts.count + 1)")
-        drawing.parts.append(Part(id: id, name: name, shapes: [shape], pivot: point.position))
-        penPath = PenPath(part: id, shape: shape.id, fromStart: false, createdPart: true)
-        return ShapeRef(part: id, shape: shape.id)
+        let name = drawing.uniqueLayerName("Layer \(drawing.layers.count + 1)")
+        drawing.layers.append(Layer(id: id, name: name, shapes: [shape], pivot: point.position))
+        penPath = PenPath(layer: id, shape: shape.id, fromStart: false, createdLayer: true)
+        return ShapeRef(layer: id, shape: shape.id)
     }
 
     /// Ends the open path (the Done action). A path of one anchor is discarded.
     public mutating func penFinish() {
         guard let pen = penPath else { return }
         penPath = nil
-        let ref = ShapeRef(part: pen.part, shape: pen.shape)
+        let ref = ShapeRef(layer: pen.layer, shape: pen.shape)
         guard let shape = drawing.shape(ref) else { return }
         if shape.path.points.count >= 2 {
             // A finished open path gets its mirror image now that it is whole.
@@ -885,15 +885,15 @@ public struct DrawingEditor: Sendable {
     }
 
     private mutating func closePenPath() {
-        guard let pen = penPath, let idx = drawing.indices(part: pen.part, shape: pen.shape),
-              drawing.parts[idx.0].shapes[idx.1].path.points.count >= 3 else { return }
+        guard let pen = penPath, let idx = drawing.indices(layer: pen.layer, shape: pen.shape),
+              drawing.layers[idx.0].shapes[idx.1].path.points.count >= 3 else { return }
         let before = drawing
-        drawing.parts[idx.0].shapes[idx.1].path.closed = true
-        if !style.outlineEnabled, drawing.parts[idx.0].shapes[idx.1].fill != nil {
-            drawing.parts[idx.0].shapes[idx.1].stroke = nil
+        drawing.layers[idx.0].shapes[idx.1].path.closed = true
+        if !style.outlineEnabled, drawing.layers[idx.0].shapes[idx.1].fill != nil {
+            drawing.layers[idx.0].shapes[idx.1].stroke = nil
         }
         penPath = nil
-        addMirrorImage(of: ShapeRef(part: pen.part, shape: pen.shape))
+        addMirrorImage(of: ShapeRef(layer: pen.layer, shape: pen.shape))
         commit(from: before)
     }
 
@@ -902,18 +902,18 @@ public struct DrawingEditor: Sendable {
     private mutating func joinOrContinuePen(_ ref: ShapeRef, _ end: PathEnd) {
         guard let other = drawing.shape(ref), !other.path.closed else { return }
         guard let pen = penPath else {
-            penPath = PenPath(part: ref.part, shape: ref.shape, fromStart: end == .start, createdPart: false)
+            penPath = PenPath(layer: ref.layer, shape: ref.shape, fromStart: end == .start, createdLayer: false)
             let saved = style
-            selection = .shape(part: ref.part, shape: ref.shape)
+            selection = .shape(layer: ref.layer, shape: ref.shape)
             style = saved
             return
         }
-        let active = ShapeRef(part: pen.part, shape: pen.shape)
+        let active = ShapeRef(layer: pen.layer, shape: pen.shape)
         let before = drawing
         guard joinShapes(active, pen.fromStart ? .start : .end, ref, end) else { return }
         penPath = nil
         let saved = style
-        selection = .shape(part: active.part, shape: active.shape)
+        selection = .shape(layer: active.layer, shape: active.shape)
         style = saved
         commit(from: before)
     }
@@ -921,7 +921,7 @@ public struct DrawingEditor: Sendable {
     /// The segment the pen would add next, from the active end to the hovering Pencil.
     public var penPreview: CubicBezier? {
         guard let cursor = penCursor, let pen = penPath, gesture == nil,
-              let points = drawing.shape(part: pen.part, shape: pen.shape)?.path.points,
+              let points = drawing.shape(layer: pen.layer, shape: pen.shape)?.path.points,
               let end = pen.fromStart ? points.first : points.last else { return nil }
         let control = pen.fromStart ? end.inControl : end.outControl
         return CubicBezier(end.position, control, cursor, cursor)
@@ -937,9 +937,9 @@ public struct DrawingEditor: Sendable {
             guard tool == .select || tool == .directSelect else { return .idle }
             if !drawing.shapeRefs(in: selection).contains(ref) {
                 if tool == .select {
-                    selection = selectionIsInside(part: ref.part) ? tapTarget(ref) : .layer(ref.part)
+                    selection = selectionIsInside(layer: ref.layer) ? tapTarget(ref) : .layer(ref.layer)
                 } else {
-                    selection = .shape(part: ref.part, shape: ref.shape)
+                    selection = .shape(layer: ref.layer, shape: ref.shape)
                 }
             }
             return beginMove(from: start)
@@ -983,7 +983,7 @@ public struct DrawingEditor: Sendable {
 
     /// Makes `ref` the only selected shape, keeping the anchor selection if it already was.
     private mutating func narrowSelection(to ref: ShapeRef) {
-        let narrowed = Selection.shape(part: ref.part, shape: ref.shape)
+        let narrowed = Selection.shape(layer: ref.layer, shape: ref.shape)
         if selection != narrowed { selection = narrowed }
     }
 
@@ -1003,7 +1003,7 @@ public struct DrawingEditor: Sendable {
         case .directSelect:
             switch pending {
             case .anchor(let ref, let i):
-                if addToSelection, selection == .shape(part: ref.part, shape: ref.shape) {
+                if addToSelection, selection == .shape(layer: ref.layer, shape: ref.shape) {
                     if selectedAnchors.contains(i) { selectedAnchors.remove(i) } else { selectedAnchors.insert(i) }
                 } else {
                     narrowSelection(to: ref)
@@ -1078,9 +1078,9 @@ public struct DrawingEditor: Sendable {
     private func snapAnchors(excluding: Set<ShapeRef>, moving: (ShapeRef, Set<Int>)?) -> [Vec2] {
         guard snap.isEnabled, snap.toAnchors else { return [] }
         var out: [Vec2] = []
-        for part in drawing.parts {
-            for (index, shape) in part.shapes.enumerated() where part.isShown(index) {
-                let ref = ShapeRef(part: part.id, shape: shape.id)
+        for layer in drawing.layers {
+            for (index, shape) in layer.shapes.enumerated() where layer.isShown(index) {
+                let ref = ShapeRef(layer: layer.id, shape: shape.id)
                 if excluding.contains(ref) { continue }
                 for (i, point) in shape.path.points.enumerated() {
                     if let moving, moving.0 == ref, moving.1.contains(i) { continue }
@@ -1120,8 +1120,8 @@ public struct DrawingEditor: Sendable {
     // MARK: Strokes
 
     /// Fits a finished pencil stroke and adds it as a shape. A closed stroke becomes
-    /// a filled shape. With `autoJoinSelectedPart` on and a part selected, a stroke that
-    /// overlaps it joins that part; otherwise it starts a new part.
+    /// a filled shape. With `autoJoinSelectedLayer` on and a layer selected, a stroke that
+    /// overlaps it joins that layer; otherwise it starts a new layer.
     ///
     /// `pressures` (0...1, one per point) set the outline width at each anchor when
     /// `pressureWidth` is on; otherwise the outline is uniform.
@@ -1158,25 +1158,25 @@ public struct DrawingEditor: Sendable {
         return shape
     }
 
-    /// Adds `shape` to the isolated part or the active layer, or with auto-join to the
-    /// selected part (when `joinNeedsOverlap`, only if it overlaps it), or else to a new
-    /// part on top. Does not record undo.
+    /// Adds `shape` to the isolated layer or the active layer, or with auto-join to the
+    /// selected layer (when `joinNeedsOverlap`, only if it overlaps it), or else to a new
+    /// layer on top. Does not record undo.
     @discardableResult
     mutating func insertNewShape(_ shape: VectorShape, joinNeedsOverlap: Bool) -> ShapeRef {
-        if let target = isolatedPart ?? usableTargetLayer, let p = drawing.partIndex(target) {
+        if let target = isolatedLayer ?? usableTargetLayer, let p = drawing.layerIndex(target) {
             var shape = shape
-            addToActiveLayer(&shape, part: p)
-            return ShapeRef(part: target, shape: shape.id)
+            addToActiveLayer(&shape, layer: p)
+            return ShapeRef(layer: target, shape: shape.id)
         }
-        if autoJoinSelectedPart, let target = selectedPartID, let p = drawing.partIndex(target),
-           !joinNeedsOverlap || drawing.parts[p].bounds.intersects(shape.bounds) {
-            drawing.parts[p].shapes.append(shape)
-            return ShapeRef(part: target, shape: shape.id)
+        if autoJoinSelectedLayer, let target = selectedLayerID, let p = drawing.layerIndex(target),
+           !joinNeedsOverlap || drawing.layers[p].bounds.intersects(shape.bounds) {
+            drawing.layers[p].shapes.append(shape)
+            return ShapeRef(layer: target, shape: shape.id)
         }
         let id = drawing.makeID()
-        let name = drawing.uniquePartName("Part \(drawing.parts.count + 1)")
-        drawing.parts.append(Part(id: id, name: name, shapes: [shape], pivot: shape.bounds.center))
-        return ShapeRef(part: id, shape: shape.id)
+        let name = drawing.uniqueLayerName("Layer \(drawing.layers.count + 1)")
+        drawing.layers.append(Layer(id: id, name: name, shapes: [shape], pivot: shape.bounds.center))
+        return ShapeRef(layer: id, shape: shape.id)
     }
 
     // MARK: Shape tool
@@ -1188,14 +1188,14 @@ public struct DrawingEditor: Sendable {
                                               modifiers: modifiers, minimumSize: EditorMetrics.tapSlop / gestureZoom)
         else { return ref }
         if let ref, let idx = drawing.indices(ref) {
-            drawing.parts[idx.0].shapes[idx.1].path = path
-            // A part made by this drag keeps its pivot in the middle; one it joined keeps its own.
-            if drawing.parts[idx.0].shapes.count == 1 { drawing.parts[idx.0].pivot = drawing.parts[idx.0].bounds.center }
+            drawing.layers[idx.0].shapes[idx.1].path = path
+            // A layer made by this drag keeps its pivot in the middle; one it joined keeps its own.
+            if drawing.layers[idx.0].shapes.count == 1 { drawing.layers[idx.0].pivot = drawing.layers[idx.0].bounds.center }
             return ref
         }
         let new = insertNewShape(styledShape(path), joinNeedsOverlap: false)
         let saved = style
-        selection = .shape(part: new.part, shape: new.shape)
+        selection = .shape(layer: new.layer, shape: new.shape)
         style = saved
         return new
     }
@@ -1216,7 +1216,7 @@ public struct DrawingEditor: Sendable {
         // The rest of the stroke keeps the index: only the erased shapes left it.
         shapeIndex = shapeIndex?.removing(doomed, revision: revision)
         validateSelection()
-        if let pen = penPath, drawing.indices(part: pen.part, shape: pen.shape) == nil { penPath = nil }
+        if let pen = penPath, drawing.indices(layer: pen.layer, shape: pen.shape) == nil { penPath = nil }
     }
 
     // MARK: Commands
@@ -1240,7 +1240,7 @@ public struct DrawingEditor: Sendable {
     public mutating func clearArt() {
         cancelGesture()
         let before = drawing
-        drawing.parts.removeAll()
+        drawing.layers.removeAll()
         penPath = nil
         if case .reference = selection {} else { selection = .none }
         commit(from: before)
@@ -1253,12 +1253,12 @@ public struct DrawingEditor: Sendable {
         case .none:
             return
         case .layer(let id):
-            drawing.parts.removeAll { $0.id == id }
+            drawing.layers.removeAll { $0.id == id }
         case .layers(let ids):
-            drawing.parts.removeAll { ids.contains($0.id) }
+            drawing.layers.removeAll { ids.contains($0.id) }
         case .shape(let pid, let sid):
-            guard drawing.indices(part: pid, shape: sid) != nil else { return }
-            removeShape(ShapeRef(part: pid, shape: sid))
+            guard drawing.indices(layer: pid, shape: sid) != nil else { return }
+            removeShape(ShapeRef(layer: pid, shape: sid))
         case .shapes(let refs):
             for ref in refs { removeShape(ref) }
         case .reference(let id):
@@ -1273,7 +1273,7 @@ public struct DrawingEditor: Sendable {
     /// The style of the first selected shape, for showing in the style controls.
     public var selectionStyle: ShapeStyle? {
         guard let first = drawing.shapeIndices(in: selection).first else { return nil }
-        let shape = drawing.parts[first.0].shapes[first.1]
+        let shape = drawing.layers[first.0].shapes[first.1]
         var result = style
         if let fill = shape.fill { result.fill = fill }
         result.fillEnabled = shape.fill != nil
@@ -1383,12 +1383,12 @@ public struct DrawingEditor: Sendable {
 
     // MARK: Layers
 
-    /// Renames a part. Names are trimmed and kept unique; an empty name is ignored.
-    public mutating func renamePart(_ id: Int, to name: String) {
+    /// Renames a layer. Names are trimmed and kept unique; an empty name is ignored.
+    public mutating func renameLayer(_ id: Int, to name: String) {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, let i = drawing.partIndex(id) else { return }
+        guard !trimmed.isEmpty, let i = drawing.layerIndex(id) else { return }
         let before = drawing
-        drawing.parts[i].name = drawing.uniquePartName(trimmed, excluding: id)
+        drawing.layers[i].name = drawing.uniqueLayerName(trimmed, excluding: id)
         commit(from: before)
     }
 
@@ -1400,18 +1400,18 @@ public struct DrawingEditor: Sendable {
         commit(from: before)
     }
 
-    /// Selects a whole part, as tapping it with the select tool does.
-    /// Hidden and locked parts can't be selected; selecting a part outside isolation ends it.
-    public mutating func selectPart(_ id: Int) {
-        guard let i = drawing.partIndex(id), !drawing.parts[i].isHidden, !drawing.parts[i].isLocked else { return }
+    /// Selects a whole layer, as tapping it with the select tool does.
+    /// Hidden and locked layers can't be selected; selecting a layer outside isolation ends it.
+    public mutating func selectLayer(_ id: Int) {
+        guard let i = drawing.layerIndex(id), !drawing.layers[i].isHidden, !drawing.layers[i].isLocked else { return }
         cancelGesture()
-        if let isolated = isolatedPart, isolated != id { exitIsolation() }
+        if let isolated = isolatedLayer, isolated != id { exitIsolation() }
         isolatedGroup = nil
         selection = .layer(id)
     }
 
-    public mutating func deletePart(_ id: Int) {
-        guard drawing.partIndex(id) != nil else { return }
+    public mutating func deleteLayer(_ id: Int) {
+        guard drawing.layerIndex(id) != nil else { return }
         cancelGesture()
         selection = .layer(id)
         deleteSelection()
@@ -1457,28 +1457,28 @@ public struct DrawingEditor: Sendable {
     mutating func editShape(_ ref: ShapeRef, key: String? = nil, _ change: (inout VectorShape) -> Void) {
         guard let idx = drawing.indices(ref) else { return }
         let before = drawing
-        change(&drawing.parts[idx.0].shapes[idx.1])
+        change(&drawing.layers[idx.0].shapes[idx.1])
         commit(from: before, key: key)
     }
 
-    /// Removes a shape, and its part if that leaves it empty. Does not record undo.
+    /// Removes a shape, and its layer if that leaves it empty. Does not record undo.
     mutating func removeShape(_ ref: ShapeRef) {
         guard let idx = drawing.indices(ref) else { return }
-        drawing.parts[idx.0].shapes.remove(at: idx.1)
-        if drawing.parts[idx.0].shapes.isEmpty { drawing.parts.remove(at: idx.0) }
+        drawing.layers[idx.0].shapes.remove(at: idx.1)
+        if drawing.layers[idx.0].shapes.isEmpty { drawing.layers.remove(at: idx.0) }
     }
 
     /// Joins shape `b` onto shape `a` at the given ends, keeping `a`'s style and
     /// removing `b`. Does not record undo.
     mutating func joinShapes(_ a: ShapeRef, _ aEnd: PathEnd, _ b: ShapeRef, _ bEnd: PathEnd) -> Bool {
         guard a != b, let ai = drawing.indices(a), let shapeB = drawing.shape(b),
-              let pa = drawing.parts[ai.0].shapes[ai.1].path.endPoint(aEnd), let pb = shapeB.path.endPoint(bEnd)
+              let pa = drawing.layers[ai.0].shapes[ai.1].path.endPoint(aEnd), let pb = shapeB.path.endPoint(bEnd)
         else { return false }
         // Ends that touch merge into one anchor.
         let tolerance = pa.distance(to: pb) <= 1e-6 ? Double.infinity : -1
-        guard let joined = BezierPath.joined(drawing.parts[ai.0].shapes[ai.1].path, aEnd, shapeB.path, bEnd,
+        guard let joined = BezierPath.joined(drawing.layers[ai.0].shapes[ai.1].path, aEnd, shapeB.path, bEnd,
                                              mergeWithin: tolerance) else { return false }
-        drawing.parts[ai.0].shapes[ai.1].path = joined
+        drawing.layers[ai.0].shapes[ai.1].path = joined
         removeShape(b)
         return true
     }
@@ -1487,7 +1487,7 @@ public struct DrawingEditor: Sendable {
         let targets = drawing.shapeIndices(in: selection)
         guard !targets.isEmpty else { return }
         let before = drawing
-        for (p, s) in targets { change(&drawing.parts[p].shapes[s]) }
+        for (p, s) in targets { change(&drawing.layers[p].shapes[s]) }
         commit(from: before, key: "\(key)-\(selection)")
     }
 
@@ -1508,7 +1508,7 @@ public struct DrawingEditor: Sendable {
         drawing = state
         drawing.nextID = max(state.nextID, nextID)
         validateSelection()
-        if let pen = penPath, drawing.indices(part: pen.part, shape: pen.shape) == nil { penPath = nil }
+        if let pen = penPath, drawing.indices(layer: pen.layer, shape: pen.shape) == nil { penPath = nil }
     }
 
     mutating func validateSelection() {

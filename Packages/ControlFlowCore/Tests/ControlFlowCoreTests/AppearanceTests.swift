@@ -242,13 +242,13 @@ final class ArtBatchTests: XCTestCase {
         var d = Drawing()
         var shapes = shapes
         for i in shapes.indices { shapes[i].id = d.makeID() }
-        d.parts.append(Part(id: d.makeID(), name: "Part", shapes: shapes))
+        d.layers.append(Layer(id: d.makeID(), name: "Layer", shapes: shapes))
         return d
     }
 
     private func render(_ d: Drawing, at p: Vec2) -> StencilSimulator {
         var builder = ArtBuilder()
-        return StencilSimulator.run(builder.build(d, isolatedPart: nil, tolerance: 0.05), at: p)
+        return StencilSimulator.run(builder.build(d, isolatedLayer: nil, tolerance: 0.05), at: p)
     }
 
     func testFillsAndOutlinesPaintAndLeaveTheStencilClean() {
@@ -288,7 +288,7 @@ final class ArtBatchTests: XCTestCase {
         XCTAssertTrue(render(d, at: Vec2(13, 13)).isColor(RGBAColor(r: 1, g: 1, b: 0)))
     }
 
-    func testTheBaseOutlineIsPartOfTheClip() {
+    func testTheBaseOutlineIsLayerOfTheClip() {
         var shadow = VectorShape(id: 0, path: square(5, 5, 20), fill: blue)
         shadow.isClipped = true
         let base = VectorShape(id: 0, path: line([Vec2(0, 10), Vec2(30, 10)]), stroke: StrokeStyle(color: red, width: 4))
@@ -381,27 +381,27 @@ final class ArtBatchTests: XCTestCase {
         var d = drawing([VectorShape(id: 0, path: square(0, 0, 10), fill: red),
                          VectorShape(id: 0, path: square(20, 0, 10), fill: blue)])
         var builder = ArtBuilder()
-        let first = builder.build(d, isolatedPart: nil, tolerance: 0.1)
-        XCTAssertEqual(builder.build(d, isolatedPart: nil, tolerance: 0.1), first)
-        d.parts[0].shapes[1].fill = red
-        let second = builder.build(d, isolatedPart: nil, tolerance: 0.1)
+        let first = builder.build(d, isolatedLayer: nil, tolerance: 0.1)
+        XCTAssertEqual(builder.build(d, isolatedLayer: nil, tolerance: 0.1), first)
+        d.layers[0].shapes[1].fill = red
+        let second = builder.build(d, isolatedLayer: nil, tolerance: 0.1)
         XCTAssertEqual(second.vertices, first.vertices)
         XCTAssertNotEqual(second.steps, first.steps)
     }
 }
 
 final class AppearanceEditingTests: XCTestCase {
-    /// An editor with one part holding a filled, outlined square and a shape above it.
+    /// An editor with one layer holding a filled, outlined square and a shape above it.
     private func editor() -> DrawingEditor {
         var d = Drawing()
         let a = VectorShape(id: d.makeID(), path: square(0, 0, 100), fill: red, stroke: StrokeStyle(color: .ink, width: 2))
         let b = VectorShape(id: d.makeID(), path: square(50, 50, 100), fill: blue, stroke: StrokeStyle(color: .ink, width: 2))
-        d.parts.append(Part(id: d.makeID(), name: "Arm", shapes: [a, b]))
+        d.layers.append(Layer(id: d.makeID(), name: "Arm", shapes: [a, b]))
         return DrawingEditor(drawing: d)
     }
 
     private func select(_ e: inout DrawingEditor, _ index: Int) {
-        e.selection = .shape(part: e.drawing.parts[0].id, shape: e.drawing.parts[0].shapes[index].id)
+        e.selection = .shape(layer: e.drawing.layers[0].id, shape: e.drawing.layers[0].shapes[index].id)
     }
 
     func testOutlineOptionsApplyToTheSelectionAndNewShapes() {
@@ -412,24 +412,24 @@ final class AppearanceEditingTests: XCTestCase {
         e.setMiterLimit(0.5)
         e.setOutlineDash([6, 2])
         e.setOutlineAlignment(.outside)
-        let stroke = e.drawing.parts[0].shapes[1].stroke!
+        let stroke = e.drawing.layers[0].shapes[1].stroke!
         XCTAssertEqual(stroke.cap, .square)
         XCTAssertEqual(stroke.join, .miter)
         XCTAssertEqual(stroke.miterLimit, 1)
         XCTAssertEqual(stroke.dash, [6, 2])
         XCTAssertEqual(stroke.alignment, .outside)
-        XCTAssertEqual(e.drawing.parts[0].shapes[0].stroke?.cap, .round)
+        XCTAssertEqual(e.drawing.layers[0].shapes[0].stroke?.cap, .round)
         // Five commands, five undo steps.
         for _ in 0..<5 { e.undo() }
-        XCTAssertEqual(e.drawing.parts[0].shapes[1].stroke, StrokeStyle(color: .ink, width: 2))
+        XCTAssertEqual(e.drawing.layers[0].shapes[1].stroke, StrokeStyle(color: .ink, width: 2))
         for _ in 0..<5 { e.redo() }
         // The style carries the options to new shapes, and changing the color keeps them.
         e.setOutline(red)
-        XCTAssertEqual(e.drawing.parts[0].shapes[1].stroke?.dash, [6, 2])
+        XCTAssertEqual(e.drawing.layers[0].shapes[1].stroke?.dash, [6, 2])
         e.selection = .none
         e.addPath(square(300, 300, 10))
-        XCTAssertEqual(e.drawing.parts.last?.shapes[0].stroke?.cap, .square)
-        XCTAssertEqual(e.drawing.parts.last?.shapes[0].stroke?.alignment, .outside)
+        XCTAssertEqual(e.drawing.layers.last?.shapes[0].stroke?.cap, .square)
+        XCTAssertEqual(e.drawing.layers.last?.shapes[0].stroke?.alignment, .outside)
         // Selecting a shape shows its options.
         select(&e, 0)
         XCTAssertEqual(e.style.outlineCap, .round)
@@ -440,10 +440,10 @@ final class AppearanceEditingTests: XCTestCase {
         var e = editor()
         select(&e, 0)
         for v in [0.9, 0.7, 0.5, 0.2] { e.setOpacity(v) }
-        XCTAssertEqual(e.drawing.parts[0].shapes[0].opacity, 0.2, accuracy: 1e-9)
+        XCTAssertEqual(e.drawing.layers[0].shapes[0].opacity, 0.2, accuracy: 1e-9)
         XCTAssertEqual(e.selectionAppearance?.opacity ?? 0, 0.2, accuracy: 1e-9)
         e.undo()
-        XCTAssertEqual(e.drawing.parts[0].shapes[0].opacity, 1)
+        XCTAssertEqual(e.drawing.layers[0].shapes[0].opacity, 1)
     }
 
     func testClipping() {
@@ -451,52 +451,52 @@ final class AppearanceEditingTests: XCTestCase {
         select(&e, 0)
         XCTAssertFalse(e.canClipSelection)
         e.setClipped(true)
-        XCTAssertFalse(e.drawing.parts[0].shapes[0].isClipped)
+        XCTAssertFalse(e.drawing.layers[0].shapes[0].isClipped)
         XCTAssertFalse(e.canUndo)
         select(&e, 1)
         XCTAssertTrue(e.canClipSelection)
         e.setClipped(true)
-        XCTAssertTrue(e.drawing.parts[0].shapes[1].isClipped)
+        XCTAssertTrue(e.drawing.layers[0].shapes[1].isClipped)
         XCTAssertEqual(e.selectionAppearance?.isClipped, true)
         // The clipped square can't be tapped where it is clipped away.
-        let part = e.drawing.parts[0]
-        XCTAssertEqual(e.drawing.hitTest(Vec2(75, 75), tolerance: 1)?.shape, part.shapes[1].id)
+        let layer = e.drawing.layers[0]
+        XCTAssertEqual(e.drawing.hitTest(Vec2(75, 75), tolerance: 1)?.shape, layer.shapes[1].id)
         XCTAssertNil(e.drawing.hitTest(Vec2(130, 130), tolerance: 1))
         e.undo()
-        XCTAssertEqual(e.drawing.hitTest(Vec2(130, 130), tolerance: 1)?.shape, part.shapes[1].id)
+        XCTAssertEqual(e.drawing.hitTest(Vec2(130, 130), tolerance: 1)?.shape, layer.shapes[1].id)
     }
 
     func testGradients() {
         var e = editor()
         select(&e, 0)
         e.setGradient(.linear)
-        var gradient = e.drawing.parts[0].shapes[0].gradient!
+        var gradient = e.drawing.layers[0].shapes[0].gradient!
         XCTAssertEqual(gradient.stops.first?.color, red)
         XCTAssertEqual(gradient.stops.last?.color, red.shaded(0.6))
         XCTAssertEqual(gradient.start, Vec2(50, 0))
         XCTAssertEqual(gradient.end, Vec2(50, 100))
 
         e.setGradientAngle(0)
-        gradient = e.drawing.parts[0].shapes[0].gradient!
+        gradient = e.drawing.layers[0].shapes[0].gradient!
         XCTAssertTrue(gradient.start.isApproximately(Vec2(0, 50)))
         XCTAssertTrue(gradient.end.isApproximately(Vec2(100, 50)))
         e.setGradientSpan(0.5)
-        gradient = e.drawing.parts[0].shapes[0].gradient!
+        gradient = e.drawing.layers[0].shapes[0].gradient!
         XCTAssertTrue(gradient.start.isApproximately(Vec2(25, 50)))
         XCTAssertEqual(e.selectionAppearance?.gradientSpan ?? 0, 0.5, accuracy: 1e-9)
 
         // The first stop is the plain fill; picking a fill color sets it.
         e.setGradientStop(1, color: .white)
         e.setFill(blue)
-        gradient = e.drawing.parts[0].shapes[0].gradient!
+        gradient = e.drawing.layers[0].shapes[0].gradient!
         XCTAssertEqual(gradient.stops.map(\.color), [blue, .white])
-        XCTAssertEqual(e.drawing.parts[0].shapes[0].fill, blue)
+        XCTAssertEqual(e.drawing.layers[0].shapes[0].fill, blue)
         e.reverseGradient()
-        XCTAssertEqual(e.drawing.parts[0].shapes[0].gradient?.stops.map(\.color), [.white, blue])
-        XCTAssertEqual(e.drawing.parts[0].shapes[0].fill, .white)
+        XCTAssertEqual(e.drawing.layers[0].shapes[0].gradient?.stops.map(\.color), [.white, blue])
+        XCTAssertEqual(e.drawing.layers[0].shapes[0].fill, .white)
 
         e.setGradient(.radial)
-        gradient = e.drawing.parts[0].shapes[0].gradient!
+        gradient = e.drawing.layers[0].shapes[0].gradient!
         XCTAssertEqual(gradient.kind, .radial)
         XCTAssertEqual(gradient.start, Vec2(50, 50))
         XCTAssertEqual(gradient.end, Vec2(100, 50))
@@ -504,14 +504,14 @@ final class AppearanceEditingTests: XCTestCase {
 
         // The gradient turns with the shape.
         e.rotateSelection(byDegrees: 90)
-        gradient = e.drawing.parts[0].shapes[0].gradient!
+        gradient = e.drawing.layers[0].shapes[0].gradient!
         XCTAssertTrue(gradient.end.isApproximately(Vec2(50, 100), tolerance: 1e-6), "\(gradient.end)")
 
         e.setGradient(nil)
-        XCTAssertNil(e.drawing.parts[0].shapes[0].gradient)
+        XCTAssertNil(e.drawing.layers[0].shapes[0].gradient)
         e.setGradient(.linear)
         e.setFillEnabled(false)
-        XCTAssertNil(e.drawing.parts[0].shapes[0].gradient)
+        XCTAssertNil(e.drawing.layers[0].shapes[0].gradient)
     }
 
     func testScalingScalesDashes() {
@@ -519,8 +519,8 @@ final class AppearanceEditingTests: XCTestCase {
         select(&e, 0)
         e.setOutlineDash([4, 2])
         e.drawing.apply(.scale(2), to: e.selection)
-        XCTAssertEqual(e.drawing.parts[0].shapes[0].stroke?.dash, [8, 4])
-        XCTAssertEqual(e.drawing.parts[0].shapes[0].stroke?.width, 4)
+        XCTAssertEqual(e.drawing.layers[0].shapes[0].stroke?.dash, [8, 4])
+        XCTAssertEqual(e.drawing.layers[0].shapes[0].stroke?.width, 4)
     }
 
     func testGlobalColors() {
@@ -532,29 +532,29 @@ final class AppearanceEditingTests: XCTestCase {
         e.renameGlobalColor(ink, to: "  ")
         XCTAssertEqual(e.drawing.globalColor(ink)?.name, "Ink")
 
-        e.selection = .layer(e.drawing.parts[0].id)
+        e.selection = .layer(e.drawing.layers[0].id)
         e.applyGlobalFill(skin)
         e.undo()
-        XCTAssertEqual(e.drawing.parts[0].shapes.map(\.fill), [red, blue], "applying a global color is one undo step")
-        XCTAssertTrue(e.drawing.parts[0].shapes.allSatisfy { $0.fillGlobal == nil })
+        XCTAssertEqual(e.drawing.layers[0].shapes.map(\.fill), [red, blue], "applying a global color is one undo step")
+        XCTAssertTrue(e.drawing.layers[0].shapes.allSatisfy { $0.fillGlobal == nil })
         e.redo()
         e.applyGlobalOutline(ink)
-        XCTAssertTrue(e.drawing.parts[0].shapes.allSatisfy { $0.fillGlobal == skin && $0.stroke?.global == ink })
+        XCTAssertTrue(e.drawing.layers[0].shapes.allSatisfy { $0.fillGlobal == skin && $0.stroke?.global == ink })
 
         // Changing the global color changes every follower; a picker drag is one step.
         for k in 1...5 { e.setGlobalColor(skin, to: RGBAColor(r: Double(k) / 5, g: 0, b: 0), continuous: true) }
-        XCTAssertTrue(e.drawing.parts[0].shapes.allSatisfy { $0.fill == RGBAColor(r: 1, g: 0, b: 0) })
+        XCTAssertTrue(e.drawing.layers[0].shapes.allSatisfy { $0.fill == RGBAColor(r: 1, g: 0, b: 0) })
         XCTAssertEqual(e.style.fill, RGBAColor(r: 1, g: 0, b: 0))
         e.undo()
-        XCTAssertTrue(e.drawing.parts[0].shapes.allSatisfy { $0.fill == RGBAColor(hex: "#F2A65A") })
+        XCTAssertTrue(e.drawing.layers[0].shapes.allSatisfy { $0.fill == RGBAColor(hex: "#F2A65A") })
 
         // A plain color unlinks; removing a global color unlinks and keeps the colors.
         select(&e, 1)
         e.setFill(blue)
-        XCTAssertNil(e.drawing.parts[0].shapes[1].fillGlobal)
-        XCTAssertEqual(e.drawing.parts[0].shapes[0].fillGlobal, skin)
+        XCTAssertNil(e.drawing.layers[0].shapes[1].fillGlobal)
+        XCTAssertEqual(e.drawing.layers[0].shapes[0].fillGlobal, skin)
         e.removeGlobalColor(ink)
-        XCTAssertTrue(e.drawing.parts[0].shapes.allSatisfy { $0.stroke?.global == nil && $0.stroke?.color == .black })
+        XCTAssertTrue(e.drawing.layers[0].shapes.allSatisfy { $0.stroke?.global == nil && $0.stroke?.color == .black })
         XCTAssertEqual(e.drawing.globalColors.map(\.id), [skin])
     }
 
@@ -578,14 +578,14 @@ final class AppearanceEditingTests: XCTestCase {
         var other = DrawingEditor()
         let otherSkin = other.addGlobalColor(.white, name: "Skin")
         XCTAssertTrue(other.paste(text))
-        XCTAssertEqual(other.drawing.parts[0].shapes[0].fillGlobal, otherSkin)
-        XCTAssertEqual(other.drawing.parts[0].shapes[0].fill, .white)
+        XCTAssertEqual(other.drawing.layers[0].shapes[0].fillGlobal, otherSkin)
+        XCTAssertEqual(other.drawing.layers[0].shapes[0].fill, .white)
 
         // Into one without it: the global color comes along.
         var fresh = DrawingEditor()
         XCTAssertTrue(fresh.paste(text))
         XCTAssertEqual(fresh.drawing.globalColors.map(\.name), ["Skin"])
-        XCTAssertEqual(fresh.drawing.parts[0].shapes[0].fillGlobal, fresh.drawing.globalColors[0].id)
+        XCTAssertEqual(fresh.drawing.layers[0].shapes[0].fillGlobal, fresh.drawing.globalColors[0].id)
     }
 
     func testAnchorWidths() {
@@ -594,19 +594,19 @@ final class AppearanceEditingTests: XCTestCase {
         select(&e, 0)
         e.selectedAnchors = [0, 2]
         for w in [1.2, 1.6, 2.0] { e.setSelectedAnchorsWidth(w) }
-        XCTAssertEqual(e.drawing.parts[0].shapes[0].path.points.map(\.width), [2, 1, 2, 1])
+        XCTAssertEqual(e.drawing.layers[0].shapes[0].path.points.map(\.width), [2, 1, 2, 1])
         XCTAssertEqual(e.selectedAnchorsWidth, 2)
         e.undo()
-        XCTAssertEqual(e.drawing.parts[0].shapes[0].path.points.map(\.width), [1, 1, 1, 1])
+        XCTAssertEqual(e.drawing.layers[0].shapes[0].path.points.map(\.width), [1, 1, 1, 1])
         e.redo()
         // The outline reaches further where it is wider.
-        XCTAssertEqual(e.drawing.parts[0].shapes[0].bounds.minPoint.x, -2, accuracy: 1e-9)
+        XCTAssertEqual(e.drawing.layers[0].shapes[0].bounds.minPoint.x, -2, accuracy: 1e-9)
         // Splitting a segment blends the width.
-        var path = e.drawing.parts[0].shapes[0].path
+        var path = e.drawing.layers[0].shapes[0].path
         let i = path.insertPoint(segment: 0, t: 0.25)
         XCTAssertEqual(path.points[i].width, 1.75, accuracy: 1e-9)
         e.resetOutlineWidths()
-        XCTAssertFalse(e.drawing.parts[0].shapes[0].path.hasVariableWidth)
+        XCTAssertFalse(e.drawing.layers[0].shapes[0].path.hasVariableWidth)
     }
 
     func testPressureSetsWidthOnlyWhenOn() {
@@ -615,11 +615,11 @@ final class AppearanceEditingTests: XCTestCase {
         var e = DrawingEditor()
         e.style.fillEnabled = false
         e.addStroke(points, pressures: pressures, zoom: 1)
-        XCTAssertFalse(e.drawing.parts[0].shapes[0].path.hasVariableWidth)
+        XCTAssertFalse(e.drawing.layers[0].shapes[0].path.hasVariableWidth)
 
         e.pressureWidth = true
         e.addStroke(points, pressures: pressures, zoom: 1)
-        let widths = e.drawing.parts[1].shapes[0].path.points.map(\.width)
+        let widths = e.drawing.layers[1].shapes[0].path.points.map(\.width)
         XCTAssertEqual(widths.first ?? 0, PressureWidth.width(forPressure: 0.025), accuracy: 0.02)
         XCTAssertEqual(widths.last ?? 0, 2, accuracy: 0.01)
         XCTAssertEqual(widths, widths.sorted())
@@ -636,7 +636,7 @@ final class AppearanceEditingTests: XCTestCase {
         }
         XCTAssertNotNil(s.liveStroke?.displayWidths)
         s.touchEnded(id: 1, location: Vec2(205, 0))
-        let path = s.editor.drawing.parts[0].shapes[0].path
+        let path = s.editor.drawing.layers[0].shapes[0].path
         XCTAssertTrue(path.hasVariableWidth)
         XCTAssertLessThan(path.points.first!.width, path.points.last!.width)
 
@@ -647,7 +647,7 @@ final class AppearanceEditingTests: XCTestCase {
         plain.touchMoved(id: 1, samples: [Vec2(50, 0), Vec2(100, 10)])
         XCTAssertNil(plain.liveStroke?.displayWidths)
         plain.touchEnded(id: 1, location: Vec2(150, 0))
-        XCTAssertFalse(plain.editor.drawing.parts[0].shapes[0].path.hasVariableWidth)
+        XCTAssertFalse(plain.editor.drawing.layers[0].shapes[0].path.hasVariableWidth)
     }
 }
 
@@ -668,13 +668,13 @@ final class AppearanceFormatTests: XCTestCase {
         shape.opacity = 0.4
         var clipped = VectorShape(id: d.makeID(), path: square(2, 2, 10), fill: blue)
         clipped.isClipped = true
-        d.parts = [Part(id: d.makeID(), name: "P", shapes: [shape, clipped])]
+        d.layers = [Layer(id: d.makeID(), name: "P", shapes: [shape, clipped])]
 
         let text = CharacterFormat.encode(d).formatted()
         let back = try CharacterFormat.decode(JSONValue(parsing: text)).drawing
         XCTAssertEqual(back.palette, [blue])
         XCTAssertEqual(back.globalColors.map(\.name), ["Skin"])
-        let s = back.parts[0].shapes[0]
+        let s = back.layers[0].shapes[0]
         let newSkin = back.globalColors[0].id
         XCTAssertEqual(s.fillGlobal, newSkin)
         XCTAssertEqual(s.stroke, StrokeStyle(color: blue, width: 2.5, cap: .square, join: .bevel, miterLimit: 2,
@@ -682,7 +682,7 @@ final class AppearanceFormatTests: XCTestCase {
         XCTAssertEqual(s.gradient, shape.gradient)
         XCTAssertEqual(s.opacity, 0.4)
         XCTAssertEqual(s.path.points.map(\.width), [1, 0.25, 1, 1])
-        XCTAssertTrue(back.parts[0].shapes[1].isClipped)
+        XCTAssertTrue(back.layers[0].shapes[1].isClipped)
         // Saving again gives the same text.
         XCTAssertEqual(CharacterFormat.encode(back).formatted(), text)
     }
@@ -690,7 +690,7 @@ final class AppearanceFormatTests: XCTestCase {
     func testDefaultsAreNotWritten() {
         var d = Drawing()
         let shape = VectorShape(id: d.makeID(), path: square(0, 0, 10), fill: red, stroke: StrokeStyle(color: blue, width: 2))
-        d.parts = [Part(id: d.makeID(), name: "P", shapes: [shape])]
+        d.layers = [Layer(id: d.makeID(), name: "P", shapes: [shape])]
         let text = CharacterFormat.encode(d).formatted()
         for key in ["\"w\"", "cap", "join", "miterLimit", "dash", "align", "opacity", "clipped", "gradient", "global"] {
             XCTAssertFalse(text.contains(key), key)
@@ -709,7 +709,7 @@ final class AppearanceFormatTests: XCTestCase {
         let migrated = try CharacterFormat.migrate(old)
         XCTAssertEqual(migrated["formatVersion"], .string(CharacterFormat.version.description))
         let d = try CharacterFormat.decode(old).drawing
-        XCTAssertEqual(d.parts[0].shapes[0].stroke, StrokeStyle(color: .black, width: 3))
+        XCTAssertEqual(d.layers[0].shapes[0].stroke, StrokeStyle(color: .black, width: 3))
         XCTAssertEqual(d.palette, [red])
         XCTAssertTrue(d.globalColors.isEmpty)
         XCTAssertEqual(CharacterFormat.encode(d)["formatVersion"], .string(CharacterFormat.version.description))
@@ -764,19 +764,19 @@ extension ArtBatchTests {
                                    stroke: StrokeStyle(color: blue, width: 2, alignment: .inside))
         let still = VectorShape(id: 0, path: square(8, 8, 14), fill: RGBAColor(r: 1, g: 1, b: 0, a: 0.5))
         let d = drawing([VectorShape(id: 0, path: square(0, 0, 10), fill: red), clipped, gradient, outlined, still])
-        let part = d.parts[0]
+        let layer = d.layers[0]
         // Move the clip base but not its clipped shape, and the two shapes after it.
-        let moved = [0, 2, 3].map { part.shapes[$0].id }
-        let selection = Selection.covering(Set(moved.map { ShapeRef(part: part.id, shape: $0) }))
+        let moved = [0, 2, 3].map { layer.shapes[$0].id }
+        let selection = Selection.covering(Set(moved.map { ShapeRef(layer: layer.id, shape: $0) }))
         let t = Affine2D.translation(Vec2(3, -2)) * Affine2D.rotation(0.4) * Affine2D.scale(1.5)
         let after = d.applying(t, to: selection)
 
         var live = ArtBuilder()
-        let batch = live.build(d, isolatedPart: nil, tolerance: 0.05, moving: Set(moved))
+        let batch = live.build(d, isolatedLayer: nil, tolerance: 0.05, moving: Set(moved))
         XCTAssertEqual(batch.steps.filter { if case .moving = $0 { true } else { false } }.count, 4,
                        "on at the base, off at the clipped shape, on again, off at the last shape")
         var plain = ArtBuilder()
-        let expected = plain.build(after, isolatedPart: nil, tolerance: 0.05)
+        let expected = plain.build(after, isolatedLayer: nil, tolerance: 0.05)
 
         var samples = 0, differences = 0
         for x in stride(from: -10.0, through: 40, by: 0.73) {
@@ -806,7 +806,7 @@ extension ArtBatchTests {
         let d = drawing([VectorShape(id: 0, path: square(0, 0, 10), fill: red), first, second,
                          VectorShape(id: 0, path: square(40, 40, 10), fill: red)])
         var builder = ArtBuilder()
-        let batch = builder.build(d, isolatedPart: nil, tolerance: 0.05)
+        let batch = builder.build(d, isolatedLayer: nil, tolerance: 0.05)
         let clears = batch.steps.compactMap { step -> Rect? in
             guard case .stencil(let range, let state, _) = step, state == ArtStencil.clearClip else { return nil }
             let v = range.map { Vec2(Double(batch.vertices[$0 * 2]), Double(batch.vertices[$0 * 2 + 1])) }
@@ -823,7 +823,7 @@ extension ArtBatchTests {
 
         // Moving the clipped shape but not its base: the clear covers the view again.
         var live = ArtBuilder()
-        let moving = live.build(d, isolatedPart: nil, tolerance: 0.05, moving: [d.parts[0].shapes[1].id])
+        let moving = live.build(d, isolatedLayer: nil, tolerance: 0.05, moving: [d.layers[0].shapes[1].id])
         XCTAssertTrue(moving.steps.contains { if case .stencilView = $0 { true } else { false } })
     }
 
@@ -834,7 +834,7 @@ extension ArtBatchTests {
         hidden.isHidden = true
         let d = drawing([VectorShape(id: 0, path: square(0, 0, 10), fill: red), hidden])
         var builder = ArtBuilder()
-        let batch = builder.build(d, isolatedPart: nil, tolerance: 0.05)
+        let batch = builder.build(d, isolatedLayer: nil, tolerance: 0.05)
         XCTAssertFalse(batch.steps.contains {
             switch $0 {
             case .stencilView: true
@@ -852,7 +852,7 @@ final class GroupClipAndBehindTests: XCTestCase {
     private let green = RGBAColor(r: 0, g: 1, b: 0)
     private let yellow = RGBAColor(r: 1, g: 1, b: 0)
 
-    /// One part: a red base square (0...10), then a clipped group of a blue square and a
+    /// One layer: a red base square (0...10), then a clipped group of a blue square and a
     /// green square clipped to the blue one inside the group, then `above`.
     private func clippedGroup(above: [VectorShape] = [], groupClipped: Bool = true) -> Drawing {
         var d = Drawing()
@@ -867,15 +867,15 @@ final class GroupClipAndBehindTests: XCTestCase {
             shape.id = d.makeID()
             shapes.append(shape)
         }
-        var part = Part(id: d.makeID(), name: "Eye", shapes: shapes)
-        part.groups = [ShapeGroup(id: group, name: "Iris", isClipped: groupClipped)]
-        d.parts.append(part)
+        var layer = Layer(id: d.makeID(), name: "Eye", shapes: shapes)
+        layer.groups = [ShapeGroup(id: group, name: "Iris", isClipped: groupClipped)]
+        d.layers.append(layer)
         return d
     }
 
-    private func render(_ d: Drawing, at p: Vec2, isolating part: Int? = nil, group: Int? = nil) -> StencilSimulator {
+    private func render(_ d: Drawing, at p: Vec2, isolating layer: Int? = nil, group: Int? = nil) -> StencilSimulator {
         var builder = ArtBuilder()
-        return StencilSimulator.run(builder.build(d, isolatedPart: part, isolatedGroup: group, tolerance: 0.05), at: p)
+        return StencilSimulator.run(builder.build(d, isolatedLayer: layer, isolatedGroup: group, tolerance: 0.05), at: p)
     }
 
     func testAClippedGroupDrawsOnlyInsideTheShapeBelowIt() {
@@ -900,7 +900,7 @@ final class GroupClipAndBehindTests: XCTestCase {
         var shadow = VectorShape(id: 0, path: square(-5, -5, 40), fill: yellow)
         shadow.isClipped = true
         let d = clippedGroup(above: [shadow])
-        XCTAssertEqual(d.parts[0].clipBase(of: 3), 0)
+        XCTAssertEqual(d.layers[0].clipBase(of: 3), 0)
         // The shadow draws over the base, including where the group's inner clip was.
         XCTAssertTrue(render(d, at: Vec2(2, 2)).isColor(yellow))
         XCTAssertTrue(render(d, at: Vec2(8, 8)).isColor(yellow))
@@ -911,8 +911,8 @@ final class GroupClipAndBehindTests: XCTestCase {
     func testAClippedGroupWithAlignedOutlines() {
         for alignment in [StrokeAlignment.center, .inside, .outside] {
             var d = clippedGroup()
-            for s in d.parts[0].shapes.indices {
-                d.parts[0].shapes[s].stroke = StrokeStyle(color: .ink, width: 2, alignment: alignment)
+            for s in d.layers[0].shapes.indices {
+                d.layers[0].shapes[s].stroke = StrokeStyle(color: .ink, width: 2, alignment: alignment)
             }
             for p in [Vec2(1.5, 2), Vec2(-1.5, 2), Vec2(6, 6), Vec2(8, 8), Vec2(9.5, 9.5), Vec2(10.5, 10.5),
                       Vec2(12, 12), Vec2(20, 20)] {
@@ -925,30 +925,30 @@ final class GroupClipAndBehindTests: XCTestCase {
 
     func testAHiddenBaseHidesTheGroupAndNothingBelowDrawsItWhole() {
         var d = clippedGroup()
-        d.parts[0].shapes[0].isHidden = true
+        d.layers[0].shapes[0].isHidden = true
         XCTAssertTrue(render(d, at: Vec2(6, 6)).isWhite)
         XCTAssertNil(d.hitTest(Vec2(6, 6), tolerance: 0))
-        d.parts[0].shapes.removeFirst()
-        XCTAssertNil(d.parts[0].clipBase(ofGroup: d.parts[0].groups[0].id))
+        d.layers[0].shapes.removeFirst()
+        XCTAssertNil(d.layers[0].clipBase(ofGroup: d.layers[0].groups[0].id))
         XCTAssertTrue(render(d, at: Vec2(12, 12)).isColor(green))
     }
 
     func testHitTestingFollowsTheGroupClip() {
         let d = clippedGroup()
-        let part = d.parts[0]
-        XCTAssertEqual(d.hitTest(Vec2(6, 6), tolerance: 0)?.shape, part.shapes[1].id)
+        let layer = d.layers[0]
+        XCTAssertEqual(d.hitTest(Vec2(6, 6), tolerance: 0)?.shape, layer.shapes[1].id)
         XCTAssertNil(d.hitTest(Vec2(12, 12), tolerance: 0))
     }
 
     /// The bounded clip clear before a group's base covers the whole group, so a clip
-    /// left over from an earlier part doesn't show through the group mask.
-    func testAClippedGroupIgnoresAClipLeftByAnEarlierPart() {
+    /// left over from an earlier layer doesn't show through the group mask.
+    func testAClippedGroupIgnoresAClipLeftByAnEarlierLayer() {
         var d = clippedGroup()
         var big = VectorShape(id: d.makeID(), path: square(0, 0, 40), fill: red)
         big.stroke = nil
         var cover = VectorShape(id: d.makeID(), path: square(0, 0, 40), fill: yellow)
         cover.isClipped = true
-        d.parts.insert(Part(id: d.makeID(), name: "Back", shapes: [big, cover]), at: 0)
+        d.layers.insert(Layer(id: d.makeID(), name: "Back", shapes: [big, cover]), at: 0)
         XCTAssertTrue(render(d, at: Vec2(12, 12)).isColor(yellow))
         XCTAssertTrue(render(d, at: Vec2(6, 6)).isColor(blue))
         XCTAssertTrue(render(d, at: Vec2(8, 8)).isColor(green))
@@ -956,31 +956,31 @@ final class GroupClipAndBehindTests: XCTestCase {
 
     func testAnIsolatedClippedGroupDrawsWhole() {
         let d = clippedGroup()
-        let render = render(d, at: Vec2(12, 12), isolating: d.parts[0].id, group: d.parts[0].groups[0].id)
+        let render = render(d, at: Vec2(12, 12), isolating: d.layers[0].id, group: d.layers[0].groups[0].id)
         XCTAssertTrue(render.isColor(green))
     }
 
     func testGroupClippingIsOneUndoStepAndNeedsAShapeBelow() {
         var d = clippedGroup(groupClipped: false)
-        let part = d.parts[0].id, group = d.parts[0].groups[0].id
+        let layer = d.layers[0].id, group = d.layers[0].groups[0].id
         var e = DrawingEditor(drawing: d)
-        XCTAssertTrue(e.canClipGroup(group, inPart: part))
-        e.setGroupClipped(group, inPart: part, true)
-        XCTAssertTrue(e.drawing.parts[0].groups[0].isClipped)
+        XCTAssertTrue(e.canClipGroup(group, inLayer: layer))
+        e.setGroupClipped(group, inLayer: layer, true)
+        XCTAssertTrue(e.drawing.layers[0].groups[0].isClipped)
         e.undo()
-        XCTAssertFalse(e.drawing.parts[0].groups[0].isClipped)
-        d.parts[0].shapes.removeFirst()
+        XCTAssertFalse(e.drawing.layers[0].groups[0].isClipped)
+        d.layers[0].shapes.removeFirst()
         e = DrawingEditor(drawing: d)
-        XCTAssertFalse(e.canClipGroup(group, inPart: part))
-        e.setGroupClipped(group, inPart: part, true)
-        XCTAssertFalse(e.drawing.parts[0].groups[0].isClipped)
+        XCTAssertFalse(e.canClipGroup(group, inLayer: layer))
+        e.setGroupClipped(group, inLayer: layer, true)
+        XCTAssertFalse(e.drawing.layers[0].groups[0].isClipped)
     }
 
     func testTheFileKeepsClippedGroups() throws {
         let d = clippedGroup()
         let text = CharacterFormat.encode(d).formatted()
         let back = try CharacterFormat.decode(JSONValue(parsing: text)).drawing
-        XCTAssertEqual(back.parts[0].groups.first?.isClipped, true)
+        XCTAssertEqual(back.layers[0].groups.first?.isClipped, true)
         XCTAssertEqual(CharacterFormat.encode(back).formatted(), text)
         // Off, the group's key isn't written; the clipped shape's still is.
         let plain = CharacterFormat.encode(clippedGroup(groupClipped: false)).formatted()

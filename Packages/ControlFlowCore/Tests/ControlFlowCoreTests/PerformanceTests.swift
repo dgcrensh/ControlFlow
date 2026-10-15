@@ -14,11 +14,11 @@ final class PerformanceTests: XCTestCase {
     private var drawing: Drawing { Self.drawing }
 
     func testStressDrawingIsValid() {
-        XCTAssertEqual(drawing.parts.count, StressDrawing.parts)
-        XCTAssertEqual(drawing.shapeCount, StressDrawing.parts * StressDrawing.shapesPerPart)
+        XCTAssertEqual(drawing.layers.count, StressDrawing.layers)
+        XCTAssertEqual(drawing.shapeCount, StressDrawing.layers * StressDrawing.shapesPerLayer)
         XCTAssertTrue(drawing.groupsAreValid)
-        XCTAssertTrue(drawing.parts.contains { $0.shapes.contains(where: \.isClipped) })
-        XCTAssertTrue(drawing.parts.contains { $0.shapes.contains { $0.stroke?.dash.isEmpty == false } })
+        XCTAssertTrue(drawing.layers.contains { $0.shapes.contains(where: \.isClipped) })
+        XCTAssertTrue(drawing.layers.contains { $0.shapes.contains { $0.stroke?.dash.isEmpty == false } })
         XCTAssertNotNil(drawing.hitTest(StressDrawing.busyPoint(), tolerance: 4))
         XCTAssertNil(drawing.hitTest(StressDrawing.emptyPoint, tolerance: 4))
     }
@@ -30,7 +30,7 @@ final class PerformanceTests: XCTestCase {
         let drawing = drawing
         measure {
             var builder = ArtBuilder()
-            _ = builder.build(drawing, isolatedPart: nil, tolerance: 0.5)
+            _ = builder.build(drawing, isolatedLayer: nil, tolerance: 0.5)
         }
     }
 
@@ -38,25 +38,25 @@ final class PerformanceTests: XCTestCase {
     func testArtBuildWarm() {
         let drawing = drawing
         var builder = ArtBuilder()
-        _ = builder.build(drawing, isolatedPart: nil, tolerance: 0.5)
+        _ = builder.build(drawing, isolatedLayer: nil, tolerance: 0.5)
         measure {
-            _ = builder.build(drawing, isolatedPart: nil, tolerance: 0.5)
+            _ = builder.build(drawing, isolatedLayer: nil, tolerance: 0.5)
         }
     }
 
-    /// Every shape of the stress drawing in one part, as an SVG import might make, with
-    /// every third shape clipped, so the per-part clip-base work is at its largest. A
+    /// Every shape of the stress drawing in one layer, as an SVG import might make, with
+    /// every third shape clipped, so the per-layer clip-base work is at its largest. A
     /// rebuild with nothing changed.
-    func testArtBuildWarmOnePart() {
-        var part = Part(id: drawing.nextID, name: "All", shapes: drawing.parts.flatMap(\.shapes))
-        part.groups = drawing.parts.flatMap(\.groups)
-        for i in part.shapes.indices where i % 3 == 2 { part.shapes[i].isClipped = true }
+    func testArtBuildWarmOneLayer() {
+        var layer = Layer(id: drawing.nextID, name: "All", shapes: drawing.layers.flatMap(\.shapes))
+        layer.groups = drawing.layers.flatMap(\.groups)
+        for i in layer.shapes.indices where i % 3 == 2 { layer.shapes[i].isClipped = true }
         var drawing = Drawing()
-        drawing.parts = [part]
+        drawing.layers = [layer]
         var builder = ArtBuilder()
-        _ = builder.build(drawing, isolatedPart: nil, tolerance: 0.5)
+        _ = builder.build(drawing, isolatedLayer: nil, tolerance: 0.5)
         measure {
-            _ = builder.build(drawing, isolatedPart: nil, tolerance: 0.5)
+            _ = builder.build(drawing, isolatedLayer: nil, tolerance: 0.5)
         }
     }
 
@@ -64,7 +64,7 @@ final class PerformanceTests: XCTestCase {
 
     /// Every shape, as select all leaves it.
     private var everything: Selection {
-        .covering(Set(drawing.parts.flatMap { part in part.shapes.map { ShapeRef(part: part.id, shape: $0.id) } }))
+        .covering(Set(drawing.layers.flatMap { layer in layer.shapes.map { ShapeRef(layer: layer.id, shape: $0.id) } }))
     }
 
     /// Drags the whole character 20 samples to the right, building the art after each
@@ -77,7 +77,7 @@ final class PerformanceTests: XCTestCase {
         let frame = try! XCTUnwrap(drawing.geometryBounds(of: everything))
         let grab = frame.minPoint + Vec2(frame.width, frame.height) / 3
         var warm = ArtBuilder()
-        _ = warm.build(drawing, isolatedPart: nil, tolerance: 0.5)
+        _ = warm.build(drawing, isolatedLayer: nil, tolerance: 0.5)
         measure {
             var editor = start
             var builder = warm
@@ -93,7 +93,7 @@ final class PerformanceTests: XCTestCase {
 
     /// The renderer before live transforms: every sample re-tessellates every moved shape.
     func testDragRebuildingEverySample() {
-        measureDrag { builder, editor in _ = builder.build(editor.drawing, isolatedPart: nil, tolerance: 0.5) }
+        measureDrag { builder, editor in _ = builder.build(editor.drawing, isolatedLayer: nil, tolerance: 0.5) }
     }
 
     /// As the renderer draws a drag now: the drag's starting drawing once, then only the
@@ -107,12 +107,12 @@ final class PerformanceTests: XCTestCase {
                 last = live
                 guard built != live.id else { return }
                 built = live.id
-                _ = builder.build(live.base, isolatedPart: nil, tolerance: 0.5, moving: live.shapes)
+                _ = builder.build(live.base, isolatedLayer: nil, tolerance: 0.5, moving: live.shapes)
             } else {
                 built = nil
                 if let ended = last { builder.carry(ended, to: editor.drawing) }
                 last = nil
-                _ = builder.build(editor.drawing, isolatedPart: nil, tolerance: 0.5)
+                _ = builder.build(editor.drawing, isolatedLayer: nil, tolerance: 0.5)
             }
         }
     }
@@ -208,7 +208,7 @@ final class PerformanceTests: XCTestCase {
         var start = DrawingEditor(drawing: drawing)
         start.tool = .eraser
         let end = Vec2(StressDrawing.cell * Double(StressDrawing.columns - 1),
-                       StressDrawing.cell * Double(StressDrawing.parts / StressDrawing.columns - 1))
+                       StressDrawing.cell * Double(StressDrawing.layers / StressDrawing.columns - 1))
         let samples = 20
         measure {
             var editor = start
@@ -243,7 +243,7 @@ final class PerformanceTests: XCTestCase {
         var editor = DrawingEditor(drawing: drawing)
         editor.tool = .select
         editor.outlineView = true
-        editor.selection = .layer(drawing.parts[0].id)
+        editor.selection = .layer(drawing.layers[0].id)
         measure {
             var cache = OverlayCache()
             _ = EditorOverlay.layers(for: editor, zoom: 1, cache: &cache)
@@ -270,12 +270,12 @@ final class PerformanceTests: XCTestCase {
         }
     }
 
-    /// Hovering in the outline view, with a part selected.
+    /// Hovering in the outline view, with a layer selected.
     func testOverlayHoverInOutlineView() {
         var editor = DrawingEditor(drawing: drawing)
         editor.tool = .select
         editor.outlineView = true
-        editor.selection = .layer(drawing.parts[0].id)
+        editor.selection = .layer(drawing.layers[0].id)
         measureHoverFrames(editor)
     }
 
@@ -287,11 +287,11 @@ final class PerformanceTests: XCTestCase {
         measureHoverFrames(editor)
     }
 
-    /// Hovering with the scissors over one selected part: the cut point follows the Pencil.
+    /// Hovering with the scissors over one selected layer: the cut point follows the Pencil.
     func testOverlayHoverScissors() {
         var editor = DrawingEditor(drawing: drawing)
         editor.tool = .scissors
-        editor.selection = .layer(drawing.parts[0].id)
+        editor.selection = .layer(drawing.layers[0].id)
         measureHoverFrames(editor)
     }
 
@@ -299,7 +299,7 @@ final class PerformanceTests: XCTestCase {
     func testOverlayHoverSelect() {
         var editor = DrawingEditor(drawing: drawing)
         editor.tool = .select
-        editor.selection = .layer(drawing.parts[0].id)
+        editor.selection = .layer(drawing.layers[0].id)
         measureHoverFrames(editor)
     }
 
@@ -309,13 +309,13 @@ final class PerformanceTests: XCTestCase {
     /// the stack keeps only the newest `UndoStack.defaultLimit`.
     func testUndoGrowthOver500Commits() {
         let start = DrawingEditor(drawing: drawing)
-        let refs = drawing.parts.flatMap { part in part.shapes.map { ShapeRef(part: part.id, shape: $0.id) } }
+        let refs = drawing.layers.flatMap { layer in layer.shapes.map { ShapeRef(layer: layer.id, shape: $0.id) } }
         measure {
             var editor = start
             for i in 0..<500 {
                 // A different shape each time, so the changes don't coalesce into one step.
                 let ref = refs[i * 7 % refs.count]
-                editor.selection = .shape(part: ref.part, shape: ref.shape)
+                editor.selection = .shape(layer: ref.layer, shape: ref.shape)
                 editor.setFill(RGBAColor(r: Double(i) / 500, g: 0.5, b: 0.5))
             }
             XCTAssertEqual(editor.undoStack.undoStates.count, min(500, UndoStack<Drawing>.defaultLimit))
@@ -325,12 +325,12 @@ final class PerformanceTests: XCTestCase {
     /// 500 nudges, each its own undo step.
     func testUndoGrowthOver500Nudges() {
         let start = DrawingEditor(drawing: drawing)
-        let refs = drawing.parts.flatMap { part in part.shapes.map { ShapeRef(part: part.id, shape: $0.id) } }
+        let refs = drawing.layers.flatMap { layer in layer.shapes.map { ShapeRef(layer: layer.id, shape: $0.id) } }
         measure {
             var editor = start
             for i in 0..<500 {
                 let ref = refs[i * 7 % refs.count]
-                editor.selection = .shape(part: ref.part, shape: ref.shape)
+                editor.selection = .shape(layer: ref.layer, shape: ref.shape)
                 editor.nudge(by: Vec2(1, 0))
             }
             XCTAssertEqual(editor.undoStack.undoStates.count, min(500, UndoStack<Drawing>.defaultLimit))

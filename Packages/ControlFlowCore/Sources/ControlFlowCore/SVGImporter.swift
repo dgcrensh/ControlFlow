@@ -2,13 +2,13 @@ import Foundation
 
 /// What an SVG import brought in.
 public struct SVGImportResult: Sendable {
-    /// The art as parts, back to front. Ids are only unique within the result; the
-    /// editor gives them fresh ones (`DrawingEditor.importParts`).
-    public var parts: [Part]
+    /// The art as layers, back to front. Ids are only unique within the result; the
+    /// editor gives them fresh ones (`DrawingEditor.importLayers`).
+    public var layers: [Layer]
     /// Elements that can't come in (text, images, ...), by element name, with counts.
     public var skipped: [String: Int]
 
-    public var shapeCount: Int { parts.reduce(0) { $0 + $1.shapes.count } }
+    public var shapeCount: Int { layers.reduce(0) { $0 + $1.shapes.count } }
 }
 
 public enum SVGImportError: Error, Hashable, Sendable, CustomStringConvertible, LocalizedError {
@@ -29,12 +29,12 @@ public enum SVGImportError: Error, Hashable, Sendable, CustomStringConvertible, 
     public var errorDescription: String? { description }
 }
 
-/// Reads SVG art into parts of editable shapes.
+/// Reads SVG art into layers of editable shapes.
 ///
-/// Each top-level group becomes a part named after its `data-name` (Illustrator),
-/// `inkscape:label` (Inkscape) or `id`; shapes outside any group share a part named
-/// after the file. A named group inside a part's group becomes a group of shapes in
-/// that part (deeper groups are flattened into it). A document wrapped in a single group is unwrapped first. Paths,
+/// Each top-level group becomes a layer named after its `data-name` (Illustrator),
+/// `inkscape:label` (Inkscape) or `id`; shapes outside any group share a layer named
+/// after the file. A named group inside a layer's group becomes a group of shapes in
+/// that layer (deeper groups are flattened into it). A document wrapped in a single group is unwrapped first. Paths,
 /// rectangles, circles, ellipses, lines, polylines, polygons and `<use>` copies come in,
 /// with transforms, presentation attributes, `style` attributes and simple `<style>`
 /// rules (by tag, class and id). Fills, gradients (linear and radial), outlines (width,
@@ -55,9 +55,9 @@ public enum SVGImporter {
         }
         guard root.name == "svg" else { throw SVGImportError.notSVG }
         var context = Context(root: root)
-        let parts = context.parts(fileName: name)
-        guard !parts.isEmpty else { throw SVGImportError.noArt }
-        return SVGImportResult(parts: parts, skipped: context.skipped)
+        let layers = context.layers(fileName: name)
+        guard !layers.isEmpty else { throw SVGImportError.noArt }
+        return SVGImportResult(layers: layers, skipped: context.skipped)
     }
 
     // MARK: Styles
@@ -385,9 +385,9 @@ public enum SVGImporter {
             return style
         }
 
-        // MARK: Parts
+        // MARK: Layers
 
-        mutating func parts(fileName: String) -> [Part] {
+        mutating func layers(fileName: String) -> [Layer] {
             let rootStyle = style(of: root, parent: Style()) ?? Style()
             var top = root.children
             var topStyle = rootStyle
@@ -402,7 +402,7 @@ public enum SVGImporter {
                 top = only.children
             }
 
-            // Groups become parts; runs of shapes between them share a part.
+            // Groups become layers; runs of shapes between them share a layer.
             var groups: [(name: String, shapes: [VectorShape], groups: [ShapeGroup])] = []
             var loose: [VectorShape] = []
             for element in top where !SVGImporter.definitionElements.contains(element.name) {
@@ -412,30 +412,30 @@ public enum SVGImporter {
                 }
                 var shapes: [VectorShape] = []
                 var shapeGroups: [ShapeGroup] = []
-                drawPart(element, style: topStyle, transform: topTransform, into: &shapes, groups: &shapeGroups)
+                drawLayer(element, style: topStyle, transform: topTransform, into: &shapes, groups: &shapeGroups)
                 guard !shapes.isEmpty else { continue }
                 if !loose.isEmpty { groups.append((fileName, loose, [])) }
                 loose = []
-                groups.append((SVGImporter.partName(element) ?? fileName, shapes, shapeGroups))
+                groups.append((SVGImporter.layerName(element) ?? fileName, shapes, shapeGroups))
             }
             if !loose.isEmpty { groups.append((fileName, loose, [])) }
-            var parts: [Part] = []
+            var layers: [Layer] = []
             for group in groups {
-                var part = makePart(name: group.name, shapes: group.shapes)
-                part.groups = group.groups
-                parts.append(part)
+                var layer = makeLayer(name: group.name, shapes: group.shapes)
+                layer.groups = group.groups
+                layers.append(layer)
             }
-            return parts
+            return layers
         }
 
-        private mutating func makePart(name: String, shapes: [VectorShape]) -> Part {
+        private mutating func makeLayer(name: String, shapes: [VectorShape]) -> Layer {
             let bounds = shapes.reduce(Rect.null) { $0.union($1.path.bounds()) }
-            return Part(id: makeID(), name: name, shapes: shapes, pivot: bounds.isNull ? .zero : bounds.center)
+            return Layer(id: makeID(), name: name, shapes: shapes, pivot: bounds.isNull ? .zero : bounds.center)
         }
 
-        /// Draws a part's group: each named group inside it becomes a group of shapes
+        /// Draws a layer's group: each named group inside it becomes a group of shapes
         /// (with anything deeper flattened into it); the rest draws as usual.
-        private mutating func drawPart(_ element: MarkupElement, style parent: Style, transform: Affine2D,
+        private mutating func drawLayer(_ element: MarkupElement, style parent: Style, transform: Affine2D,
                                        into shapes: inout [VectorShape], groups: inout [ShapeGroup]) {
             let containers: Set<String> = ["g", "a", "switch"]
             guard containers.contains(element.name), element.attributes["clip-path"] == nil,
@@ -445,7 +445,7 @@ public enum SVGImporter {
             }
             let t = transform * SVGImporter.transform(element.attributes["transform"] ?? "")
             for child in element.children {
-                guard containers.contains(child.name), let name = SVGImporter.partName(child) else {
+                guard containers.contains(child.name), let name = SVGImporter.layerName(child) else {
                     draw(child, style: style, transform: t, depth: 1, into: &shapes)
                     continue
                 }
@@ -717,8 +717,8 @@ public enum SVGImporter {
         return value.map { min(max($0, 0), 1) }
     }
 
-    /// The name a group gives its part.
-    static func partName(_ element: MarkupElement) -> String? {
+    /// The name a group gives its layer.
+    static func layerName(_ element: MarkupElement) -> String? {
         for key in ["data-name", "inkscape:label", "id"] {
             if let name = element.attributes[key]?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty {
                 // Illustrator writes spaces in ids as _x5F_ style escapes and _ for spaces.
@@ -833,30 +833,30 @@ public enum SVGImporter {
 }
 
 extension DrawingEditor {
-    /// Adds imported parts on top of the art with fresh ids and unique names, and
-    /// selects them (one part as a part). Ends isolation, so the new art can be
+    /// Adds imported layers on top of the art with fresh ids and unique names, and
+    /// selects them (one layer as a layer). Ends isolation, so the new art can be
     /// touched. One undo step. False when there is nothing to add.
     @discardableResult
-    public mutating func importParts(_ parts: [Part]) -> Bool {
-        let parts = parts.filter { !$0.shapes.isEmpty }
-        guard !parts.isEmpty else { return false }
+    public mutating func importLayers(_ layers: [Layer]) -> Bool {
+        let layers = layers.filter { !$0.shapes.isEmpty }
+        guard !layers.isEmpty else { return false }
         cancelGesture()
-        if let pen = penPath, drawing.indices(part: pen.part, shape: pen.shape) != nil { penFinish() }
+        if let pen = penPath, drawing.indices(layer: pen.layer, shape: pen.shape) != nil { penFinish() }
         exitIsolation()
         let before = drawing
         var added: [Int] = []
         var refs: Set<ShapeRef> = []
-        for part in parts {
-            var copy = Part(id: drawing.makeID(), name: drawing.uniquePartName(part.name), pivot: part.pivot)
-            for shape in part.shapes {
+        for layer in layers {
+            var copy = Layer(id: drawing.makeID(), name: drawing.uniqueLayerName(layer.name), pivot: layer.pivot)
+            for shape in layer.shapes {
                 var fresh = shape
                 fresh.id = drawing.makeID()
                 copy.shapes.append(fresh)
-                refs.insert(ShapeRef(part: copy.id, shape: fresh.id))
+                refs.insert(ShapeRef(layer: copy.id, shape: fresh.id))
             }
-            copy.groups = part.groups
+            copy.groups = layer.groups
             drawing.renewGroups(of: &copy)
-            drawing.parts.append(copy)
+            drawing.layers.append(copy)
             added.append(copy.id)
         }
         selection = added.count == 1 ? .layer(added[0]) : .covering(refs)

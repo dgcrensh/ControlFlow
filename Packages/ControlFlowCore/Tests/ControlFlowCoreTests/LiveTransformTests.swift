@@ -1,14 +1,14 @@
 import XCTest
 @testable import ControlFlowCore
 
-/// A drawing of a body part of two shapes (with a hat on top), and a separate arm.
+/// A drawing of a body layer of two shapes (with a hat on top), and a separate arm.
 private func editor() -> DrawingEditor {
     var d = Drawing()
     func shape(_ r: Rect) -> VectorShape {
         VectorShape(id: d.makeID(), path: ShapePrimitives.rectangle(r), fill: .ink, stroke: StrokeStyle(color: .ink, width: 2))
     }
     func add(_ name: String, _ shapes: [VectorShape], pivot: Vec2) {
-        d.parts.append(Part(id: d.makeID(), name: name, shapes: shapes, pivot: pivot))
+        d.layers.append(Layer(id: d.makeID(), name: name, shapes: shapes, pivot: pivot))
     }
     let body = Rect(minPoint: Vec2(0, 0), maxPoint: Vec2(100, 100))
     add("Body", [shape(body), shape(Rect(minPoint: Vec2(20, -20), maxPoint: Vec2(80, 0)))], pivot: body.center)
@@ -22,7 +22,7 @@ private func editor() -> DrawingEditor {
 final class LiveTransformTests: XCTestCase {
     func testAMoveDragReportsItsTransformUntilItEnds() throws {
         var e = editor()
-        let body = e.drawing.parts[0]
+        let body = e.drawing.layers[0]
         e.selection = .layer(body.id)
         let before = e.drawing
         // Off the pivot, which sits in the middle.
@@ -54,8 +54,8 @@ final class LiveTransformTests: XCTestCase {
 
     func testOnlyShapeDragsAreLive() {
         var e = editor()
-        let arm = e.drawing.parts[1]
-        e.selection = .shape(part: arm.id, shape: arm.shapes[0].id)
+        let arm = e.drawing.layers[1]
+        e.selection = .shape(layer: arm.id, shape: arm.shapes[0].id)
         e.pencilBegan(at: Vec2(210, 20), zoom: 1)
         e.pencilMoved(to: Vec2(215, 20))
         XCTAssertEqual(e.liveTransform?.shapes, [arm.shapes[0].id])
@@ -86,18 +86,18 @@ final class LiveTransformTests: XCTestCase {
 /// When a live drag ends, `ArtBuilder.carry` moves the dragged shapes' tessellations
 /// instead of dropping them (performance-next.md, recommendation 3).
 final class CarryTessellationTests: XCTestCase {
-    private let base = StressDrawing.make(parts: 4, shapesPerPart: 6)
+    private let base = StressDrawing.make(layers: 4, shapesPerLayer: 6)
     private let tolerance = 0.5
 
-    /// Part 1 moved by `t`, as a drag of that layer leaves it.
+    /// Layer 1 moved by `t`, as a drag of that layer leaves it.
     private func drag(_ t: Affine2D, from drawing: Drawing? = nil) -> LiveTransform {
         let d = drawing ?? base
-        let selection = Selection.layer(d.parts[1].id)
+        let selection = Selection.layer(d.layers[1].id)
         return LiveTransform(id: 1, base: d, shapes: LiveTransform.shapes(of: selection, in: d)!, transform: t)
     }
 
     private func moved(_ live: LiveTransform) -> Drawing {
-        live.base.applying(live.transform, to: .layer(live.base.parts[1].id))
+        live.base.applying(live.transform, to: .layer(live.base.layers[1].id))
     }
 
     /// Builds the drag's base, carries, and builds the moved drawing. Returns the builder
@@ -105,10 +105,10 @@ final class CarryTessellationTests: XCTestCase {
     private func carryAndBuild(_ live: LiveTransform, to after: Drawing, reusing: Bool = false)
         -> (builder: ArtBuilder, carry: ArtBuilder.Carry, batch: ArtBatch, tessellated: Int) {
         var builder = ArtBuilder()
-        _ = builder.build(live.base, isolatedPart: nil, tolerance: tolerance, moving: live.shapes)
+        _ = builder.build(live.base, isolatedLayer: nil, tolerance: tolerance, moving: live.shapes)
         let count = builder.tessellationCount
         let carry = builder.carry(live, to: after)
-        let batch = builder.build(after, isolatedPart: nil, tolerance: tolerance, reusingOtherTolerances: reusing)
+        let batch = builder.build(after, isolatedLayer: nil, tolerance: tolerance, reusingOtherTolerances: reusing)
         return (builder, carry, batch, builder.tessellationCount - count)
     }
 
@@ -117,7 +117,7 @@ final class CarryTessellationTests: XCTestCase {
     private func assertMatchesColdBuild(_ batch: ArtBatch, of drawing: Drawing, slack: Float,
                                         file: StaticString = #filePath, line: UInt = #line) {
         var cold = ArtBuilder()
-        let fresh = cold.build(drawing, isolatedPart: nil, tolerance: tolerance)
+        let fresh = cold.build(drawing, isolatedLayer: nil, tolerance: tolerance)
         XCTAssertEqual(batch.vertices.count, fresh.vertices.count, file: file, line: line)
         guard batch.vertices.count == fresh.vertices.count else { return }
         let worst = zip(batch.vertices, fresh.vertices).map { abs($0 - $1) }.max() ?? 0
@@ -137,7 +137,7 @@ final class CarryTessellationTests: XCTestCase {
     }
 
     func testARotationCarriesEveryMovedShape() {
-        let pivot = base.parts[1].pivot
+        let pivot = base.layers[1].pivot
         let turn = Affine2D.translation(pivot) * .rotation(0.7) * .translation(Vec2(-pivot.x, -pivot.y))
         let live = drag(turn)
         let after = moved(live)
@@ -147,7 +147,7 @@ final class CarryTessellationTests: XCTestCase {
         // A turned curve may flatten into a slightly different polygon, but no further
         // from the curve than the tolerance; the triangles stay where the shapes are.
         var cold = ArtBuilder()
-        let fresh = cold.build(after, isolatedPart: nil, tolerance: tolerance)
+        let fresh = cold.build(after, isolatedLayer: nil, tolerance: tolerance)
         XCTAssertEqual(batch.segments.count, fresh.segments.count)
         assertBoundsMatch(batch, fresh, slack: tolerance * 2)
     }
@@ -186,7 +186,7 @@ final class CarryTessellationTests: XCTestCase {
     func testAShapeTheLiftChangedIsTessellatedAgain() throws {
         let live = drag(.translation(Vec2(10, 0)))
         var after = moved(live)
-        after.parts[1].shapes[2].fill = RGBAColor(r: 0, g: 0, b: 1)
+        after.layers[1].shapes[2].fill = RGBAColor(r: 0, g: 0, b: 1)
         let (_, carry, batch, tessellated) = carryAndBuild(live, to: after)
         XCTAssertEqual(carry.carried, live.shapes.count - 1)
         XCTAssertEqual(tessellated, 1)
@@ -196,13 +196,13 @@ final class CarryTessellationTests: XCTestCase {
     func testRepeatedCarriesFlattenAgainAfterTheLimit() {
         var builder = ArtBuilder()
         var drawing = base
-        _ = builder.build(drawing, isolatedPart: nil, tolerance: tolerance)
+        _ = builder.build(drawing, isolatedLayer: nil, tolerance: tolerance)
         var carried: [Int] = []
         for _ in 0...ArtBuilder.maximumCarries {
             let live = drag(.translation(Vec2(3, 1)), from: drawing)
             drawing = moved(live)
             carried.append(builder.carry(live, to: drawing).carried)
-            _ = builder.build(drawing, isolatedPart: nil, tolerance: tolerance)
+            _ = builder.build(drawing, isolatedLayer: nil, tolerance: tolerance)
         }
         let n = drag(.identity).shapes.count
         XCTAssertEqual(carried, Array(repeating: n, count: ArtBuilder.maximumCarries) + [0])

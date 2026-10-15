@@ -31,18 +31,18 @@ extension DrawingEditor {
     /// The topmost editable shape under `p`, within isolation: `Drawing.hitTest`.
     func hitShape(at p: Vec2, tolerance: Double) -> ShapeRef? {
         if let index = freshShapeIndex, index.supportsHitTest {
-            return index.hitTest(p, tolerance: tolerance, within: isolatedPart, group: isolatedGroup)
+            return index.hitTest(p, tolerance: tolerance, within: isolatedLayer, group: isolatedGroup)
         }
-        return drawing.hitTest(p, tolerance: tolerance, within: isolatedPart, group: isolatedGroup)
-            .map { ShapeRef(part: $0.part, shape: $0.shape) }
+        return drawing.hitTest(p, tolerance: tolerance, within: isolatedLayer, group: isolatedGroup)
+            .map { ShapeRef(layer: $0.layer, shape: $0.shape) }
     }
 
     /// The editable shapes (within isolation) whose bounds may meet `rect` and that pass
-    /// `test`, in `parts` order.
+    /// `test`, in `layers` order.
     func shapes(meeting rect: Rect, where test: (VectorShape) -> Bool) -> [ShapeRef] {
         var out: [ShapeRef] = []
         if let index = freshShapeIndex {
-            for i in index.candidates(meeting: rect, within: isolatedPart, group: isolatedGroup) {
+            for i in index.candidates(meeting: rect, within: isolatedLayer, group: isolatedGroup) {
                 let entry = index.entries[i]
                 if test(entry.shape) { out.append(entry.ref) }
             }
@@ -54,19 +54,19 @@ extension DrawingEditor {
         return out
     }
 
-    /// Every editable shape within isolation, in `parts` order, as
+    /// Every editable shape within isolation, in `layers` order, as
     /// `Drawing.editableShapeRefs` lists them, without looking each one up by id.
     func forEachEditableShape(_ body: (ShapeRef, VectorShape) -> Void) {
-        for part in drawing.parts where isolatedPart == nil || part.id == isolatedPart {
-            for i in part.shapes.indices where (isolatedGroup == nil || part.shapes[i].group == isolatedGroup) &&
-                part.isEditable(i) {
-                body(ShapeRef(part: part.id, shape: part.shapes[i].id), part.shapes[i])
+        for layer in drawing.layers where isolatedLayer == nil || layer.id == isolatedLayer {
+            for i in layer.shapes.indices where (isolatedGroup == nil || layer.shapes[i].group == isolatedGroup) &&
+                layer.isEditable(i) {
+                body(ShapeRef(layer: layer.id, shape: layer.shapes[i].id), layer.shapes[i])
             }
         }
     }
 
     /// The outline nearest `p` that the scissors can cut, within reach: the first,
-    /// in `parts` order, of the shapes at the least distance.
+    /// in `layers` order, of the shapes at the least distance.
     func cutTarget(at p: Vec2, zoom: Double) -> (ref: ShapeRef, segment: Int, t: Double, path: BezierPath)? {
         var best: (ref: ShapeRef, segment: Int, t: Double, distance: Double, path: BezierPath)?
         let hit = EditorMetrics.curveHit / zoom
@@ -80,7 +80,7 @@ extension DrawingEditor {
         }
         if let index = freshShapeIndex {
             let query = Rect(from: p, to: p).outset(by: max(hit, 0))
-            for i in index.candidates(meeting: query, within: isolatedPart, group: isolatedGroup) {
+            for i in index.candidates(meeting: query, within: isolatedLayer, group: isolatedGroup) {
                 let entry = index.entries[i]
                 consider(entry.ref, entry.shape, entry.controlBounds)
             }

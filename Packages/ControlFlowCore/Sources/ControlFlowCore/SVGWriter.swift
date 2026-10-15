@@ -1,6 +1,6 @@
 import Foundation
 
-/// Writes the art as an SVG 1.1 document, one group per part, back to front,
+/// Writes the art as an SVG 1.1 document, one group per layer, back to front,
 /// with a named group inside it for each group of shapes.
 ///
 /// Everything the canvas draws comes across: fills and gradients (in user space, so
@@ -14,15 +14,15 @@ public enum SVGWriter {
     /// How finely variable-width outlines are flattened, in points.
     public static let tolerance = 0.1
 
-    /// The SVG text. `area` is the part of the canvas the document shows; by default the
+    /// The SVG text. `area` is the layer of the canvas the document shows; by default the
     /// viewport (see `Drawing.exportArea`). Nil when the area is empty.
     public static func document(for drawing: Drawing, area: Rect? = nil) -> String? {
         guard let area = area ?? drawing.exportArea(), area.width > 0, area.height > 0 else { return nil }
         var writer = Writer(area: area)
-        let names = Dictionary(zip(drawing.parts.map(\.id), CharacterFormat.slotNames(for: drawing.parts)),
+        let names = Dictionary(zip(drawing.layers.map(\.id), CharacterFormat.slotNames(for: drawing.layers)),
                                uniquingKeysWith: { a, _ in a })
-        for part in drawing.parts where !part.isHidden {
-            writer.part(part, name: names[part.id] ?? part.name)
+        for layer in drawing.layers where !layer.isHidden {
+            writer.layer(layer, name: names[layer.id] ?? layer.name)
         }
         return writer.finish(title: drawing.name)
     }
@@ -50,7 +50,7 @@ public enum SVGWriter {
         return out
     }
 
-    /// An XML id from a part name: letters, digits, `-`, `_` and `.`, starting with a letter.
+    /// An XML id from a layer name: letters, digits, `-`, `_` and `.`, starting with a letter.
     static func identifier(_ name: String) -> String {
         var out = ""
         for scalar in name.unicodeScalars {
@@ -115,7 +115,7 @@ public enum SVGWriter {
             return "\(prefix)\(nextID)"
         }
 
-        mutating func part(_ part: Part, name: String) {
+        mutating func layer(_ layer: Layer, name: String) {
             let id = SVGWriter.identifier(name)
             var open = "<g id=\"\(SVGWriter.escaped(id))\""
             if id != name { open += " data-name=\"\(SVGWriter.escaped(name))\"" }
@@ -125,13 +125,13 @@ public enum SVGWriter {
             var openGroup: Int?
             var clipGroup: (base: Int, mask: String)?
             var masks: [Int: String] = [:]
-            let clips = part.clipPlan()
-            for index in part.shapes.indices where part.isShown(index) {
+            let clips = layer.clipPlan()
+            for index in layer.shapes.indices where layer.isShown(index) {
                 let base = clips.base(of: index)
-                if let base, !part.isShown(base) { continue }
+                if let base, !layer.isShown(base) { continue }
                 let groupBase = clips.groupBase(of: index)
-                if let groupBase, !part.isShown(groupBase) { continue }
-                let group = part.shapes[index].group.flatMap { part.group($0) }
+                if let groupBase, !layer.isShown(groupBase) { continue }
+                let group = layer.shapes[index].group.flatMap { layer.group($0) }
                 if group?.id != openGroup {
                     if clipGroup != nil { body.append((openGroup == nil ? "    " : "      ") + "</g>") }
                     clipGroup = nil
@@ -141,7 +141,7 @@ public enum SVGWriter {
                         var open = "    <g data-name=\"\(SVGWriter.escaped(group.name))\""
                         // A clipped group is masked by its base as a whole.
                         if let groupBase {
-                            let mask = masks[groupBase] ?? clipMask(part.shapes[groupBase])
+                            let mask = masks[groupBase] ?? clipMask(layer.shapes[groupBase])
                             masks[groupBase] = mask
                             open += " mask=\"url(#\(mask))\""
                         }
@@ -153,13 +153,13 @@ public enum SVGWriter {
                     if clipGroup != nil { body.append(indent + "</g>") }
                     clipGroup = nil
                     if let base {
-                        let mask = masks[base] ?? clipMask(part.shapes[base])
+                        let mask = masks[base] ?? clipMask(layer.shapes[base])
                         masks[base] = mask
                         clipGroup = (base, mask)
                         body.append(indent + "<g mask=\"url(#\(mask))\">")
                     }
                 }
-                shape(part.shapes[index], indent: clipGroup == nil ? indent : indent + "  ")
+                shape(layer.shapes[index], indent: clipGroup == nil ? indent : indent + "  ")
             }
             if clipGroup != nil { body.append((openGroup == nil ? "    " : "      ") + "</g>") }
             if openGroup != nil { body.append("    </g>") }

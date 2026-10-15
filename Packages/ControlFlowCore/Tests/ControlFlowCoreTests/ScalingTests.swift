@@ -11,14 +11,14 @@ import XCTest
 /// By default the sizes stay small so the debug build on CI is quick;
 /// `STRESS_DRAWING=full` runs 300 to 4,800 shapes (the audit's size is 2,400).
 final class ScalingTests: XCTestCase {
-    /// Parts per drawing; every size has `shapesPerPart` shapes of 24 anchors per part.
-    static let partCounts = StressDrawing.isFull ? [5, 10, 20, 40, 80] : [4, 8, 16]
-    static let shapesPerPart = StressDrawing.isFull ? 60 : 15
+    /// Layers per drawing; every size has `shapesPerLayer` shapes of 24 anchors per layer.
+    static let layerCounts = StressDrawing.isFull ? [5, 10, 20, 40, 80] : [4, 8, 16]
+    static let shapesPerLayer = StressDrawing.isFull ? 60 : 15
     /// Each cell is the median of this many timed calls, after one untimed warm-up call.
     static let runs = StressDrawing.isFull ? 9 : 3
 
     func testHowWorkloadsScaleWithDrawingSize() {
-        let drawings = Self.partCounts.map { StressDrawing.make(parts: $0, shapesPerPart: Self.shapesPerPart) }
+        let drawings = Self.layerCounts.map { StressDrawing.make(layers: $0, shapesPerLayer: Self.shapesPerLayer) }
         let shapes = drawings.map(\.shapeCount)
         var rows: [(name: String, seconds: [Double])] = []
         for workload in Workload.all {
@@ -31,20 +31,20 @@ final class ScalingTests: XCTestCase {
 
     /// What the art pass hands the GPU at each size: vertices, the bytes of a full upload
     /// (the first build, or a new zoom bucket), and what `CanvasRenderer.uploadArt` uploads
-    /// after one edit (only the edited part's segment).
+    /// after one edit (only the edited layer's segment).
     func testArtUploadSize() {
         var lines = ["Art batch per size", "", "| Shapes | Vertices | Full upload | Upload after one edit | Steps |",
                      "| ---: | ---: | ---: | ---: | ---: |"]
         func megabytes(_ floats: Int) -> String {
             String(format: "%.2f", Double(floats * MemoryLayout<Float>.size) / 1_048_576) + " MB"
         }
-        for parts in Self.partCounts {
-            let drawing = StressDrawing.make(parts: parts, shapesPerPart: Self.shapesPerPart)
+        for layers in Self.layerCounts {
+            let drawing = StressDrawing.make(layers: layers, shapesPerLayer: Self.shapesPerLayer)
             var builder = ArtBuilder()
-            let batch = builder.build(drawing, isolatedPart: nil, tolerance: 0.5)
+            let batch = builder.build(drawing, isolatedLayer: nil, tolerance: 0.5)
             var edited = drawing
-            edited.parts[0].shapes[0].fill = RGBAColor(r: 1, g: 0, b: 0)
-            let after = builder.build(edited, isolatedPart: nil, tolerance: 0.5)
+            edited.layers[0].shapes[0].fill = RGBAColor(r: 1, g: 0, b: 0)
+            let after = builder.build(edited, isolatedLayer: nil, tolerance: 0.5)
             let uploaded = after.segmentsToUpload(resident: batch.residentIDs).reduce(0) { $0 + $1.floats.count }
             lines.append("| \(drawing.shapeCount) | \(batch.vertexCount) | \(megabytes(batch.vertices.count)) | \(megabytes(uploaded)) | \(batch.steps.count) |")
             XCTAssertGreaterThan(batch.vertexCount, 0)
@@ -56,12 +56,12 @@ final class ScalingTests: XCTestCase {
     /// The no-vertices build that `artRebuildAfterOneEditWalkOnly` times does the same walk:
     /// the same steps as a full build, kind for kind, with nothing written.
     func testBuildWithoutVerticesWalksTheSameSteps() {
-        let drawing = StressDrawing.make(parts: 4, shapesPerPart: 15)
+        let drawing = StressDrawing.make(layers: 4, shapesPerLayer: 15)
         var full = ArtBuilder()
         var walk = ArtBuilder()
         walk.skipsVertices = true
-        let a = full.build(drawing, isolatedPart: nil, tolerance: 0.5)
-        let b = walk.build(drawing, isolatedPart: nil, tolerance: 0.5)
+        let a = full.build(drawing, isolatedLayer: nil, tolerance: 0.5)
+        let b = walk.build(drawing, isolatedLayer: nil, tolerance: 0.5)
         XCTAssertTrue(b.vertices.isEmpty)
         XCTAssertEqual(a.steps.map(Self.kind), b.steps.map(Self.kind))
     }

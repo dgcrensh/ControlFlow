@@ -49,10 +49,10 @@ final class EditorUIState {
     var presentationName = ""
     /// The layers, then reference images.
     var layers = LayerTree(drawing: Drawing())
-    var selectedPart: Int?
+    var selectedLayer: Int?
     /// The whole layers selected (one or several), for the panel's multi-select.
     var selectedLayers: Set<Int> = []
-    /// The layer new art goes into, and its name; nil when new art starts a new part.
+    /// The layer new art goes into, and its name; nil when new art starts a new layer.
     var activeLayer: Int?
     var activeLayerName = ""
     /// True when the active layer is the one chosen in the layers panel (rather than
@@ -68,20 +68,20 @@ final class EditorUIState {
     var shapeOptions = ShapeToolOptions()
     /// The on-screen modifier strip's latched keys.
     var stripModifiers: EditorModifiers = []
-    /// The isolated part's id, and the name of what isolation steps out of (the isolated
-    /// group's name when editing inside a group, else the part's), while isolating.
-    var isolatedPart: Int?
-    var isolatedPartName = ""
+    /// The isolated layer's id, and the name of what isolation steps out of (the isolated
+    /// group's name when editing inside a group, else the layer's), while isolating.
+    var isolatedLayer: Int?
+    var isolatedLayerName = ""
     var canGroup = false
     var canUngroup = false
     /// The group the selection is, when it is one whole group.
     var selectedGroupID: Int?
-    var selectedGroupPart: Int?
+    var selectedGroupLayer: Int?
     var selectedGroupName = ""
     /// The selected group draws inside the shape below it, or could.
     var selectedGroupClipped = false
     var canClipSelectedGroup = false
-    /// The other groups of the selected shapes' part, for Add to Group.
+    /// The other groups of the selected shapes' layer, for Add to Group.
     var groupsToAddTo: [ShapeGroup] = []
     /// The levels around the selection (layer, group, shapes), outermost first, and what
     /// the Select menu can do with it.
@@ -276,7 +276,7 @@ final class CanvasStore {
         update(\.canTransform, editor.canTransformSelection)
         update(\.penActive, editor.isPenActive)
         update(\.addToSelection, editor.addToSelection)
-        update(\.autoJoin, editor.autoJoinSelectedPart)
+        update(\.autoJoin, editor.autoJoinSelectedLayer)
         update(\.snap, editor.snap)
         update(\.selectionBounds, editor.selectionGeometry)
         update(\.anchorPosition, editingPoints ? editor.selectedAnchorsCentroid : nil)
@@ -288,18 +288,18 @@ final class CanvasStore {
         update(\.pressureWidth, editor.pressureWidth)
         update(\.shapeKind, editor.shapeKind)
         update(\.shapeOptions, editor.shapeOptions)
-        update(\.isolatedPart, editor.isolatedPart)
+        update(\.isolatedLayer, editor.isolatedLayer)
         let isolatedName = editor.isolatedGroupInfo?.name ??
-            editor.isolatedPart.flatMap { id in editor.drawing.parts.first { $0.id == id }?.name } ?? ""
-        update(\.isolatedPartName, isolatedName)
+            editor.isolatedLayer.flatMap { id in editor.drawing.layers.first { $0.id == id }?.name } ?? ""
+        update(\.isolatedLayerName, isolatedName)
         update(\.canGroup, editor.canGroupSelection)
         update(\.canUngroup, editor.canUngroupSelection)
         let group = editor.selectedGroup
         update(\.selectedGroupID, group?.group.id)
-        update(\.selectedGroupPart, group?.part)
+        update(\.selectedGroupLayer, group?.layer)
         update(\.selectedGroupName, group?.group.name ?? "")
         update(\.selectedGroupClipped, group?.group.isClipped ?? false)
-        update(\.canClipSelectedGroup, group.map { editor.canClipGroup($0.group.id, inPart: $0.part) } ?? false)
+        update(\.canClipSelectedGroup, group.map { editor.canClipGroup($0.group.id, inLayer: $0.layer) } ?? false)
         update(\.groupsToAddTo, editor.groupsToAddSelectionTo)
         update(\.selectionCrumbs, editor.selectionCrumbs)
         update(\.canSelectParent, editor.canSelectParent)
@@ -316,17 +316,17 @@ final class CanvasStore {
         update(\.ghostsUnselected, editor.ghostsUnselected)
         update(\.selectedLayers, editor.selectedLayers)
         update(\.activeLayer, editor.activeLayer)
-        update(\.activeLayerName, editor.activeLayer.flatMap { editor.drawing.part($0)?.name } ?? "")
+        update(\.activeLayerName, editor.activeLayer.flatMap { editor.drawing.layer($0)?.name } ?? "")
         update(\.activeLayerIsChosen, editor.activeLayer != nil && editor.activeLayer == editor.targetLayer &&
-            editor.isolatedPart == nil)
+            editor.isolatedLayer == nil)
         if case .layer(let id) = editor.selection {
-            update(\.selectedPart, id)
+            update(\.selectedLayer, id)
         } else if case .shape(let id, _) = editor.selection {
-            update(\.selectedPart, id)
-        } else if case .shapes(let refs) = editor.selection, Set(refs.map(\.part)).count == 1 {
-            update(\.selectedPart, refs.first?.part)
+            update(\.selectedLayer, id)
+        } else if case .shapes(let refs) = editor.selection, Set(refs.map(\.layer)).count == 1 {
+            update(\.selectedLayer, refs.first?.layer)
         } else {
-            update(\.selectedPart, nil)
+            update(\.selectedLayer, nil)
         }
         if session.tapCommandCount != seenTapCommands {
             seenTapCommands = session.tapCommandCount
@@ -400,7 +400,7 @@ final class CanvasStore {
     func joinPaths() { edit { $0.editor.joinSelection() } }
     func penDone() { edit { $0.editor.penFinish() } }
     func setAddToSelection(_ on: Bool) { edit { $0.editor.addToSelection = on } }
-    func setAutoJoin(_ on: Bool) { edit { $0.editor.autoJoinSelectedPart = on } }
+    func setAutoJoin(_ on: Bool) { edit { $0.editor.autoJoinSelectedLayer = on } }
     func setSnap(_ snap: SnapSettings) { edit { $0.editor.snap = snap } }
     func flip(horizontal: Bool) { edit { $0.editor.flipSelection(horizontal: horizontal) } }
     func nudge(_ dx: Double, _ dy: Double) { edit { $0.editor.nudge(by: Vec2(dx, dy)) } }
@@ -449,16 +449,16 @@ final class CanvasStore {
     func lockSelection() { edit { $0.editor.lockSelection() } }
     func showAll() { edit { $0.editor.showAll() } }
     func unlockAll() { edit { $0.editor.unlockAll() } }
-    func setPartHidden(_ id: Int, _ hidden: Bool) { edit { $0.editor.setPartHidden(id, hidden) } }
-    func setPartLocked(_ id: Int, _ locked: Bool) { edit { $0.editor.setPartLocked(id, locked) } }
-    func isolate(part id: Int) { edit { $0.editor.isolate(part: id) } }
+    func setLayerHidden(_ id: Int, _ hidden: Bool) { edit { $0.editor.setLayerHidden(id, hidden) } }
+    func setLayerLocked(_ id: Int, _ locked: Bool) { edit { $0.editor.setLayerLocked(id, locked) } }
+    func isolate(layer id: Int) { edit { $0.editor.isolate(layer: id) } }
     func exitIsolation() { edit { $0.editor.exitIsolation() } }
     /// One level out: from a group to its layer, from a layer to the whole document, else deselect.
     func stepOutOfIsolation() { edit { $0.editor.stepOutOfIsolation() } }
     func groupSelection() { edit { $0.editor.groupSelection() } }
     func ungroupSelection() { edit { $0.editor.ungroupSelection() } }
-    func renameGroup(_ id: Int, inPart part: Int, to name: String) {
-        edit { $0.editor.renameGroup(id, inPart: part, to: name) }
+    func renameGroup(_ id: Int, inLayer layer: Int, to name: String) {
+        edit { $0.editor.renameGroup(id, inLayer: layer, to: name) }
     }
     func addSelection(toGroup id: Int) { edit { $0.editor.addSelection(toGroup: id) } }
     func selectParent() { edit { $0.editor.selectParent() } }
@@ -467,16 +467,16 @@ final class CanvasStore {
     func invertSelection() { edit { $0.editor.invertSelection() } }
     func selectSameFill() { edit { $0.editor.selectSameFill() } }
     func selectSameOutline() { edit { $0.editor.selectSameOutline() } }
-    func mergePartDown(_ id: Int) { edit { $0.editor.mergePartDown(id) } }
-    func moveSelectionToNewPart() { edit { $0.editor.moveSelectionToNewPart() } }
-    func moveSelection(toPart id: Int) { edit { $0.editor.moveSelection(toPart: id) } }
-    func setPartOrder(frontToBack ids: [Int]) { edit { $0.editor.setPartOrder(frontToBack: ids) } }
-    func canMergePartDown(_ id: Int) -> Bool { session.editor.canMergePartDown(id) }
+    func mergeLayerDown(_ id: Int) { edit { $0.editor.mergeLayerDown(id) } }
+    func moveSelectionToNewLayer() { edit { $0.editor.moveSelectionToNewLayer() } }
+    func moveSelection(toLayer id: Int) { edit { $0.editor.moveSelection(toLayer: id) } }
+    func setLayerOrder(frontToBack ids: [Int]) { edit { $0.editor.setLayerOrder(frontToBack: ids) } }
+    func canMergeLayerDown(_ id: Int) -> Bool { session.editor.canMergeLayerDown(id) }
 
-    /// Isolates the selected part (or the part of the selected shapes).
+    /// Isolates the selected layer (or the layer of the selected shapes).
     func isolateSelection() {
-        guard let id = ui.selectedPart else { return }
-        isolate(part: id)
+        guard let id = ui.selectedLayer else { return }
+        isolate(layer: id)
     }
 
     // MARK: Symmetry
@@ -507,7 +507,7 @@ final class CanvasStore {
 
     // MARK: Import and export
 
-    /// Reads SVG art into new parts on top, selects them and fits them in the view.
+    /// Reads SVG art into new layers on top, selects them and fits them in the view.
     /// The file is parsed off the main thread, with "Importing..." showing meanwhile;
     /// a second import while one runs is ignored. Returns an error message when nothing
     /// could be imported.
@@ -527,17 +527,17 @@ final class CanvasStore {
         case .failure(let error):
             return (error as? SVGImportError)?.description ?? error.localizedDescription
         }
-        edit { _ = $0.editor.importParts(result.parts) }
+        edit { _ = $0.editor.importLayers(result.layers) }
         let editor = session.editor
         let bounds = editor.drawing.shapeIndices(in: editor.selection).reduce(Rect.null) {
-            $0.union(editor.drawing.parts[$1.0].shapes[$1.1].bounds)
+            $0.union(editor.drawing.layers[$1.0].shapes[$1.1].bounds)
         }
         if !bounds.isNull {
             session.zoom(toFit: bounds, viewSize: Vec2(viewSize))
             onChange?()
         }
-        let parts = result.parts.count == 1 ? "1 part" : "\(result.parts.count) parts"
-        var message = "Imported \(parts)"
+        let layers = result.layers.count == 1 ? "1 layer" : "\(result.layers.count) layers"
+        var message = "Imported \(layers)"
         if !result.skipped.isEmpty {
             let skipped = result.skipped.sorted { $0.key < $1.key }.map { "\($0.value) \($0.key)" }
             message += "; skipped " + skipped.joined(separator: ", ")
@@ -655,35 +655,35 @@ final class CanvasStore {
 
     // MARK: Layers
 
-    func selectPart(_ id: Int) { edit { $0.editor.selectPart(id) } }
+    func selectLayer(_ id: Int) { edit { $0.editor.selectLayer(id) } }
 
     /// Selects layer `id` and makes it the one new art goes into, as tapping its name in
     /// the layers panel does.
     func activateLayer(_ id: Int) {
         edit {
-            $0.editor.selectPart(id)
+            $0.editor.selectLayer(id)
             $0.editor.setActiveLayer(id)
         }
     }
 
-    /// Back to starting a new part for each new piece of art.
+    /// Back to starting a new layer for each new piece of art.
     func clearActiveLayer() { edit { $0.editor.setActiveLayer(nil) } }
     func selectLayers(_ ids: Set<Int>) { edit { $0.editor.selectLayers(ids) } }
     func moveTreeRow(from source: Int, to destination: Int, in rows: [LayerTree.Row]) {
         edit { $0.editor.moveTreeRow(from: source, to: destination, in: rows) }
     }
-    func selectGroup(_ id: Int, inPart part: Int) { edit { $0.editor.selectGroup(id, inPart: part) } }
-    func setGroupHidden(_ id: Int, inPart part: Int, _ hidden: Bool) {
-        edit { $0.editor.setGroupHidden(id, inPart: part, hidden) }
+    func selectGroup(_ id: Int, inLayer layer: Int) { edit { $0.editor.selectGroup(id, inLayer: layer) } }
+    func setGroupHidden(_ id: Int, inLayer layer: Int, _ hidden: Bool) {
+        edit { $0.editor.setGroupHidden(id, inLayer: layer, hidden) }
     }
-    func setGroupLocked(_ id: Int, inPart part: Int, _ locked: Bool) {
-        edit { $0.editor.setGroupLocked(id, inPart: part, locked) }
+    func setGroupLocked(_ id: Int, inLayer layer: Int, _ locked: Bool) {
+        edit { $0.editor.setGroupLocked(id, inLayer: layer, locked) }
     }
-    func setGroupClipped(_ id: Int, inPart part: Int, _ clipped: Bool) {
-        edit { $0.editor.setGroupClipped(id, inPart: part, clipped) }
+    func setGroupClipped(_ id: Int, inLayer layer: Int, _ clipped: Bool) {
+        edit { $0.editor.setGroupClipped(id, inLayer: layer, clipped) }
     }
-    func renamePart(_ id: Int, to name: String) { edit { $0.editor.renamePart(id, to: name) } }
-    func deletePart(_ id: Int) { edit { $0.editor.deletePart(id) } }
+    func renameLayer(_ id: Int, to name: String) { edit { $0.editor.renameLayer(id, to: name) } }
+    func deleteLayer(_ id: Int) { edit { $0.editor.deleteLayer(id) } }
     func renamePresentation(_ name: String) { edit { $0.editor.renamePresentation(name) } }
 
     // MARK: Reference images

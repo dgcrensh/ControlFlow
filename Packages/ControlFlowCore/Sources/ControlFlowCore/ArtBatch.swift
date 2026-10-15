@@ -67,7 +67,7 @@ public enum ArtStencil {
                                                  pass: .replace, fail: .zero)
 }
 
-/// How a shape takes part in clipping.
+/// How a shape takes layer in clipping.
 public enum ClipRole: Hashable, Sendable {
     case none
     /// Draws, and marks the clip where it draws.
@@ -105,7 +105,7 @@ public enum ArtStep: Hashable, Sendable {
     /// A stencil-only pass over the whole view. Clearing the clip uses a rectangle
     /// (`stencil`) instead, except while a live transform moves the shapes involved.
     case stencilView(state: StencilState, reference: UInt8)
-    /// Dims everything drawn so far: the parts outside isolation.
+    /// Dims everything drawn so far: the layers outside isolation.
     case veil
     /// The `stencil` and `cover` steps that follow draw shapes a live transform is
     /// moving (true) or not (false): the renderer applies the transform to them, so a
@@ -116,30 +116,30 @@ public enum ArtStep: Hashable, Sendable {
 /// The art ready for the GPU: world-space triangles and the steps that draw them.
 public struct ArtBatch: Hashable, Sendable {
     /// Two floats (x, y) per vertex. Empty when the builder doesn't concatenate them
-    /// (`ArtBuilder.concatenatesVertices`); the segments still hold every part's floats.
+    /// (`ArtBuilder.concatenatesVertices`); the segments still hold every layer's floats.
     public var vertices: [Float] = []
     public var steps: [ArtStep] = []
-    /// One per part in the draw stack, in order: which steps and vertices it drew.
+    /// One per layer in the draw stack, in order: which steps and vertices it drew.
     public var segments: [ArtSegment] = []
-    /// Parts a build `leavingOutUncached` left out because a shape had no tessellation yet.
-    public var partsLeftOut = 0
+    /// Layers a build `leavingOutUncached` left out because a shape had no tessellation yet.
+    public var layersLeftOut = 0
 
     public var vertexCount: Int { vertices.count / 2 }
 }
 
-/// One part's share of an `ArtBatch`, so the renderer can keep each part's vertices in
-/// its own GPU buffer and upload only the parts an edit changed.
+/// One layer's share of an `ArtBatch`, so the renderer can keep each layer's vertices in
+/// its own GPU buffer and upload only the layers an edit changed.
 public struct ArtSegment: Hashable, Sendable {
     /// Names these vertices: a segment in a later batch from the same `ArtBuilder` with
     /// the same id has the same `floats`. Never reused by that builder.
     public var id: Int
-    /// The part (its id in the drawing) whose art this is.
-    public var part: Int
-    /// The part's vertices, in the batch's vertex numbering.
+    /// The layer (its id in the drawing) whose art this is.
+    public var layer: Int
+    /// The layer's vertices, in the batch's vertex numbering.
     public var vertices: Range<Int>
-    /// The part's steps, as indices into `ArtBatch.steps`.
+    /// The layer's steps, as indices into `ArtBatch.steps`.
     public var steps: Range<Int>
-    /// The part's vertices, two floats each (shared with the builder's cache, not copied).
+    /// The layer's vertices, two floats each (shared with the builder's cache, not copied).
     public var floats: [Float]
 
     /// `range` (from one of this segment's steps) counted from the segment's first vertex,
@@ -151,7 +151,7 @@ public struct ArtSegment: Hashable, Sendable {
 
 extension ArtBatch {
     /// The segments whose vertices aren't in a GPU buffer yet: those with vertices whose
-    /// id isn't in `resident`. After one edit that is the edited part's segment only.
+    /// id isn't in `resident`. After one edit that is the edited layer's segment only.
     public func segmentsToUpload(resident: Set<Int>) -> [ArtSegment] {
         segments.filter { !$0.floats.isEmpty && !resident.contains($0.id) }
     }
@@ -179,8 +179,8 @@ extension ArtStep {
 
 /// Builds the art pass for a drawing and keeps each shape's triangles until that
 /// shape (or the flattening tolerance) changes, so an edit re-tessellates only the
-/// shapes it touches. It also keeps each part's finished steps and vertices, so an edit
-/// rebuilds only the parts it touches and the rest are copied as they are.
+/// shapes it touches. It also keeps each layer's finished steps and vertices, so an edit
+/// rebuilds only the layers it touches and the rest are copied as they are.
 ///
 /// Each fill is drawn with stencil-then-cover: its fan marks winding numbers, then a
 /// rectangle over it paints where the winding is non-zero, which fills any outline
@@ -243,28 +243,28 @@ public struct ArtBuilder: Sendable {
         }
     }
 
-    /// What one part's steps and vertices depend on besides its shapes' tessellations:
-    /// a part whose key is unchanged reuses its `PartBatch`. Comparing the shapes is a
-    /// pointer compare for an untouched part, whose array shares storage with the last one.
-    struct PartKey: Equatable, Sendable {
+    /// What one layer's steps and vertices depend on besides its shapes' tessellations:
+    /// a layer whose key is unchanged reuses its `LayerBatch`. Comparing the shapes is a
+    /// pointer compare for an untouched layer, whose array shares storage with the last one.
+    struct LayerKey: Equatable, Sendable {
         var shapes: [VectorShape]
         var groups: [ShapeGroup]
         var isHidden: Bool
         var tolerance: Double
         var isIsolated: Bool
-        /// The isolated group, when this is the isolated part and has that group.
+        /// The isolated group, when this is the isolated layer and has that group.
         var isolatedGroup: Int?
-        /// The ghost focus and the moving set, restricted to this part's shapes.
+        /// The ghost focus and the moving set, restricted to this layer's shapes.
         var ghostFocus: Set<Int>?
         var moving: Set<Int>
     }
 
-    /// One part's steps, with vertex ranges counted from the start of its own `vertices`.
+    /// One layer's steps, with vertex ranges counted from the start of its own `vertices`.
     /// Each starts and ends with `moving` off.
-    struct PartBatch: Sendable {
-        var key: PartKey
+    struct LayerBatch: Sendable {
+        var key: LayerKey
         var id: Int
-        /// Every shape was drawn at `key.tolerance`. A part built while a refine was under
+        /// Every shape was drawn at `key.tolerance`. A layer built while a refine was under
         /// way may hold shapes at an older tolerance; it is rebuilt rather than reused, so
         /// it picks up the refined shapes once they are merged.
         var isExact: Bool
@@ -272,11 +272,11 @@ public struct ArtBuilder: Sendable {
         var steps: [ArtStep]
     }
 
-    /// Each part's last build, by part id.
-    private var partCache: [Int: PartBatch] = [:]
-    private var nextPartBatchID = 1
-    /// How many part batches have been built rather than reused, for tests.
-    private(set) var partBuilds = 0
+    /// Each layer's last build, by layer id.
+    private var layerCache: [Int: LayerBatch] = [:]
+    private var nextLayerBatchID = 1
+    /// How many layer batches have been built rather than reused, for tests.
+    private(set) var layerBuilds = 0
     /// How many shapes have a cached tessellation, for tests.
     var cachedShapeCount: Int { tessellations.count }
     /// Each shape's tessellation. Public so the renderer can refine a copy in the
@@ -287,15 +287,15 @@ public struct ArtBuilder: Sendable {
     private var reusesOtherTolerances = false
     /// How many shapes builds have tessellated, for tests.
     var tessellationCount = 0
-    /// Set while building a part when a shape used a tessellation at another tolerance.
+    /// Set while building a layer when a shape used a tessellation at another tolerance.
     private var usedOtherTolerance = false
     /// Builds the steps without writing any vertices (their ranges are empty), so
     /// `ScalingTests` can time the cache walk apart from the vertex appends.
     var skipsVertices = false
-    /// Concatenates every part's floats into `ArtBatch.vertices`. A renderer that uploads
+    /// Concatenates every layer's floats into `ArtBatch.vertices`. A renderer that uploads
     /// the segments one by one turns it off and skips the copy.
     public var concatenatesVertices = true
-    /// While building a part: the shapes to mark as moving, and whether the last mark was on.
+    /// While building a layer: the shapes to mark as moving, and whether the last mark was on.
     private var moving: Set<Int> = []
     private var isMoving = false
 
@@ -304,8 +304,8 @@ public struct ArtBuilder: Sendable {
 
     public init() {}
 
-    /// The isolated part draws on top of a veil over everything else; with an
-    /// `isolatedGroup` in it, only that group does, and the rest of the part stays under
+    /// The isolated layer draws on top of a veil over everything else; with an
+    /// `isolatedGroup` in it, only that group does, and the rest of the layer stays under
     /// the veil. With a `ghostFocus` (shape ids), every other shape draws at `ghostOpacity`.
     /// The shapes in `moving` are bracketed by `.moving` steps.
     ///
@@ -313,114 +313,114 @@ public struct ArtBuilder: Sendable {
     /// keeps that tessellation; only new and edited shapes are tessellated, at
     /// `tolerance`. The renderer builds that way while a background refine is under way.
     ///
-    /// With `leavingOutUncached`, a part with a shown shape that has no tessellation at
-    /// any tolerance is left out rather than tessellated, and counted in `partsLeftOut`.
+    /// With `leavingOutUncached`, a layer with a shown shape that has no tessellation at
+    /// any tolerance is left out rather than tessellated, and counted in `layersLeftOut`.
     /// The renderer's first builds after opening a document do this while a refine job
-    /// tessellates the drawing, the parts in view first, so the first frame shows
-    /// without waiting for every shape to be flattened. A whole part is left out, never
+    /// tessellates the drawing, the layers in view first, so the first frame shows
+    /// without waiting for every shape to be flattened. A whole layer is left out, never
     /// some of its shapes, so a clipped shape never paints without its base.
-    public mutating func build(_ drawing: Drawing, isolatedPart: Int?, isolatedGroup: Int? = nil, tolerance: Double,
+    public mutating func build(_ drawing: Drawing, isolatedLayer: Int?, isolatedGroup: Int? = nil, tolerance: Double,
                                ghostFocus: Set<Int>? = nil, moving: Set<Int> = [],
                                reusingOtherTolerances: Bool = false, leavingOutUncached: Bool = false) -> ArtBatch {
         var batch = ArtBatch()
         reusesOtherTolerances = reusingOtherTolerances
         defer { reusesOtherTolerances = false }
-        var parts = drawing.parts
-        if let isolatedPart {
-            parts = parts.filter { $0.id != isolatedPart } + parts.filter { $0.id == isolatedPart }
+        var layers = drawing.layers
+        if let isolatedLayer {
+            layers = layers.filter { $0.id != isolatedLayer } + layers.filter { $0.id == isolatedLayer }
         }
         var seen: Set<Int> = []
-        // The shapes of parts rebuilt or gone, and of the rebuilt parts as they are now:
+        // The shapes of layers rebuilt or gone, and of the rebuilt layers as they are now:
         // the difference has left the drawing, so its tessellations can go.
         var retired: Set<Int> = [], fresh: Set<Int> = []
-        for part in parts {
-            let slot = part.id
+        for layer in layers {
+            let slot = layer.id
             seen.insert(slot)
-            // Left out before its cache is looked at, so a part built earlier and edited
+            // Left out before its cache is looked at, so a layer built earlier and edited
             // since keeps its cache entry (and its shapes' tessellations) for when it is ready.
-            if leavingOutUncached, !isTessellated(part) {
-                batch.partsLeftOut += 1
+            if leavingOutUncached, !isTessellated(layer) {
+                batch.layersLeftOut += 1
                 continue
             }
-            let isolated = part.id == isolatedPart
-            let key = PartKey(shapes: part.shapes, groups: part.groups, isHidden: part.isHidden, tolerance: tolerance,
+            let isolated = layer.id == isolatedLayer
+            let key = LayerKey(shapes: layer.shapes, groups: layer.groups, isHidden: layer.isHidden, tolerance: tolerance,
                               isIsolated: isolated,
-                              isolatedGroup: isolated ? isolatedGroup.flatMap { part.group($0) == nil ? nil : $0 } : nil,
-                              ghostFocus: ghostFocus.map { Self.restrict($0, to: part) },
-                              moving: Self.restrict(moving, to: part))
-            if let cached = partCache[slot], cached.isExact, cached.key == key {
-                batch.append(cached, part: part.id, concatenating: concatenatesVertices)
+                              isolatedGroup: isolated ? isolatedGroup.flatMap { layer.group($0) == nil ? nil : $0 } : nil,
+                              ghostFocus: ghostFocus.map { Self.restrict($0, to: layer) },
+                              moving: Self.restrict(moving, to: layer))
+            if let cached = layerCache[slot], cached.isExact, cached.key == key {
+                batch.append(cached, layer: layer.id, concatenating: concatenatesVertices)
                 continue
             }
-            if let old = partCache[slot] { retired.formUnion(old.key.shapes.lazy.map(\.id)) }
-            fresh.formUnion(part.shapes.lazy.map(\.id))
-            let built = buildPart(part, key: key)
-            partCache[slot] = built
-            batch.append(built, part: part.id, concatenating: concatenatesVertices)
+            if let old = layerCache[slot] { retired.formUnion(old.key.shapes.lazy.map(\.id)) }
+            fresh.formUnion(layer.shapes.lazy.map(\.id))
+            let built = buildLayer(layer, key: key)
+            layerCache[slot] = built
+            batch.append(built, layer: layer.id, concatenating: concatenatesVertices)
         }
-        for slot in Array(partCache.keys) where !seen.contains(slot) {
-            if let old = partCache.removeValue(forKey: slot) { retired.formUnion(old.key.shapes.lazy.map(\.id)) }
+        for slot in Array(layerCache.keys) where !seen.contains(slot) {
+            if let old = layerCache.removeValue(forKey: slot) { retired.formUnion(old.key.shapes.lazy.map(\.id)) }
         }
         for id in retired where !fresh.contains(id) { tessellations.remove(id) }
         return batch
     }
 
-    /// True when every shown shape of `part` has a cached tessellation, at any tolerance.
-    private func isTessellated(_ part: Part) -> Bool {
-        part.shapes.indices.allSatisfy { !part.isShown($0) || tessellations.anyTessellation(of: part.shapes[$0]) != nil }
+    /// True when every shown shape of `layer` has a cached tessellation, at any tolerance.
+    private func isTessellated(_ layer: Layer) -> Bool {
+        layer.shapes.indices.allSatisfy { !layer.isShown($0) || tessellations.anyTessellation(of: layer.shapes[$0]) != nil }
     }
 
-    /// The ids in `set` that are shapes of `part`.
-    private static func restrict(_ set: Set<Int>, to part: Part) -> Set<Int> {
+    /// The ids in `set` that are shapes of `layer`.
+    private static func restrict(_ set: Set<Int>, to layer: Layer) -> Set<Int> {
         guard !set.isEmpty else { return [] }
         var result: Set<Int> = []
-        for shape in part.shapes where set.contains(shape.id) { result.insert(shape.id) }
+        for shape in layer.shapes where set.contains(shape.id) { result.insert(shape.id) }
         return result
     }
 
-    /// Draws one part from scratch (its shapes' tessellations still come from the cache).
-    private mutating func buildPart(_ part: Part, key: PartKey) -> PartBatch {
-        partBuilds += 1
+    /// Draws one layer from scratch (its shapes' tessellations still come from the cache).
+    private mutating func buildLayer(_ layer: Layer, key: LayerKey) -> LayerBatch {
+        layerBuilds += 1
         var batch = ArtBatch()
         moving = key.moving
         isMoving = false
         usedOtherTolerance = false
-        let all = Array(part.shapes.indices)
+        let all = Array(layer.shapes.indices)
         if let group = key.isolatedGroup {
-            let inGroup = all.filter { part.shapes[$0].group == group }
-            appendShapes(all.filter { part.shapes[$0].group != group }, of: part, skippingBases: Set(inGroup),
+            let inGroup = all.filter { layer.shapes[$0].group == group }
+            appendShapes(all.filter { layer.shapes[$0].group != group }, of: layer, skippingBases: Set(inGroup),
                          tolerance: key.tolerance, ghostFocus: key.ghostFocus, to: &batch)
             batch.steps.append(.veil)
-            appendShapes(inGroup, of: part, skippingBases: [], tolerance: key.tolerance, ghostFocus: key.ghostFocus,
+            appendShapes(inGroup, of: layer, skippingBases: [], tolerance: key.tolerance, ghostFocus: key.ghostFocus,
                          to: &batch)
         } else {
             if key.isIsolated { batch.steps.append(.veil) }
-            appendShapes(all, of: part, skippingBases: [], tolerance: key.tolerance, ghostFocus: key.ghostFocus,
+            appendShapes(all, of: layer, skippingBases: [], tolerance: key.tolerance, ghostFocus: key.ghostFocus,
                          to: &batch)
         }
         if isMoving { batch.steps.append(.moving(false)) }
         moving = []
         isMoving = false
-        defer { nextPartBatchID += 1 }
-        return PartBatch(key: key, id: nextPartBatchID, isExact: !usedOtherTolerance, vertices: batch.vertices,
+        defer { nextLayerBatchID += 1 }
+        return LayerBatch(key: key, id: nextLayerBatchID, isExact: !usedOtherTolerance, vertices: batch.vertices,
                          steps: batch.steps)
     }
 
-    /// Adds the shapes at `indices` of `part`, leaving out clipped shapes and clipped
+    /// Adds the shapes at `indices` of `layer`, leaving out clipped shapes and clipped
     /// groups whose base is in `skippingBases` (drawn in another pass, so there is nothing
     /// to clip to here). A clipped group whose base isn't in `indices` draws unclipped.
-    private mutating func appendShapes(_ indices: [Int], of part: Part, skippingBases: Set<Int>, tolerance: Double,
+    private mutating func appendShapes(_ indices: [Int], of layer: Layer, skippingBases: Set<Int>, tolerance: Double,
                                        ghostFocus: Set<Int>?, to batch: inout ArtBatch) {
         let drawn = Set(indices)
-        let clips = part.clipPlan()
+        let clips = layer.clipPlan()
         // The clipped group whose mask is up.
         var masking: Int?
         for index in indices {
-            let shape = part.shapes[index]
-            guard part.isShown(index) else { continue }
+            let shape = layer.shapes[index]
+            guard layer.isShown(index) else { continue }
             var mask = clips.groupBase(of: index)
             if let base = mask {
-                guard part.isShown(base), !skippingBases.contains(base) else { continue }
+                guard layer.isShown(base), !skippingBases.contains(base) else { continue }
                 if !drawn.contains(base) { mask = nil }
             }
             let group = mask == nil ? nil : shape.group
@@ -435,7 +435,7 @@ public struct ArtBuilder: Sendable {
             let role: ClipRole
             if let base = clips.base(of: index) {
                 // Nothing to clip to when the base is hidden.
-                guard part.isShown(base), !skippingBases.contains(base) else { continue }
+                guard layer.isShown(base), !skippingBases.contains(base) else { continue }
                 role = .clipped
             } else {
                 // A base whose clipped shapes draw in another pass needn't mark the clip.
@@ -443,7 +443,7 @@ public struct ArtBuilder: Sendable {
             }
             let geometry = tessellation(of: shape, tolerance: tolerance)
             let fade = ghostFocus.map { $0.contains(shape.id) ? 1 : Self.ghostOpacity } ?? 1
-            let clear = role == .base ? clipArea(of: index, in: part, clips: clips, drawn: drawn, tolerance: tolerance) : nil
+            let clear = role == .base ? clipArea(of: index, in: layer, clips: clips, drawn: drawn, tolerance: tolerance) : nil
             // A clipped shape in the group needs no mask: its base only drew inside it.
             append(shape, geometry, role: role, clipArea: clear, masked: mask != nil && role != .clipped, fade: fade,
                    to: &batch)
@@ -457,15 +457,15 @@ public struct ArtBuilder: Sendable {
     /// shapes never read the clip bit, so a stale bit elsewhere does no harm. Nil while
     /// a live transform moves the base or a shape it clips, since the rectangle would
     /// have to move with some of them and not others; the clear then covers the view.
-    private mutating func clipArea(of index: Int, in part: Part, clips: ClipPlan, drawn: Set<Int>,
+    private mutating func clipArea(of index: Int, in layer: Layer, clips: ClipPlan, drawn: Set<Int>,
                                    tolerance: Double) -> Rect? {
-        guard !moving.contains(part.shapes[index].id) else { return nil }
+        guard !moving.contains(layer.shapes[index].id) else { return nil }
         var area = Rect.null
         var j = index + 1
-        while j < part.shapes.count, clips.base(of: j) == index || clips.groupBase(of: j) == index {
+        while j < layer.shapes.count, clips.base(of: j) == index || clips.groupBase(of: j) == index {
             defer { j += 1 }
-            let shape = part.shapes[j]
-            guard part.isShown(j), drawn.contains(j) else { continue }
+            let shape = layer.shapes[j]
+            guard layer.isShown(j), drawn.contains(j) else { continue }
             if moving.contains(shape.id) { return nil }
             let geometry = tessellation(of: shape, tolerance: tolerance)
             if shape.visibleFill != nil, !geometry.fan.isEmpty { area = area.union(geometry.fanBounds) }
@@ -515,11 +515,11 @@ public struct ArtBuilder: Sendable {
         let scale = (t.a * t.a + t.b * t.b).squareRoot()
         let enlarges = scale > 1 + 1e-9
         var before: [Int: VectorShape] = [:]
-        for part in live.base.parts {
-            for shape in part.shapes where live.shapes.contains(shape.id) { before[shape.id] = shape }
+        for layer in live.base.layers {
+            for shape in layer.shapes where live.shapes.contains(shape.id) { before[shape.id] = shape }
         }
-        for part in drawing.parts {
-            for shape in part.shapes {
+        for layer in drawing.layers {
+            for shape in layer.shapes {
                 guard let old = before[shape.id], shape != old, let cached = tessellations.anyTessellation(of: old),
                       cached.carries < Self.maximumCarries else { continue }
                 var moved = old
@@ -552,7 +552,7 @@ public struct ArtBuilder: Sendable {
             let aligned = shape.path.closed && stroke.alignment != .center
             outline = Stroker.triangles(for: shape.path, style: stroke, widthScale: aligned ? 2 : 1, tolerance: tolerance)
         }
-        // Stored as floats, ready to copy: a part's rebuild then converts nothing.
+        // Stored as floats, ready to copy: a layer's rebuild then converts nothing.
         var outlineFloats: [Float] = []
         outlineFloats.reserveCapacity(outline.count * 2)
         for p in outline {
@@ -692,27 +692,27 @@ public struct ArtBuilder: Sendable {
 }
 
 extension ArtBatch {
-    /// Appends a part's batch as the next segment, moving its vertex ranges past the
-    /// vertices so far. A `moving(false)` ending the last part and a `moving(true)`
-    /// starting this one cancel out, as they would in one walk across both parts.
-    mutating func append(_ part: ArtBuilder.PartBatch, part id: Int, concatenating: Bool) {
+    /// Appends a layer's batch as the next segment, moving its vertex ranges past the
+    /// vertices so far. A `moving(false)` ending the last layer and a `moving(true)`
+    /// starting this one cancel out, as they would in one walk across both layers.
+    mutating func append(_ layer: ArtBuilder.LayerBatch, layer id: Int, concatenating: Bool) {
         let base = segments.last?.vertices.upperBound ?? 0
-        var partSteps = part.steps[...]
-        if case .moving(true)? = partSteps.first, case .moving(false)? = steps.last, let last = segments.indices.last {
+        var layerSteps = layer.steps[...]
+        if case .moving(true)? = layerSteps.first, case .moving(false)? = steps.last, let last = segments.indices.last {
             steps.removeLast()
             segments[last].steps = segments[last].steps.lowerBound..<(segments[last].steps.upperBound - 1)
-            partSteps = partSteps.dropFirst()
+            layerSteps = layerSteps.dropFirst()
         }
         let firstStep = steps.count
         if base == 0 {
-            steps.append(contentsOf: partSteps)
+            steps.append(contentsOf: layerSteps)
         } else {
-            steps.reserveAdditional(partSteps.count)
-            for step in partSteps { steps.append(step.offset(by: base)) }
+            steps.reserveAdditional(layerSteps.count)
+            for step in layerSteps { steps.append(step.offset(by: base)) }
         }
-        if concatenating { vertices.append(contentsOf: part.vertices) }
-        segments.append(ArtSegment(id: part.id, part: id, vertices: base..<(base + part.vertices.count / 2),
-                                   steps: firstStep..<steps.count, floats: part.vertices))
+        if concatenating { vertices.append(contentsOf: layer.vertices) }
+        segments.append(ArtSegment(id: layer.id, layer: id, vertices: base..<(base + layer.vertices.count / 2),
+                                   steps: firstStep..<steps.count, floats: layer.vertices))
     }
 
     mutating func add(_ points: [Float]) -> Range<Int> {

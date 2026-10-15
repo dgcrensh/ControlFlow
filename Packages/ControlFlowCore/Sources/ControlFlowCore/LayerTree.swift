@@ -4,13 +4,13 @@ import Foundation
 /// images. Layers are listed front to back (the reverse of draw order), like most
 /// drawing apps.
 public struct LayerTree: Hashable, Sendable {
-    public struct PartLayer: Hashable, Sendable, Identifiable {
+    public struct LayerItem: Hashable, Sendable, Identifiable {
         public var id: Int
         public var name: String
         public var shapeCount: Int
         public var isHidden: Bool
         public var isLocked: Bool
-        /// True when some shapes in the part are hidden or locked on their own.
+        /// True when some shapes in the layer are hidden or locked on their own.
         public var hasHiddenOrLockedShapes: Bool
         /// The layer's groups of shapes, front to back.
         public var groups: [GroupLayer] = []
@@ -20,7 +20,7 @@ public struct LayerTree: Hashable, Sendable {
     public struct GroupLayer: Hashable, Sendable, Identifiable {
         public var id: Int
         /// The layer the group is in.
-        public var part: Int
+        public var layer: Int
         public var name: String
         public var shapeCount: Int
         /// True when every shape of the group is hidden, or locked.
@@ -42,7 +42,7 @@ public struct LayerTree: Hashable, Sendable {
 
         public var kind: Kind
         /// The layer the row is, or (for groups) is in.
-        public var layer: PartLayer
+        public var layer: LayerItem
         public var group: GroupLayer?
         /// 0 for layers, 1 for groups.
         public var depth: Int
@@ -61,20 +61,20 @@ public struct LayerTree: Hashable, Sendable {
     /// The presentation's name, shown on the root row.
     public var name: String
     /// Every layer, front to back, each holding its groups.
-    public var parts: [PartLayer]
+    public var layers: [LayerItem]
     /// Top to bottom.
     public var references: [ReferenceImage]
 
     public init(drawing: Drawing) {
         name = drawing.name
-        parts = drawing.parts.reversed().map { part in
-            var layer = PartLayer(id: part.id, name: part.name, shapeCount: part.shapes.count, isHidden: part.isHidden,
-                                  isLocked: part.isLocked,
-                                  hasHiddenOrLockedShapes: part.shapes.contains { $0.isHidden || $0.isLocked })
-            layer.groups = part.groupRuns.reversed().map { run in
-                GroupLayer(id: run.group.id, part: part.id, name: run.group.name, shapeCount: run.indices.count,
-                           isHidden: run.indices.allSatisfy { part.shapes[$0].isHidden },
-                           isLocked: run.indices.allSatisfy { part.shapes[$0].isLocked },
+        layers = drawing.layers.reversed().map { source in
+            var layer = LayerItem(id: source.id, name: source.name, shapeCount: source.shapes.count, isHidden: source.isHidden,
+                                  isLocked: source.isLocked,
+                                  hasHiddenOrLockedShapes: source.shapes.contains { $0.isHidden || $0.isLocked })
+            layer.groups = source.groupRuns.reversed().map { run in
+                GroupLayer(id: run.group.id, layer: source.id, name: run.group.name, shapeCount: run.indices.count,
+                           isHidden: run.indices.allSatisfy { source.shapes[$0].isHidden },
+                           isLocked: run.indices.allSatisfy { source.shapes[$0].isLocked },
                            isClipped: run.group.isClipped, canClip: (run.indices.first ?? 0) > 0)
             }
             return layer
@@ -86,13 +86,13 @@ public struct LayerTree: Hashable, Sendable {
     /// open to their groups.
     public func treeRows(expanded: Set<String>) -> [Row] {
         var rows: [Row] = []
-        for part in parts {
-            var row = Row(kind: .layer, layer: part, depth: 0, canExpand: !part.groups.isEmpty, isExpanded: false)
+        for layer in layers {
+            var row = Row(kind: .layer, layer: layer, depth: 0, canExpand: !layer.groups.isEmpty, isExpanded: false)
             row.isExpanded = row.canExpand && expanded.contains(row.id)
             rows.append(row)
             guard row.isExpanded else { continue }
-            for group in part.groups {
-                rows.append(Row(kind: .group, layer: part, group: group, depth: 1, canExpand: false, isExpanded: false))
+            for group in layer.groups {
+                rows.append(Row(kind: .group, layer: layer, group: group, depth: 1, canExpand: false, isExpanded: false))
             }
         }
         return rows

@@ -35,11 +35,11 @@ private func editorDrawing() -> Drawing {
     e.style.outlineWidth = 5.5
     e.addStroke((0...20).map { Vec2(Double($0) * 7.3, sin(Double($0) / 3) * 20 + 140) }, zoom: 1)
     e.addToPalette(RGBAColor(hex: "#12345680")!)
-    e.selection = .layer(e.drawing.parts[0].id)
-    e.renamePart(e.drawing.parts[0].id, to: "Head \"big\" ✨")
+    e.selection = .layer(e.drawing.layers[0].id)
+    e.renameLayer(e.drawing.layers[0].id, to: "Head \"big\" ✨")
     e.renamePresentation("Tést")
     var d = e.drawing
-    d.parts[0].shapes[0].path.points[1].isSmooth = false
+    d.layers[0].shapes[0].path.points[1].isSmooth = false
     d.references.append(ReferenceImage(id: d.makeID(), name: "Ref", size: Vec2(640, 480), center: Vec2(12.5, -3),
                                        rotation: 0.3, scale: 0.25, opacity: 0.6, isHidden: true))
     return d
@@ -103,13 +103,13 @@ final class CharacterFormatTests: XCTestCase {
         let package = try CharacterPackage(files: exampleFiles("robo.charstudio"))
         let d = package.drawing
         XCTAssertEqual(d.name, "Robo")
-        XCTAssertEqual(d.parts.map(\.name), ["Torso", "Head", "Antenna"])
-        XCTAssertEqual(d.parts.map(\.shapes.count), [4, 4, 2])
-        XCTAssertEqual(d.parts[0].pivot, Vec2(0, -40))
+        XCTAssertEqual(d.layers.map(\.name), ["Torso", "Head", "Antenna"])
+        XCTAssertEqual(d.layers.map(\.shapes.count), [4, 4, 2])
+        XCTAssertEqual(d.layers[0].pivot, Vec2(0, -40))
         XCTAssertEqual(d.palette, [RGBAColor(hex: "#FFFFFF80")!])
         XCTAssertEqual(d.globalColors.map(\.name), ["Skin", "Body", "Ink"])
         let ink = d.globalColors[2].id
-        let torso = d.parts[0].shapes[0]
+        let torso = d.layers[0].shapes[0]
         XCTAssertTrue(torso.path.closed)
         XCTAssertEqual(torso.fill?.hexString, "#5A8DEEFF")
         XCTAssertEqual(torso.fillGlobal, d.globalColors[1].id)
@@ -121,41 +121,41 @@ final class CharacterFormatTests: XCTestCase {
         XCTAssertEqual(torso.path.points.map(\.stroked), [false, true, true, true, true])
         XCTAssertTrue(torso.path.points[2].isSmooth)
         XCTAssertEqual(torso.path.points[2].outHandle, Vec2(-8, 14))
-        XCTAssertTrue(d.parts[0].shapes[1].isClipped)
-        XCTAssertEqual(d.parts[0].clipBase(of: 1), 0)
+        XCTAssertTrue(d.layers[0].shapes[1].isClipped)
+        XCTAssertEqual(d.layers[0].clipBase(of: 1), 0)
         // The body and its shadow are a group.
-        XCTAssertEqual(d.parts[0].groups.map(\.name), ["Shell"])
-        XCTAssertEqual(d.parts[0].members(ofGroup: d.parts[0].groups[0].id), [0, 1])
+        XCTAssertEqual(d.layers[0].groups.map(\.name), ["Shell"])
+        XCTAssertEqual(d.layers[0].members(ofGroup: d.layers[0].groups[0].id), [0, 1])
         // The visor is a group clipped to the head, with a glint clipped to the visor inside it.
-        let head = d.parts[1]
+        let head = d.layers[1]
         XCTAssertEqual(head.groups.map(\.name), ["Visor"])
         XCTAssertTrue(head.groups[0].isClipped)
         XCTAssertEqual(head.clipBase(ofGroup: head.groups[0].id), 0)
         XCTAssertEqual(head.clipBase(of: 2), 1)
-        XCTAssertNil(d.parts[0].shapes[2].stroke)
-        XCTAssertEqual(d.parts[0].shapes[2].opacity, 0.8)
-        let seam = d.parts[0].shapes[3].stroke
+        XCTAssertNil(d.layers[0].shapes[2].stroke)
+        XCTAssertEqual(d.layers[0].shapes[2].opacity, 0.8)
+        let seam = d.layers[0].shapes[3].stroke
         XCTAssertEqual(seam?.cap, .butt)
         XCTAssertEqual(seam?.dash, [4, 3])
-        XCTAssertEqual(d.parts[1].shapes[0].stroke?.alignment, .inside)
-        let mouth = d.parts[1].shapes[3]
+        XCTAssertEqual(d.layers[1].shapes[0].stroke?.alignment, .inside)
+        let mouth = d.layers[1].shapes[3]
         XCTAssertFalse(mouth.path.closed)
         XCTAssertNil(mouth.fill)
         XCTAssertEqual(mouth.path.points.map(\.width), [0.3, 1.4, 0.3])
         // The antenna is its own layer in front of the head, and the stalk keeps its place.
-        XCTAssertTrue(d.parts[2].shapes[1].path.points[0].position.isApproximately(Vec2(0, -180), tolerance: 1e-9))
+        XCTAssertTrue(d.layers[2].shapes[1].path.points[0].position.isApproximately(Vec2(0, -180), tolerance: 1e-9))
         // The head's art is stored in the neck bone's space and read back into world space.
-        XCTAssertTrue(d.parts[1].pivot.isApproximately(Vec2(0, -110), tolerance: 1e-9))
-        XCTAssertTrue(d.parts[1].shapes[0].path.points[0].position.isApproximately(Vec2(0, -150), tolerance: 1e-9))
+        XCTAssertTrue(d.layers[1].pivot.isApproximately(Vec2(0, -110), tolerance: 1e-9))
+        XCTAssertTrue(d.layers[1].shapes[0].path.points[0].position.isApproximately(Vec2(0, -150), tolerance: 1e-9))
         XCTAssertEqual(d.references.count, 1)
         XCTAssertEqual(d.references[0].rotation, .pi / 2, accuracy: 1e-12)
         XCTAssertEqual(d.references[0].opacity, 0.35)
         XCTAssertEqual(d.viewport, Viewport())
         XCTAssertEqual(package.referenceImages[d.references[0].id]?.count, try exampleFiles("robo.charstudio")["references/reference-1.png"]?.count)
         // Every id is distinct.
-        var ids: [Int] = d.parts.map(\.id) + d.parts.flatMap { $0.shapes.map(\.id) } + d.references.map(\.id) +
+        var ids: [Int] = d.layers.map(\.id) + d.layers.flatMap { $0.shapes.map(\.id) } + d.references.map(\.id) +
             d.globalColors.map(\.id)
-        ids += d.parts.flatMap { $0.groups.map(\.id) }
+        ids += d.layers.flatMap { $0.groups.map(\.id) }
         XCTAssertEqual(Set(ids).count, ids.count)
         XCTAssertGreaterThan(d.nextID, ids.max()!)
     }
@@ -185,12 +185,12 @@ final class CharacterFormatTests: XCTestCase {
         let reopened = try CharacterPackage(files: files)
         let d = reopened.drawing
         XCTAssertEqual(d.name, "Tést")
-        XCTAssertEqual(d.parts.map(\.name), drawing.parts.map(\.name))
+        XCTAssertEqual(d.layers.map(\.name), drawing.layers.map(\.name))
         XCTAssertEqual(d.palette, drawing.palette)
         XCTAssertEqual(reopened.referenceImages.values.first, image)
         XCTAssertTrue(d.references[0].isHidden)
         XCTAssertEqual(d.references[0].rotation, 0.3, accuracy: 1e-4)
-        for (a, b) in zip(d.parts, drawing.parts) {
+        for (a, b) in zip(d.layers, drawing.layers) {
             XCTAssertTrue(a.pivot.isApproximately(b.pivot, tolerance: 1e-4))
             for (s, t) in zip(a.shapes, b.shapes) {
                 XCTAssertEqual(s.fill, t.fill)
@@ -208,7 +208,7 @@ final class CharacterFormatTests: XCTestCase {
         XCTAssertEqual(reopened.files(thumbnail: Data([7])), files)
     }
 
-    func testDrawOrderDecidesPartOrder() throws {
+    func testDrawOrderDecidesLayerOrder() throws {
         let file = try json("""
         {
           "formatVersion": "0.1.0",
@@ -228,15 +228,15 @@ final class CharacterFormatTests: XCTestCase {
         }
         """)
         let d = try CharacterFormat.decode(file).drawing
-        XCTAssertEqual(d.parts.map(\.name), ["c", "a", "b"])
+        XCTAssertEqual(d.layers.map(\.name), ["c", "a", "b"])
         XCTAssertEqual(d.name, "Untitled")
     }
 
-    func testDuplicatePartNamesBecomeUniqueSlots() {
+    func testDuplicateLayerNamesBecomeUniqueSlots() {
         var d = Drawing()
-        for _ in 0..<3 { d.parts.append(Part(id: d.makeID(), name: "Arm")) }
-        d.parts.append(Part(id: d.makeID(), name: "  "))
-        XCTAssertEqual(CharacterFormat.slotNames(for: d.parts), ["Arm", "Arm 2", "Arm 3", "Part"])
+        for _ in 0..<3 { d.layers.append(Layer(id: d.makeID(), name: "Arm")) }
+        d.layers.append(Layer(id: d.makeID(), name: "  "))
+        XCTAssertEqual(CharacterFormat.slotNames(for: d.layers), ["Arm", "Arm 2", "Arm 3", "Layer"])
     }
 
     func testVersionChecks() throws {
@@ -279,10 +279,10 @@ final class CharacterFormatTests: XCTestCase {
     /// Values are read without building a node when they have the right type; a wrong type must still
     /// throw the error the node would have, with its path.
     func testWrongValueTypesAreReportedWithTheirPath() throws {
-        func error(part: String = "", _ shape: String) throws -> CharacterFileError? {
+        func error(layer: String = "", _ shape: String) throws -> CharacterFileError? {
             let file = try json("""
             { "formatVersion": "0.2.0", "slots": [{ "id": "A", "bone": "root", "attachment": "A" }],
-              "skins": { "default": { "A": { "A": { "type": "vector", \(part) "shapes": [\(shape)] } } } } }
+              "skins": { "default": { "A": { "A": { "type": "vector", \(layer) "shapes": [\(shape)] } } } } }
             """)
             do {
                 _ = try CharacterFormat.decode(file)
@@ -301,7 +301,7 @@ final class CharacterFormatTests: XCTestCase {
         XCTAssertEqual(try error(point(#""p": [1e999, 0]"#)), .invalid(path: p + ".p[0]", problem: "is not a number"))
         XCTAssertEqual(try error(point(#""p": [0, 0], "in": [0]"#)), .invalid(path: p + ".in", problem: "is not an [x, y] pair"))
         XCTAssertEqual(try error(point(#""in": [0, 0]"#)), .invalid(path: p + ".p", problem: "is missing"))
-        XCTAssertEqual(try error(part: #""pivot": true,"#, ""), .invalid(path: "skins.default.A.A.pivot", problem: "is not an array"))
+        XCTAssertEqual(try error(layer: #""pivot": true,"#, ""), .invalid(path: "skins.default.A.A.pivot", problem: "is not an array"))
         // Numbers, booleans, strings and colors.
         XCTAssertEqual(try error(point(#""p": [0, 0], "w": "2""#)), .invalid(path: p + ".w", problem: "is not a number"))
         XCTAssertEqual(try error(point(#""p": [0, 0], "smooth": 1"#)), .invalid(path: p + ".smooth", problem: "is not true or false"))
@@ -357,12 +357,12 @@ final class CharacterFormatTests: XCTestCase {
 final class LayerTests: XCTestCase {
     func testLayerTreeListsLayersFrontToBack() {
         var d = Drawing()
-        d.parts = [Part(id: 1, name: "Back"), Part(id: 2, name: "Front", shapes: [VectorShape(id: 3, path: BezierPath())])]
+        d.layers = [Layer(id: 1, name: "Back"), Layer(id: 2, name: "Front", shapes: [VectorShape(id: 3, path: BezierPath())])]
         d.references = [ReferenceImage(id: 4, name: "Under", size: Vec2(1, 1), center: .zero),
                         ReferenceImage(id: 5, name: "Over", size: Vec2(1, 1), center: .zero)]
         let tree = LayerTree(drawing: d)
-        XCTAssertEqual(tree.parts.map(\.name), ["Front", "Back"])
-        XCTAssertEqual(tree.parts[0].shapeCount, 1)
+        XCTAssertEqual(tree.layers.map(\.name), ["Front", "Back"])
+        XCTAssertEqual(tree.layers[0].shapeCount, 1)
         XCTAssertEqual(tree.references.map(\.name), ["Over", "Under"])
     }
 
@@ -370,34 +370,34 @@ final class LayerTests: XCTestCase {
         var e = DrawingEditor()
         e.addStroke(ring(center: Vec2(0, 0), radius: 30), zoom: 1)
         e.addStroke(ring(center: Vec2(300, 0), radius: 30), zoom: 1)
-        let (a, b) = (e.drawing.parts[0].id, e.drawing.parts[1].id)
-        XCTAssertEqual(e.drawing.parts.map(\.name), ["Part 1", "Part 2"])
-        e.renamePart(b, to: "  Part 1 ")
-        XCTAssertEqual(e.drawing.parts[1].name, "Part 1 2")
-        e.renamePart(a, to: "   ")
-        XCTAssertEqual(e.drawing.parts[0].name, "Part 1")
+        let (a, b) = (e.drawing.layers[0].id, e.drawing.layers[1].id)
+        XCTAssertEqual(e.drawing.layers.map(\.name), ["Layer 1", "Layer 2"])
+        e.renameLayer(b, to: "  Layer 1 ")
+        XCTAssertEqual(e.drawing.layers[1].name, "Layer 1 2")
+        e.renameLayer(a, to: "   ")
+        XCTAssertEqual(e.drawing.layers[0].name, "Layer 1")
         e.undo()
-        XCTAssertEqual(e.drawing.parts[1].name, "Part 2")
-        // A new part never reuses a taken name.
-        e.renamePart(a, to: "Part 3")
+        XCTAssertEqual(e.drawing.layers[1].name, "Layer 2")
+        // A new layer never reuses a taken name.
+        e.renameLayer(a, to: "Layer 3")
         e.selection = .none
         e.addStroke(ring(center: Vec2(600, 0), radius: 30), zoom: 1)
-        XCTAssertEqual(e.drawing.parts.map(\.name), ["Part 3", "Part 2", "Part 3 2"])
+        XCTAssertEqual(e.drawing.layers.map(\.name), ["Layer 3", "Layer 2", "Layer 3 2"])
     }
 
     func testSelectDeleteAndRenamePresentation() {
         var e = DrawingEditor()
         e.addStroke(ring(center: Vec2(0, 0), radius: 30), zoom: 1)
-        let id = e.drawing.parts[0].id
-        e.selectPart(id)
+        let id = e.drawing.layers[0].id
+        e.selectLayer(id)
         XCTAssertEqual(e.selection, .layer(id))
         e.renamePresentation("Robo")
         XCTAssertEqual(e.drawing.name, "Robo")
-        e.deletePart(id)
-        XCTAssertTrue(e.drawing.parts.isEmpty)
+        e.deleteLayer(id)
+        XCTAssertTrue(e.drawing.layers.isEmpty)
         XCTAssertEqual(e.selection, .none)
         e.undo()
-        XCTAssertEqual(e.drawing.parts.count, 1)
+        XCTAssertEqual(e.drawing.layers.count, 1)
         e.undo()
         XCTAssertEqual(e.drawing.name, "Untitled")
     }
@@ -414,7 +414,7 @@ final class LayerTests: XCTestCase {
         var e = DrawingEditor(drawing: editorDrawing())
         XCTAssertFalse(e.canUndo)
         let original = e.drawing
-        e.selection = .layer(original.parts[0].id)
+        e.selection = .layer(original.layers[0].id)
         e.replaceDrawing(Drawing())
         XCTAssertEqual(e.selection, .none)
         e.undo()

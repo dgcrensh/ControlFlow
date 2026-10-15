@@ -18,7 +18,7 @@ final class CanvasSessionTests: XCTestCase {
 
         XCTAssertNil(s.liveStroke)
         XCTAssertEqual(s.editor.drawing.shapeCount, 1)
-        let path = try! XCTUnwrap(s.editor.drawing.parts.first?.shapes.first?.path)
+        let path = try! XCTUnwrap(s.editor.drawing.layers.first?.shapes.first?.path)
         XCTAssertFalse(path.closed)
         XCTAssertTrue(path.points.first!.position.isApproximately(Vec2(0, 0), tolerance: 1e-6))
         XCTAssertTrue(path.points.last!.position.isApproximately(Vec2(40, 0), tolerance: 1e-6))
@@ -179,7 +179,7 @@ final class CanvasSessionTests: XCTestCase {
         s.camera = CanvasCamera(worldToScreen: .scale(2))
         s.touchBegan(id: 1, kind: .pencil, location: Vec2(100, 100))
         s.touchEnded(id: 1)
-        XCTAssertEqual(s.editor.drawing.parts[0].shapes[0].path.points.map(\.position), [Vec2(50, 50)])
+        XCTAssertEqual(s.editor.drawing.layers[0].shapes[0].path.points.map(\.position), [Vec2(50, 50)])
     }
 
     func testFingerDrawingInSimulatorTurnsIntoNavigation() {
@@ -276,25 +276,25 @@ final class CanvasSessionTests: XCTestCase {
         }
         s.touchMoved(id: 1, samples: samples)
         s.touchEnded(id: 1, location: samples.last!)
-        let shape = try! XCTUnwrap(s.editor.drawing.parts.first?.shapes.first)
+        let shape = try! XCTUnwrap(s.editor.drawing.layers.first?.shapes.first)
         XCTAssertTrue(shape.path.closed)
         XCTAssertNotNil(shape.fill)
         XCTAssertNotNil(shape.stroke)
     }
 
-    func testSelectToolDragsAPart() {
+    func testSelectToolDragsALayer() {
         var s = session()
         drawLine(&s, id: 1, from: Vec2(100, 100), to: Vec2(300, 100))
         s.editor.tool = .select
         s.touchBegan(id: 2, kind: .pencil, location: Vec2(200, 100))
         s.touchMoved(id: 2, samples: [Vec2(200, 150), Vec2(200, 200)])
         s.touchEnded(id: 2, location: Vec2(200, 200))
-        let part = s.editor.drawing.parts[0]
-        XCTAssertEqual(s.editor.selection, .layer(part.id))
-        let first = part.shapes[0].path.points[0].position
+        let layer = s.editor.drawing.layers[0]
+        XCTAssertEqual(s.editor.selection, .layer(layer.id))
+        let first = layer.shapes[0].path.points[0].position
         XCTAssertTrue(s.camera.toScreen(first).isApproximately(Vec2(100, 200), tolerance: 1e-6))
         s.undo()
-        let restored = s.editor.drawing.parts[0].shapes[0].path.points[0].position
+        let restored = s.editor.drawing.layers[0].shapes[0].path.points[0].position
         XCTAssertTrue(s.camera.toScreen(restored).isApproximately(Vec2(100, 100), tolerance: 1e-6))
     }
 

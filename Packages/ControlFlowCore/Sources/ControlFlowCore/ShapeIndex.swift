@@ -6,7 +6,7 @@ import Foundation
 ///
 /// It answers exactly what the scans in `Drawing.hitTest` and `DrawingEditor` answer: the
 /// grid only narrows the candidates (conservatively), and every candidate then goes
-/// through the same tests as before. Entries are kept in `parts` order (the scans'
+/// through the same tests as before. Entries are kept in `layers` order (the scans'
 /// order, which decides ties), and each carries its place in the draw order for hit tests.
 /// It holds copies of the shapes, not indices into the drawing, so it stays usable for
 /// geometry queries after shapes are removed (see `removing`).
@@ -25,7 +25,7 @@ struct ShapeIndex: Sendable {
         var clip: Clip
     }
 
-    /// What `Part.shape(_:contains:tolerance:)` checks after the shape itself: the shapes
+    /// What `Layer.shape(_:contains:tolerance:)` checks after the shape itself: the shapes
     /// it is clipped to must contain the point too.
     enum Clip: Sendable {
         case none
@@ -46,44 +46,44 @@ struct ShapeIndex: Sendable {
 
     init(_ drawing: Drawing, revision: Int) {
         self.revision = revision
-        // Each shape's place in the draw stack and its clip bases, by its index in `parts`.
-        var partIndex: [Int: Int] = [:]
-        for (i, part) in drawing.parts.enumerated() where partIndex[part.id] == nil { partIndex[part.id] = i }
-        var ranks = drawing.parts.map { [Int](repeating: -1, count: $0.shapes.count) }
-        var clips = drawing.parts.map { [Clip](repeating: .none, count: $0.shapes.count) }
+        // Each shape's place in the draw stack and its clip bases, by its index in `layers`.
+        var layerIndex: [Int: Int] = [:]
+        for (i, layer) in drawing.layers.enumerated() where layerIndex[layer.id] == nil { layerIndex[layer.id] = i }
+        var ranks = drawing.layers.map { [Int](repeating: -1, count: $0.shapes.count) }
+        var clips = drawing.layers.map { [Clip](repeating: .none, count: $0.shapes.count) }
         var rank = 0
-        for stackPart in drawing.parts {
-            guard let p = partIndex[stackPart.id] else { rank += stackPart.shapes.count; continue }
-            let original = drawing.parts[p]
+        for stackLayer in drawing.layers {
+            guard let p = layerIndex[stackLayer.id] else { rank += stackLayer.shapes.count; continue }
+            let original = drawing.layers[p]
             let map = Array(original.shapes.indices)
             var groupBases: [Int: Int?] = [:]
-            for (j, shape) in stackPart.shapes.enumerated() {
+            for (j, shape) in stackLayer.shapes.enumerated() {
                 defer { rank += 1 }
                 guard j < map.count else { continue }
                 let s = map[j]
                 ranks[p][s] = rank
-                guard stackPart.isEditable(j) else { continue }
+                guard stackLayer.isEditable(j) else { continue }
                 var bases: [Int] = []
-                if let base = stackPart.clipBase(of: j) { bases.append(base) }
+                if let base = stackLayer.clipBase(of: j) { bases.append(base) }
                 if let group = shape.group {
-                    if groupBases[group] == nil { groupBases[group] = .some(stackPart.clipBase(ofGroup: group)) }
+                    if groupBases[group] == nil { groupBases[group] = .some(stackLayer.clipBase(ofGroup: group)) }
                     if let base = groupBases[group] ?? nil { bases.append(base) }
                 }
                 if bases.isEmpty {
                     clips[p][s] = .none
-                } else if bases.contains(where: { !stackPart.isShown($0) }) {
+                } else if bases.contains(where: { !stackLayer.isShown($0) }) {
                     clips[p][s] = .never
                 } else {
-                    clips[p][s] = .inside(bases.map { stackPart.shapes[$0] })
+                    clips[p][s] = .inside(bases.map { stackLayer.shapes[$0] })
                 }
             }
         }
         var entries: [Entry] = []
         var gridBounds: [Rect] = []
-        for (p, part) in drawing.parts.enumerated() {
-            for (s, shape) in part.shapes.enumerated() where part.isEditable(s) {
+        for (p, layer) in drawing.layers.enumerated() {
+            for (s, shape) in layer.shapes.enumerated() where layer.isEditable(s) {
                 let control = shape.path.controlBounds
-                entries.append(Entry(ref: ShapeRef(part: part.id, shape: shape.id), group: shape.group, shape: shape,
+                entries.append(Entry(ref: ShapeRef(layer: layer.id, shape: shape.id), group: shape.group, shape: shape,
                                      controlBounds: control, hitBounds: shape.hitBounds, drawRank: ranks[p][s],
                                      clip: clips[p][s]))
                 // Covers the hit bounds and the scissors' reach (half the outline width).
@@ -95,10 +95,10 @@ struct ShapeIndex: Sendable {
     }
 
     /// The entries whose bounds may meet `rect` (a superset of those that do), alive and
-    /// passing the isolation filters, in `parts` order.
+    /// passing the isolation filters, in `layers` order.
     func candidates(meeting rect: Rect, within: Int?, group: Int?) -> [Int] {
         grid.candidates(meeting: rect).filter { i in
-            !removed.contains(i) && (within == nil || entries[i].ref.part == within) &&
+            !removed.contains(i) && (within == nil || entries[i].ref.layer == within) &&
                 (group == nil || entries[i].group == group)
         }
     }
