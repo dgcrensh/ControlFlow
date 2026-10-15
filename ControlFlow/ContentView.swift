@@ -315,12 +315,28 @@ private struct EditMenu: View {
 
             Divider()
             Menu("Arrange", systemImage: "square.3.layers.3d.top.filled") {
-                Button("Bring to Front", systemImage: "square.3.layers.3d.top.filled") { store.arrange(.bringToFront) }
-                Button("Bring Forward", systemImage: "square.2.layers.3d.top.filled") { store.arrange(.bringForward) }
-                Button("Send Backward", systemImage: "square.2.layers.3d.bottom.filled") { store.arrange(.sendBackward) }
-                Button("Send to Back", systemImage: "square.3.layers.3d.bottom.filled") { store.arrange(.sendToBack) }
+                Group {
+                    Button("Bring to Front", systemImage: "square.3.layers.3d.top.filled") { store.arrange(.bringToFront) }
+                    Button("Bring Forward", systemImage: "square.2.layers.3d.top.filled") { store.arrange(.bringForward) }
+                    Button("Send Backward", systemImage: "square.2.layers.3d.bottom.filled") { store.arrange(.sendBackward) }
+                    Button("Send to Back", systemImage: "square.3.layers.3d.bottom.filled") { store.arrange(.sendToBack) }
+                }
+                .disabled(!ui.canArrange)
+                Divider()
+                Menu("Align", systemImage: "align.horizontal.left") {
+                    ForEach(AlignControls.edges, id: \.title) { item in
+                        Button(item.title, systemImage: item.icon) { store.align(item.edge) }
+                    }
+                }
+                .disabled(!ui.canAlign)
+                Menu("Distribute", systemImage: "distribute.horizontal.center") {
+                    ForEach(AlignControls.modes, id: \.title) { item in
+                        Button(item.title, systemImage: item.icon) { store.distribute(item.mode) }
+                    }
+                }
+                .disabled(!ui.canDistribute)
             }
-            .disabled(!ui.canArrange)
+            .disabled(!ui.canArrange && !ui.canAlign)
             Button("Group", systemImage: "square.on.square.squareshape.controlhandles") { store.groupSelection() }
                 .disabled(!ui.canGroup)
             if ui.canUngroup {
@@ -512,10 +528,12 @@ private struct ContextBar: View {
             }
 
             if ui.tool == .directSelect, ui.anchorCount > 0 { pointControls }
+            if ui.tool == .directSelect, ui.anchorCount >= 2 { AlignControls(store: store, ui: ui, anchorsOnly: true) }
             if ui.canJoin, ui.tool == .select || ui.tool == .directSelect {
                 Button("Join", systemImage: "link") { store.joinPaths() }
             }
             if ui.tool == .select, ui.canTransform { flipControls }
+            if ui.tool == .select, ui.canAlign { AlignControls(store: store, ui: ui, anchorsOnly: false) }
             if (ui.tool == .directSelect && ui.anchorCount > 0) || (ui.tool == .select && ui.canTransform) {
                 nudgeControls
             }
@@ -653,6 +671,8 @@ private struct ContextBar: View {
             Button("Flip Vertical", systemImage: "arrow.up.and.down.righttriangle.up.righttriangle.down") {
                 store.flip(horizontal: false)
             }
+            Button("Rotate Left", systemImage: "rotate.left") { store.rotateSelection(degrees: -90) }
+            Button("Rotate Right", systemImage: "rotate.right") { store.rotateSelection(degrees: 90) }
             Button("Apply Transform", systemImage: "checkmark.rectangle") { store.applyTransform() }
                 .disabled(!ui.canApplyTransform)
         }
@@ -669,6 +689,96 @@ private struct ContextBar: View {
             Button("Nudge Right", systemImage: "arrow.right") { store.nudge(1, 0) }
         }
         .labelStyle(.iconOnly)
+    }
+}
+
+/// The Arrange button and its popover: Align (with what to align to), Distribute and
+/// draw order. For selected anchors in Direct Select, only Align and Distribute.
+private struct AlignControls: View {
+    let store: CanvasStore
+    let ui: EditorUIState
+    let anchorsOnly: Bool
+    @State private var showing = false
+
+    struct EdgeItem: Sendable { let title: String, icon: String, edge: AlignEdge }
+    struct ModeItem: Sendable { let title: String, icon: String, mode: DistributeMode }
+
+    static let edges: [EdgeItem] = [
+        EdgeItem(title: "Align Left", icon: "align.horizontal.left", edge: .left),
+        EdgeItem(title: "Align Horizontal Centers", icon: "align.horizontal.center", edge: .centerX),
+        EdgeItem(title: "Align Right", icon: "align.horizontal.right", edge: .right),
+        EdgeItem(title: "Align Top", icon: "align.vertical.top", edge: .top),
+        EdgeItem(title: "Align Vertical Centers", icon: "align.vertical.center", edge: .centerY),
+        EdgeItem(title: "Align Bottom", icon: "align.vertical.bottom", edge: .bottom),
+    ]
+
+    static let modes: [ModeItem] = [
+        ModeItem(title: "Horizontal Spacing", icon: "distribute.horizontal.center", mode: .spacingX),
+        ModeItem(title: "Vertical Spacing", icon: "distribute.vertical.center", mode: .spacingY),
+        ModeItem(title: "Horizontal Centers", icon: "distribute.horizontal.center.fill", mode: .centersX),
+        ModeItem(title: "Vertical Centers", icon: "distribute.vertical.center.fill", mode: .centersY),
+    ]
+
+    var body: some View {
+        Divider().frame(height: 24)
+        Button(anchorsOnly ? "Align Points" : "Arrange", systemImage: "align.horizontal.left") { showing = true }
+            .labelStyle(.iconOnly)
+            .popover(isPresented: $showing) { panel }
+    }
+
+    private var panel: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Align").font(.headline)
+            HStack(spacing: 16) {
+                ForEach(Self.edges, id: \.title) { item in
+                    Button(item.title, systemImage: item.icon) { store.align(item.edge) }
+                }
+            }
+            .labelStyle(.iconOnly)
+            if !anchorsOnly {
+                Picker("Align To", selection: Binding(
+                    get: { ui.alignsToViewportOnly ? .viewport : ui.alignTarget },
+                    set: { store.setAlignTarget($0) }
+                )) {
+                    Text("Selection").tag(AlignTarget.selection)
+                    Text("Viewport").tag(AlignTarget.viewport)
+                }
+                .pickerStyle(.segmented)
+                .disabled(ui.alignsToViewportOnly)
+            }
+
+            Divider()
+            Text("Distribute").font(.headline)
+            HStack(spacing: 16) {
+                ForEach(Self.modes.prefix(2), id: \.title) { item in
+                    Button(item.title, systemImage: item.icon) { store.distribute(item.mode) }
+                }
+                Menu {
+                    ForEach(Self.modes.suffix(2), id: \.title) { item in
+                        Button(item.title, systemImage: item.icon) { store.distribute(item.mode) }
+                    }
+                } label: {
+                    Label("More", systemImage: "ellipsis.circle")
+                }
+            }
+            .labelStyle(.iconOnly)
+            .disabled(!ui.canDistribute)
+
+            if !anchorsOnly {
+                Divider()
+                Text("Order").font(.headline)
+                HStack(spacing: 16) {
+                    Button("Bring to Front", systemImage: "square.3.layers.3d.top.filled") { store.arrange(.bringToFront) }
+                    Button("Bring Forward", systemImage: "square.2.layers.3d.top.filled") { store.arrange(.bringForward) }
+                    Button("Send Backward", systemImage: "square.2.layers.3d.bottom.filled") { store.arrange(.sendBackward) }
+                    Button("Send to Back", systemImage: "square.3.layers.3d.bottom.filled") { store.arrange(.sendToBack) }
+                }
+                .labelStyle(.iconOnly)
+                .disabled(!ui.canArrange)
+            }
+        }
+        .padding(20)
+        .frame(minWidth: 300)
     }
 }
 

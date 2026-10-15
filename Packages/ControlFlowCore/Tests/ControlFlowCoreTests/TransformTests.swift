@@ -55,6 +55,14 @@ private func turn(_ degrees: Double, about c: Vec2) -> Affine2D {
 final class ObjectTransformTests: XCTestCase {
     // MARK: The transform itself
 
+    func testANudgeOfTenMovesByTen() {
+        var e = editor([square(0, 0)])
+        e.selection = .layer(e.drawing.layers[0].id)
+        e.nudge(by: Vec2(10, 0))
+        e.nudge(by: Vec2(0, -10))
+        assertClose(world(e, 0, 0)[0], Vec2(10, -10))
+    }
+
     func testMatrixTurnsAndScalesAboutThePivotThenMoves() {
         let t = Transform(position: Vec2(10, 0), rotation: 90, scale: Vec2(2, 1), pivot: Vec2(100, 100))
         assertClose(t.matrix.apply(Vec2(100, 100)), Vec2(110, 100), "the pivot only moves by position")

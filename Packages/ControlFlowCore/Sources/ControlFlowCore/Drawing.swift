@@ -557,6 +557,12 @@ public struct Layer: Hashable, Sendable, Codable, Identifiable {
         shapes.indices.filter { shapes[$0].group == id }
     }
 
+    /// True when `indices` (shape indices in this layer) hold every shape of group `id`.
+    public func isWhole(group id: Int, in indices: Set<Int>) -> Bool {
+        let members = members(ofGroup: id)
+        return !members.isEmpty && members.allSatisfy(indices.contains)
+    }
+
     /// The groups in stacking order (by their bottom shape), each with its shape indices.
     public var groupRuns: [(group: ShapeGroup, indices: [Int])] {
         var seen: [Int] = []
@@ -937,8 +943,8 @@ public struct Drawing: Hashable, Sendable, Codable {
         let indices = shapeIndices(in: selection)
         guard let first = indices.first, let id = layers[first.0].shapes[first.1].group,
               let group = layers[first.0].group(id) else { return nil }
-        let members = layers[first.0].members(ofGroup: id)
-        guard indices.allSatisfy({ $0.0 == first.0 }), Set(indices.map(\.1)) == Set(members) else { return nil }
+        guard indices.allSatisfy({ $0.0 == first.0 }), layers[first.0].isWhole(group: id, in: Set(indices.map(\.1))),
+              indices.allSatisfy({ layers[first.0].shapes[$0.1].group == id }) else { return nil }
         return (first.0, group)
     }
 

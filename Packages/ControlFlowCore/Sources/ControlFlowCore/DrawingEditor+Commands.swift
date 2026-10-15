@@ -304,16 +304,22 @@ extension DrawingEditor {
     }
 
     private mutating func moveSelectedAnchors(by delta: Vec2, key: String) {
-        guard let ref = activeShape, delta != .zero else { return }
-        let anchors = selectedAnchors
-        guard let idx = drawing.indices(ref) else { return }
+        guard delta != .zero else { return }
+        moveAnchors(Dictionary(uniqueKeysWithValues: selectedAnchors.map { ($0, delta) }), key: "\(key)-\(selection)")
+    }
+
+    /// Moves anchors of the active shape, each by its own world offset, as one undo step
+    /// (coalescing with others of the same `key`, if any).
+    mutating func moveAnchors(_ offsets: [Int: Vec2], key: String?) {
+        guard let ref = activeShape, offsets.values.contains(where: { $0 != .zero }),
+              let idx = drawing.indices(ref) else { return }
         let before = drawing
         drawing.updateWorldPath(at: idx) { path in
-            for i in anchors where path.points.indices.contains(i) {
+            for (i, delta) in offsets where path.points.indices.contains(i) {
                 path.points[i].position = path.points[i].position + delta
             }
         }
-        commit(from: before, key: "\(key)-\(selection)")
+        commit(from: before, key: key)
     }
 
     /// Nudges the selected anchors by `delta` world points, or the whole selection when
