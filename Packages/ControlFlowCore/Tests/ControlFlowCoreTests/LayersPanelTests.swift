@@ -94,7 +94,7 @@ final class LayersPanelTests: XCTestCase {
         let frame = try! XCTUnwrap(e.drawing.frame(of: e.selection))
         XCTAssertEqual(Rect(points: frame.corners), rect(-25, -130, 50, 160))
         e.drawing.apply(.translation(Vec2(10, 0)), to: e.selection)
-        XCTAssertEqual(e.drawing.layer(hat)!.pivot.x, 10, accuracy: 1e-9)
+        XCTAssertEqual(e.drawing.layer(hat)!.worldPivot.x, 10, accuracy: 1e-9)
         XCTAssertEqual(e.drawing.layer(head)!.pivot.x, 0, accuracy: 1e-9)
 
         e.arrange(.sendToBack)

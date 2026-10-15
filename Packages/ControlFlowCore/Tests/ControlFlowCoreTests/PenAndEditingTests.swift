@@ -621,8 +621,8 @@ final class SelectionTests: XCTestCase {
         let before = e.drawing
         drag(&e, Vec2(100, 150), Vec2(130, 190))
         for (i, layer) in e.drawing.layers.enumerated() {
-            let a = before.layers[i].shapes[0].path.points[0].position
-            assertClose(layer.shapes[0].path.points[0].position, a + Vec2(30, 40))
+            let a = before.layers[i].worldShape(0).path.points[0].position
+            assertClose(layer.worldShape(0).path.points[0].position, a + Vec2(30, 40))
         }
         XCTAssertEqual(e.undoStack.undoStates.count, 3)
         e.undo()
@@ -826,12 +826,12 @@ final class PointEditingTests: XCTestCase {
         tap(&e, Vec2(100, 0))
         e.nudge(by: Vec2(1, 0))
         e.nudge(by: Vec2(1, 0))
-        assertClose(e.drawing.layers[0].shapes[0].path.points[1].position, Vec2(102, 0))
+        assertClose(e.drawing.layers[0].worldShape(0).path.points[1].position, Vec2(102, 0))
         XCTAssertEqual(e.undoStack.undoStates.count, 5, "repeated nudges share an undo step")
         e.selectedAnchors = []
         e.nudge(by: Vec2(0, 5))
-        assertClose(e.drawing.layers[0].shapes[0].path.points[0].position, Vec2(0, 5))
-        assertClose(e.drawing.layers[0].shapes[0].path.points[1].position, Vec2(102, 5))
+        assertClose(e.drawing.layers[0].worldShape(0).path.points[0].position, Vec2(0, 5))
+        assertClose(e.drawing.layers[0].worldShape(0).path.points[1].position, Vec2(102, 5))
     }
 
     func testAnchorPositionFields() {
@@ -909,10 +909,10 @@ final class TransformTests: XCTestCase {
         var e = DrawingEditor()
         e.addStroke([Vec2(0, 0), Vec2(100, 40)], zoom: 1)
         e.selection = .layer(e.drawing.layers[0].id)
-        let before = e.drawing.layers[0].shapes[0]
+        let before = e.drawing.layers[0].worldShape(0)
         let c = try XCTUnwrap(e.drawing.frame(of: e.selection)).center
         e.flipSelection(horizontal: true)
-        let flipped = e.drawing.layers[0].shapes[0]
+        let flipped = e.drawing.layers[0].worldShape(0)
         for (a, b) in zip(before.path.points, flipped.path.points) {
             assertClose(b.position, Vec2(2 * c.x - a.position.x, a.position.y))
             assertClose(b.outHandle, Vec2(-a.outHandle.x, a.outHandle.y))
@@ -920,11 +920,11 @@ final class TransformTests: XCTestCase {
         XCTAssertEqual(flipped.stroke?.width, before.stroke?.width)
 
         e.flipSelection(horizontal: false)
-        let both = e.drawing.layers[0].shapes[0]
+        let both = e.drawing.layers[0].worldShape(0)
         assertClose(both.path.points[0].position, Vec2(2 * c.x - before.path.points[0].position.x, 2 * c.y - before.path.points[0].position.y))
         e.flipSelection(horizontal: true)
         e.flipSelection(horizontal: false)
-        assertClose(e.drawing.layers[0].shapes[0].path.points[0].position, before.path.points[0].position)
+        assertClose(e.drawing.layers[0].worldShape(0).path.points[0].position, before.path.points[0].position)
         XCTAssertEqual(e.undoStack.undoStates.count, 5)
     }
 
@@ -945,18 +945,18 @@ final class TransformTests: XCTestCase {
         assertClose(try XCTUnwrap(e.pivot), layer.pivot)
 
         drag(&e, layer.pivot, Vec2(70, 60))
-        assertClose(e.drawing.layers[0].pivot, Vec2(70, 60), tolerance: 1e-6)
+        assertClose(e.drawing.layers[0].worldPivot, Vec2(70, 60), tolerance: 1e-6)
         assertClose(try XCTUnwrap(e.pivot), Vec2(70, 60), tolerance: 1e-6)
         XCTAssertEqual(e.selection, .layer(layer.id), "dragging the pivot does not change the selection")
         e.undo()
-        assertClose(e.drawing.layers[0].pivot, layer.pivot)
+        assertClose(e.drawing.layers[0].worldPivot, layer.pivot)
 
         // Rotation turns about the pivot.
         drag(&e, layer.pivot, Vec2(70, 60))
-        let first = e.drawing.layers[0].shapes[0].path.points[0].position
+        let first = e.drawing.layers[0].worldShape(0).path.points[0].position
         e.rotateSelection(byDegrees: 90)
         let expected = (Affine2D.translation(Vec2(70, 60)) * Affine2D.rotation(.pi / 2) * Affine2D.translation(Vec2(-70, -60))).apply(first)
-        assertClose(e.drawing.layers[0].shapes[0].path.points[0].position, expected, tolerance: 1e-6)
+        assertClose(e.drawing.layers[0].worldShape(0).path.points[0].position, expected, tolerance: 1e-6)
     }
 
     func testPivotOfASingleShapeIsTransientAndSelectionResetsIt() throws {

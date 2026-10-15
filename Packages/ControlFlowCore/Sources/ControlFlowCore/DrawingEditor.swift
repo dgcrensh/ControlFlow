@@ -272,7 +272,7 @@ public struct DrawingEditor: Sendable {
     public var pivot: Vec2? {
         if let customPivot { return customPivot }
         if case .layer(let id) = selection, let i = drawing.layerIndex(id), !drawing.layers[i].shapes.isEmpty {
-            return drawing.layers[i].pivot
+            return drawing.layers[i].worldPivot
         }
         return drawing.frame(of: selection)?.center
     }
@@ -397,7 +397,10 @@ public struct DrawingEditor: Sendable {
         case .transform(let kind, let target, let before, let start):
             let nextID = drawing.nextID
             let t = transform(kind, from: start, to: p, target: target, before: before)
-            drawing = before.applying(t, to: target)
+            // Shapes and groups take the turn's center (or the frame's) as their pivot.
+            var center = before.frame(of: target)?.center
+            if case .rotate(let c) = kind { center = c }
+            drawing = before.applying(t, to: target, pivot: center)
             if var live = liveTransform {
                 live.transform = t
                 liveTransform = live
@@ -413,18 +416,18 @@ public struct DrawingEditor: Sendable {
             if case .layer(let id) = target { layer = id }
             let q = pivotSnapped(p + grab, layer: layer)
             if case .layer(let id) = target, let i = drawing.layerIndex(id) {
-                drawing.layers[i].pivot = q
+                drawing.layers[i].setWorldPivot(q)
             } else {
                 customPivot = q
             }
 
         case .anchors(let ref, let primary, let before, let grab):
-            guard let idx = drawing.indices(ref), let original = before.shape(ref)?.path,
+            guard let idx = drawing.indices(ref), let original = before.worldShape(ref)?.path,
                   original.points.indices.contains(primary) else { return }
             if let edge = edgeClosing(original, dragging: primary, to: p) {
                 // Over the other end: the anchor stays put and the closing edge shows.
                 closingEdge = edge
-                drawing.layers[idx.0].shapes[idx.1].path = original
+                drawing.setWorldPath(original, at: idx)
                 return
             }
             closingEdge = nil
@@ -434,17 +437,17 @@ public struct DrawingEditor: Sendable {
             for i in selectedAnchors where path.points.indices.contains(i) {
                 path.moveAnchor(i, to: original.points[i].position + delta)
             }
-            drawing.layers[idx.0].shapes[idx.1].path = path
+            drawing.setWorldPath(path, at: idx)
 
         case .segment(let ref, let index, let t, let before, let start):
-            guard let idx = drawing.indices(ref), var path = before.shape(ref)?.path else { return }
+            guard let idx = drawing.indices(ref), var path = before.worldShape(ref)?.path else { return }
             path.reshapeSegment(index, t: t, by: p - start)
-            drawing.layers[idx.0].shapes[idx.1].path = path
+            drawing.setWorldPath(path, at: idx)
 
         case .handle(let ref, let index, let side, _, let grab):
             guard let idx = drawing.indices(ref),
                   drawing.layers[idx.0].shapes[idx.1].path.points.indices.contains(index) else { return }
-            drawing.layers[idx.0].shapes[idx.1].path.setHandle(index, side, to: p + grab)
+            drawing.updateWorldPath(at: idx) { $0.setHandle(index, side, to: p + grab) }
 
         case .marquee(let start, _, _, _):
             marquee = Rect(from: start, to: p)
@@ -452,7 +455,7 @@ public struct DrawingEditor: Sendable {
         case .penPlace(let ref, let index, _, _):
             guard let idx = drawing.indices(ref),
                   drawing.layers[idx.0].shapes[idx.1].path.points.indices.contains(index) else { return }
-            var point = drawing.layers[idx.0].shapes[idx.1].path.points[index]
+            var point = drawing.layers[idx.0].worldShape(idx.1).path.points[index]
             let drag = p - point.position
             if drag.length > EditorMetrics.tapSlop / gestureZoom {
                 // Pulling out of a fresh anchor makes a symmetric handle: out follows the drag.
@@ -464,7 +467,7 @@ public struct DrawingEditor: Sendable {
                 point.inHandle = .zero
                 point.mode = .corner
             }
-            drawing.layers[idx.0].shapes[idx.1].path.points[index] = point
+            drawing.updateWorldPath(at: idx) { $0.points[index] = point }
 
         case .shapeDraw(let start, let ref, let before):
             self.gesture = .shapeDraw(start: start, ref: drawShape(from: start, to: p, ref: ref), before: before)
@@ -672,7 +675,7 @@ public struct DrawingEditor: Sendable {
     /// Applies a finished marquee. In the direct-select tool with one shape selected it
     /// picks that shape's anchors; otherwise it picks the shapes the rectangle touches.
     private mutating func finishMarquee(_ rect: Rect, additive: Bool, baseShapes: Set<ShapeRef>, baseAnchors: Set<Int>) {
-        if tool == .directSelect, let ref = activeShape, let path = drawing.shape(ref)?.path {
+        if tool == .directSelect, let ref = activeShape, let path = drawing.worldShape(ref)?.path {
             let inside = Set(path.points.indices.filter { rect.contains(path.points[$0].position) })
             if !inside.isEmpty || additive {
                 selectedAnchors = additive ? baseAnchors.union(inside) : inside
@@ -714,7 +717,7 @@ public struct DrawingEditor: Sendable {
 
     private mutating func beginDirectSelect(at p: Vec2, px: Double) -> Gesture {
         // The selected anchor's handles come first.
-        if let ref = activeShape, let path = drawing.shape(ref)?.path {
+        if let ref = activeShape, let path = drawing.worldShape(ref)?.path {
             // A handle folded into its anchor (a corner with no handle) can't be grabbed,
             // so the anchor underneath stays draggable.
             let handles = visibleHandles(of: path).filter { path.points[$0.index].position.distance(to: $0.position) > 1e-6 }
@@ -755,7 +758,7 @@ public struct DrawingEditor: Sendable {
     private func pickAnchorOrCurve(at p: Vec2, among refs: [ShapeRef], px: Double) -> Pending? {
         var bestAnchor: (ref: ShapeRef, index: Int, distance: Double)?
         for ref in refs {
-            guard let shape = drawing.shape(ref) else { continue }
+            guard let shape = drawing.worldShape(ref) else { continue }
             for (i, point) in shape.path.points.enumerated() {
                 let d = point.position.distance(to: p)
                 if d <= EditorMetrics.anchorHit * px, d < (bestAnchor?.distance ?? .infinity) {
@@ -767,7 +770,7 @@ public struct DrawingEditor: Sendable {
 
         var bestCurve: (ref: ShapeRef, segment: Int, t: Double, distance: Double)?
         for ref in refs {
-            guard let shape = drawing.shape(ref), let near = shape.path.nearestSegment(to: p),
+            guard let shape = drawing.worldShape(ref), let near = shape.path.nearestSegment(to: p),
                   near.distance <= EditorMetrics.curveHit * px + (shape.stroke?.width ?? 0) / 2,
                   near.distance < (bestCurve?.distance ?? .infinity) else { continue }
             bestCurve = (ref, near.segment, near.t, near.distance)
@@ -793,7 +796,7 @@ public struct DrawingEditor: Sendable {
     private mutating func beginPen(at p: Vec2, px: Double) -> Gesture {
         let reach = EditorMetrics.anchorHit * px
         var activeRef: ShapeRef?
-        if let pen = penPath, let shape = drawing.shape(layer: pen.layer, shape: pen.shape), !shape.path.points.isEmpty {
+        if let pen = penPath, let shape = drawing.worldShape(ShapeRef(layer: pen.layer, shape: pen.shape)), !shape.path.points.isEmpty {
             activeRef = ShapeRef(layer: pen.layer, shape: pen.shape)
             let points = shape.path.points
             let active = pen.fromStart ? 0 : points.count - 1
@@ -812,7 +815,7 @@ public struct DrawingEditor: Sendable {
     private func openEndpoint(near p: Vec2, reach: Double, excluding excluded: ShapeRef?) -> (ref: ShapeRef, end: PathEnd)? {
         var best: (ref: ShapeRef, end: PathEnd, distance: Double)?
         for ref in drawing.editableShapeRefs(within: isolatedLayer, group: isolatedGroup) where ref != excluded {
-            guard let shape = drawing.shape(ref), !shape.path.closed, !shape.path.points.isEmpty else { continue }
+            guard let shape = drawing.worldShape(ref), !shape.path.closed, !shape.path.points.isEmpty else { continue }
             for end in [PathEnd.start, .end] {
                 guard let position = shape.path.endPoint(end) else { continue }
                 let d = position.distance(to: p)
@@ -835,9 +838,9 @@ public struct DrawingEditor: Sendable {
                 pen.fromStart = false
                 penPath = pen
             }
-            drawing.layers[idx.0].shapes[idx.1].path.points.append(point)
+            drawing.updateWorldPath(at: idx) { $0.points.append(point) }
             ref = ShapeRef(layer: pen.layer, shape: pen.shape)
-            if pen.createdLayer { drawing.layers[idx.0].pivot = drawing.layers[idx.0].bounds.center }
+            if pen.createdLayer { drawing.layers[idx.0].setWorldPivot(drawing.layers[idx.0].bounds.center) }
         } else {
             ref = startPenShape(with: point)
         }
@@ -846,7 +849,7 @@ public struct DrawingEditor: Sendable {
         let saved = style
         selection = .shape(layer: ref.layer, shape: ref.shape)
         style = saved
-        let count = drawing.shape(ref)?.path.points.count ?? 1
+        let count = drawing.worldShape(ref)?.path.points.count ?? 1
         return .penPlace(ref, index: count - 1, before: before, penBefore: penBefore)
     }
 
@@ -902,7 +905,7 @@ public struct DrawingEditor: Sendable {
     /// Tapping the end of an open path: continues it when the pen is idle, or joins
     /// it to the path being drawn.
     private mutating func joinOrContinuePen(_ ref: ShapeRef, _ end: PathEnd) {
-        guard let other = drawing.shape(ref), !other.path.closed else { return }
+        guard let other = drawing.worldShape(ref), !other.path.closed else { return }
         guard let pen = penPath else {
             penPath = PenPath(layer: ref.layer, shape: ref.shape, fromStart: end == .start, createdLayer: false)
             let saved = style
@@ -923,7 +926,7 @@ public struct DrawingEditor: Sendable {
     /// The segment the pen would add next, from the active end to the hovering Pencil.
     public var penPreview: CubicBezier? {
         guard let cursor = penCursor, let pen = penPath, gesture == nil,
-              let points = drawing.shape(layer: pen.layer, shape: pen.shape)?.path.points,
+              let points = drawing.worldShape(ShapeRef(layer: pen.layer, shape: pen.shape))?.path.points,
               let end = pen.fromStart ? points.first : points.last else { return nil }
         let control = pen.fromStart ? end.inControl : end.outControl
         return CubicBezier(end.position, control, cursor, cursor)
@@ -948,12 +951,12 @@ public struct DrawingEditor: Sendable {
         case .pivot:
             return .pivot(target: selection, before: drawing, grab: (pivot ?? start) - start, originalCustom: customPivot)
         case .anchor(let ref, let i):
-            guard let shape = drawing.shape(ref), shape.path.points.indices.contains(i) else { return .idle }
+            guard let shape = drawing.worldShape(ref), shape.path.points.indices.contains(i) else { return .idle }
             narrowSelection(to: ref)
             if !selectedAnchors.contains(i) { selectedAnchors = addToSelection ? selectedAnchors.union([i]) : [i] }
             return .anchors(ref, primary: i, before: drawing, grab: shape.path.points[i].position - start)
         case .handle(let ref, let index, let side):
-            guard let points = drawing.shape(ref)?.path.points, points.indices.contains(index) else { return .idle }
+            guard let points = drawing.worldShape(ref)?.path.points, points.indices.contains(index) else { return .idle }
             let position = side == .incoming ? points[index].inControl : points[index].outControl
             return .handle(ref, index: index, side: side, before: drawing, grab: position - start)
         case .curve(let ref, let segment, let t, _):
@@ -1084,7 +1087,7 @@ public struct DrawingEditor: Sendable {
             for (index, shape) in layer.shapes.enumerated() where layer.isShown(index) {
                 let ref = ShapeRef(layer: layer.id, shape: shape.id)
                 if excluding.contains(ref) { continue }
-                for (i, point) in shape.path.points.enumerated() {
+                for (i, point) in layer.worldShape(index).path.points.enumerated() {
                     if let moving, moving.0 == ref, moving.1.contains(i) { continue }
                     out.append(point.position)
                 }
@@ -1172,7 +1175,7 @@ public struct DrawingEditor: Sendable {
         }
         if autoJoinSelectedLayer, let target = selectedLayerID, let p = drawing.layerIndex(target),
            !joinNeedsOverlap || drawing.layers[p].bounds.intersects(shape.bounds) {
-            drawing.layers[p].shapes.append(shape)
+            drawing.layers[p].insertWorldShape(shape)
             return ShapeRef(layer: target, shape: shape.id)
         }
         let id = drawing.makeID()
@@ -1190,9 +1193,11 @@ public struct DrawingEditor: Sendable {
                                               modifiers: modifiers, minimumSize: EditorMetrics.tapSlop / gestureZoom)
         else { return ref }
         if let ref, let idx = drawing.indices(ref) {
-            drawing.layers[idx.0].shapes[idx.1].path = path
+            drawing.setWorldPath(path, at: idx)
             // A layer made by this drag keeps its pivot in the middle; one it joined keeps its own.
-            if drawing.layers[idx.0].shapes.count == 1 { drawing.layers[idx.0].pivot = drawing.layers[idx.0].bounds.center }
+            if drawing.layers[idx.0].shapes.count == 1 {
+                drawing.layers[idx.0].setWorldPivot(drawing.layers[idx.0].bounds.center)
+            }
             return ref
         }
         let new = insertNewShape(styledShape(path), joinNeedsOverlap: false)
@@ -1473,14 +1478,14 @@ public struct DrawingEditor: Sendable {
     /// Joins shape `b` onto shape `a` at the given ends, keeping `a`'s style and
     /// removing `b`. Does not record undo.
     mutating func joinShapes(_ a: ShapeRef, _ aEnd: PathEnd, _ b: ShapeRef, _ bEnd: PathEnd) -> Bool {
-        guard a != b, let ai = drawing.indices(a), let shapeB = drawing.shape(b),
-              let pa = drawing.layers[ai.0].shapes[ai.1].path.endPoint(aEnd), let pb = shapeB.path.endPoint(bEnd)
+        guard a != b, let ai = drawing.indices(a), let shapeB = drawing.worldShape(b),
+              let pathA = drawing.worldShape(a)?.path,
+              let pa = pathA.endPoint(aEnd), let pb = shapeB.path.endPoint(bEnd)
         else { return false }
         // Ends that touch merge into one anchor.
         let tolerance = pa.distance(to: pb) <= 1e-6 ? Double.infinity : -1
-        guard let joined = BezierPath.joined(drawing.layers[ai.0].shapes[ai.1].path, aEnd, shapeB.path, bEnd,
-                                             mergeWithin: tolerance) else { return false }
-        drawing.layers[ai.0].shapes[ai.1].path = joined
+        guard let joined = BezierPath.joined(pathA, aEnd, shapeB.path, bEnd, mergeWithin: tolerance) else { return false }
+        drawing.setWorldPath(joined, at: ai)
         removeShape(b)
         return true
     }

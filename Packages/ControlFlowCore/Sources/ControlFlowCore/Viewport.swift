@@ -90,7 +90,7 @@ extension Drawing {
     public var visibleArtBounds: Rect {
         var bounds = Rect.null
         for layer in layers {
-            for i in layer.shapes.indices where layer.isShown(i) { bounds = bounds.union(layer.shapes[i].bounds) }
+            for i in layer.shapes.indices where layer.isShown(i) { bounds = bounds.union(layer.worldShape(i).bounds) }
         }
         return bounds
     }

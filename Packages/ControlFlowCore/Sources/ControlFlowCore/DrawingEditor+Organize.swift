@@ -247,8 +247,8 @@ extension DrawingEditor {
         let before = drawing
         let wasIsolated = isolatedLayer == id
         let target = drawing.layers[i - 1].id
-        drawing.layers[i - 1].shapes += drawing.layers[i].shapes
-        drawing.layers[i - 1].groups += drawing.layers[i].groups
+        let upper = drawing.layers[i]
+        drawing.layers[i - 1].adopt(Self.takeGroups(from: upper, moving: upper.shapes))
         drawing.layers.remove(at: i)
         if wasIsolated { isolatedLayer = target }
         selection = .layer(target)
@@ -271,15 +271,14 @@ extension DrawingEditor {
         let refs = Set(drawing.shapeRefs(in: selection))
         let topIndex = drawing.shapeIndices(in: selection).map(\.0).max() ?? 0
         var kept: [Layer] = []
-        var moved: [VectorShape] = []
-        var movedGroups: [ShapeGroup] = []
+        var moved = TakenArt()
         var insertAt = 0
         for (i, layer) in drawing.layers.enumerated() {
             var remaining = layer
             remaining.shapes = layer.shapes.filter { !refs.contains(ShapeRef(layer: layer.id, shape: $0.id)) }
             let taken = Self.takeGroups(from: layer, moving: layer.shapes.filter { refs.contains(ShapeRef(layer: layer.id, shape: $0.id)) })
-            moved += taken.shapes
-            movedGroups += taken.groups
+            moved.shapes += taken.shapes
+            moved.groups += taken.groups
             // Only layers emptied by the move go; empty layers that lost nothing stay.
             if !remaining.shapes.isEmpty || remaining.shapes.count == layer.shapes.count {
                 kept.append(remaining)
@@ -288,8 +287,8 @@ extension DrawingEditor {
         }
         drawing.layers = kept
         let id = drawing.makeID()
-        var layer = Layer(id: id, name: drawing.uniqueLayerName("Layer \(kept.count + 1)"), shapes: moved)
-        layer.groups = movedGroups
+        var layer = Layer(id: id, name: drawing.uniqueLayerName("Layer \(kept.count + 1)"))
+        layer.adopt(moved)
         layer.pivot = layer.bounds.center
         drawing.layers.insert(layer, at: insertAt)
         selection = .layer(id)
@@ -305,8 +304,7 @@ extension DrawingEditor {
         cancelGesture()
         let before = drawing
         let wasIsolated = isolatedLayer != nil
-        var moved: [VectorShape] = []
-        var movedGroups: [ShapeGroup] = []
+        var moved = TakenArt()
         var emptied: Set<Int> = []
         for p in drawing.layers.indices where drawing.layers[p].id != id {
             let layerID = drawing.layers[p].id
@@ -316,24 +314,24 @@ extension DrawingEditor {
             }
             let taken = Self.takeGroups(from: drawing.layers[p],
                                         moving: drawing.layers[p].shapes.filter { refs.contains(ShapeRef(layer: layerID, shape: $0.id)) })
-            moved += taken.shapes
-            movedGroups += taken.groups
+            moved.shapes += taken.shapes
+            moved.groups += taken.groups
             drawing.layers[p].shapes.removeAll { refs.contains(ShapeRef(layer: layerID, shape: $0.id)) }
         }
         drawing.layers.removeAll { emptied.contains($0.id) }
         guard let target = drawing.layerIndex(id) else { return }
-        drawing.layers[target].shapes += moved
-        drawing.layers[target].groups += movedGroups
+        drawing.layers[target].adopt(moved)
         // Moving an isolated layer's art into another layer carries isolation along.
         if wasIsolated, isolatedLayer == nil { isolatedLayer = id }
-        selection = .covering(Set(moved.map { ShapeRef(layer: id, shape: $0.id) }))
+        selection = .covering(Set(moved.shapes.map { ShapeRef(layer: id, shape: $0.shape.id) }))
         commit(from: before)
     }
 
     /// `moving` (shapes leaving `layer`) ready for another layer: groups that leave whole
-    /// go with them; shapes leaving layer of a group leave the group. Groups left empty
-    /// behind are tidied by `commit`.
-    static func takeGroups(from layer: Layer, moving: [VectorShape]) -> (shapes: [VectorShape], groups: [ShapeGroup]) {
+    /// go with them; shapes leaving part of a group leave the group. Each comes with the
+    /// matrix that placed it in the world in `layer` (see `Layer.adopt`). Groups left
+    /// empty behind are tidied by `commit`.
+    static func takeGroups(from layer: Layer, moving: [VectorShape]) -> TakenArt {
         let ids = Set(moving.map(\.id))
         var whole: [ShapeGroup] = []
         for group in layer.groups where layer.shapes.contains(where: { $0.group == group.id }) &&
@@ -342,11 +340,12 @@ extension DrawingEditor {
         }
         let kept = Set(whole.map(\.id))
         let shapes = moving.map { shape in
+            let parent = layer.parentMatrix(group: shape.group)
             var copy = shape
             if let g = copy.group, !kept.contains(g) { copy.group = nil }
-            return copy
+            return (shape: copy, parent: parent)
         }
-        return (shapes, whole)
+        return TakenArt(shapes: shapes, groups: whole.map { (group: $0, parent: layer.transform.matrix) })
     }
 
     // MARK: Duplicate
@@ -393,13 +392,14 @@ extension DrawingEditor {
                 layer.shapes.allSatisfy({ $0.group != group.id || selectedIDs.contains($0.id) }) {
                 let id = drawing.makeID()
                 fresh[group.id] = id
-                drawing.layers[p].groups.append(ShapeGroup(id: id, name: group.name, isClipped: group.isClipped))
+                drawing.layers[p].groups.append(ShapeGroup(id: id, name: group.name, isClipped: group.isClipped,
+                                                            transform: group.transform))
             }
             for s in indices {
                 var copy = layer.shapes[s]
                 copy.id = drawing.makeID()
                 copy.path.clearVertexIDs()
-                copy.apply(shift)
+                copy.apply(layer.local(shift, forShape: s))
                 if let g = copy.group, let id = fresh[g] { copy.group = id }
                 drawing.layers[p].shapes.insert(copy, at: insertAt)
                 insertAt += 1
@@ -420,8 +420,7 @@ extension DrawingEditor {
         copy.id = drawing.makeID()
         copy.name = drawing.uniqueLayerName(copy.name)
         drawing.renewArtIDs(of: &copy)
-        copy.updateAllShapes { $0.apply(shift) }
-        copy.pivot = shift.apply(copy.pivot)
+        copy.move(by: shift)
         drawing.layers.insert(copy, at: i + 1)
         return copy.id
     }
@@ -480,13 +479,14 @@ extension DrawingEditor {
         cancelGesture()
         let before = drawing
 
-        let offset = pasteOffset(for: layers[0].shapes[0].path)
+        let offset = pasteOffset(for: layers[0].worldShape(0).path)
         let shift = Affine2D.translation(offset)
         let shapesOnly = json["clipboard"] == JSONValue.string("shapes")
         let globals = adoptGlobalColors(decoded.drawing.globalColors)
         var refs: Set<ShapeRef> = []
         if let target = shapesOnly ? selectedLayerID : isolatedLayer, let p = drawing.layerIndex(target) {
-            for layer in layers {
+            // Shapes joining a layer arrive as they were drawn, then take its transform.
+            for layer in layers.map({ Drawing.worldLayer($0) }) {
                 // Pasted groups come along as new groups of the target layer.
                 var groups: [Int: Int] = [:]
                 if isolatedGroup == nil || isolatedLayer != target {
@@ -507,9 +507,13 @@ extension DrawingEditor {
         } else {
             var added: [Int] = []
             for layer in layers {
-                var copy = Layer(id: drawing.makeID(), name: drawing.uniqueLayerName(layer.name), pivot: shift.apply(layer.pivot))
-                for shape in layer.shapes { copy.shapes.append(pastedCopy(of: shape, moved: shift, globals: globals)) }
-                copy.groups = layer.groups
+                var copy = layer
+                copy.id = drawing.makeID()
+                copy.name = drawing.uniqueLayerName(layer.name)
+                copy.isHidden = false
+                copy.isLocked = false
+                copy.shapes = layer.shapes.map { pastedCopy(of: $0, moved: .identity, globals: globals) }
+                copy.move(by: shift)
                 drawing.renewGroups(of: &copy)
                 drawing.layers.append(copy)
                 added.append(copy.id)
@@ -563,7 +567,7 @@ extension DrawingEditor {
     /// Steps of 10 points down and right until the pasted path no longer sits exactly
     /// on an existing shape.
     private func pasteOffset(for path: BezierPath) -> Vec2 {
-        let existing = drawing.layers.flatMap { $0.shapes.map { $0.path.bounds() } }
+        let existing = drawing.layers.flatMap { $0.worldShapes.map { $0.path.bounds() } }
         let bounds = path.bounds()
         func same(_ a: Rect, _ b: Rect) -> Bool {
             a.minPoint.isApproximately(b.minPoint, tolerance: 0.01) && a.maxPoint.isApproximately(b.maxPoint, tolerance: 0.01)

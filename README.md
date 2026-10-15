@@ -37,7 +37,7 @@ Or open the package in Xcode and press Cmd-U. To run everything CI runs (core te
 From [the plan](docs/plans/animation-app.md#11-milestones):
 
 1. **Strip and rename** (done; see the notes below): the character rigging is gone, the app is ControlFlow, and the viewport is in.
-2. Identity and transforms: vertex ids, layer, group and shape transforms, Apply Transform.
+2. **Identity and transforms** (done; see the notes below): vertex ids, layer, group and shape transforms, Apply Transform, and Part renamed to Layer.
 3. Keyframe core: sequences, deltas, interpolation and format 1.0.
 4. Timeline UI.
 5. Presenting.
@@ -58,7 +58,25 @@ From [the plan](docs/plans/animation-app.md#11-milestones):
 - **Model** (ControlFlowCore): `Viewport` (in `Viewport.swift`, replacing `CharacterFrame`) is `width`, `height` and `background` on `Drawing.viewport`. `withAspect` keeps the width, `veilTriangles(covering:)` gives the bands of the view outside the viewport, and `DrawingEditor.updateViewport` and `setViewportAspect` edit it. `Drawing.exportArea` is the viewport. Tests are in `ViewportTests`.
 - **Rendering:** after the grid, the renderer fills the viewport with its background; after the art, it draws the veil triangles. The border is part of the overlay's guides.
 - **Format:** the writer keeps format 0.3 but writes only the root bone, slots, the default skin, palette, references and a new optional `viewport` key; see [Schema/README.md](Schema/README.md). The reader places each slot's art with its bone's rest transform and ignores the rest of the rig.
-- **Renamed:** the app, its target and scheme are ControlFlow, and the core package is `ControlFlowCore`. `Part` becomes `Layer` with milestone 2's transforms.
+- **Renamed:** the app, its target and scheme are ControlFlow, and the core package is `ControlFlowCore`. `Part` became `Layer` in milestone 2.
+
+## Milestone 2 notes (identity and transforms)
+
+**Using it**
+
+- **Layers:** what Character Studio called a part is now a layer everywhere: the Edit menu's Move to New Layer, Move to Layer and Isolate Layer, and new layers are named Layer 1, Layer 2 and so on.
+- **Select moves, rotates, scales and flips objects without touching their points.** Dragging a layer changes its transform; each selected shape changes its own transform; a whole group changes the group's. The selection frame turns with a single turned layer, shape or group, so its handles stay on the art. Rotations keep counting past a full turn (three quarter turns read 270, not -90), and a flip shows as a negative scale. Nudges, the flip buttons, rotate and the Inspector's position work the same way.
+- **When no transform can hold the edit** (a stretch along the screen's axes across a turned object skews it), Select changes the points instead, as before, so the art still goes where it was dragged.
+- **Direct Select, the pen, shapes and strokes work where the art is drawn:** a tap hits an anchor where it shows on screen, and new art in a turned or scaled layer lands under the Pencil.
+- **Apply Transform** (Edit menu, and the button beside the flip buttons) bakes the selection's transform into its points and resets it, without moving anything: a layer's whole tree (layer, groups and shapes), a group's into its shapes, or the selected shapes' own. Outlines scale with the art, as they look. It is unavailable when there is nothing to bake. One undo step.
+- **Moving art between layers keeps it where it is:** Move to Layer, Move to New Layer, Merge Down and pasting into another layer convert the shapes into their new layer's space. Duplicates and copies keep their transforms.
+
+**How it works**
+
+- **Model** (ControlFlowCore): `Transform` is `position`, `rotation` (degrees, clockwise, unwrapped), `scale` and `pivot`, and its `matrix` turns and scales about the pivot, then moves. `Layer`, `ShapeGroup` and `VectorShape` each have one; a layer's pivot is its transform's pivot. They compose layer, then group, then shape, and a shape's points are in its own space. `Layer.worldShape(_:)` gives a shape as drawn, and `Drawing.world` the whole drawing with every transform baked in, which rendering, caching, the shape index, hit testing and export use. Edits that work on points read and write through `worldShape`/`setWorldShape`, which convert to and from the shape's space.
+- **Select** composes its drag into the right transform: `t·L` for a layer, `P⁻¹·t·P·S` for a shape under the parent matrix `P`, and the same for a group under its layer. `Transform(matrix:pivot:near:)` decomposes the result and returns nil for a skew, which is when the edit falls back to the points. `Drawing.apply(_:to:pivot:)` does this; `DrawingEditor.applyTransform()` is Apply Transform. Tests are in `ObjectTransformTests`.
+- **Vertex ids:** every `PathPoint` has an `id`. `Drawing.assignVertexIDs()` runs after every commit, on opening a document and in `DrawingEditor.init`: it gives a fresh id from the document's counter to any point with none, or whose id repeats an earlier one in draw order (a copy), so copied points get new ids and every other edit keeps them. Ids are not written to the file yet (format 1.0 will). Tests for each editing operation are in `VertexIDTests`.
+- **Format:** an attachment (layer), group and shape may have a `transform` object with any of `position`, `rotation`, `scale` and `pivot`, written only when it isn't the default; the attachment's `pivot` key still holds the layer's pivot. The example robot's antenna is turned 12 degrees. See [Schema/README.md](Schema/README.md#transforms).
 
 ## Character Studio foundations
 

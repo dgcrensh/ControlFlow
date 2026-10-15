@@ -153,6 +153,17 @@
         }
       }
     },
+    "transform": {
+      "description": "ControlFlow: places a layer, group or shape in its parent: it scales by scale and turns by rotation about pivot, then moves by position. Layers, groups and shapes compose in that order, and points are in the shape's own space. Written only when it moves something, and each key only when it isn't its default.",
+      "type": "object",
+      "properties": {
+        "position": { "description": "Defaults to [0, 0].", "$ref": "#/$defs/vec2" },
+        "rotation": { "description": "Degrees, clockwise on screen. Not wrapped: 720 is two turns. Defaults to 0.", "type": "number" },
+        "scale": { "description": "Negative flips. Defaults to [1, 1].", "$ref": "#/$defs/vec2" },
+        "pivot": { "description": "The point it turns and scales about, in the object's own space. Defaults to [0, 0]; a layer's is the attachment's pivot instead.", "$ref": "#/$defs/vec2" }
+      },
+      "additionalProperties": false
+    },
     "vec2": {
       "type": "array",
       "items": { "type": "number" },
@@ -229,6 +240,7 @@
       "properties": {
         "type": { "const": "vector" },
         "pivot": { "description": "The part's own pivot, independent of the bone origin.", "$ref": "#/$defs/vec2" },
+        "transform": { "description": "ControlFlow: the layer's transform. Its pivot is the pivot above.", "$ref": "#/$defs/transform" },
         "hidden": { "description": "Editor hint: the part is hidden while editing. Defaults to false. Animation tools draw it as usual.", "type": "boolean" },
         "locked": { "description": "Editor hint: the part can't be selected or changed while editing. Defaults to false.", "type": "boolean" },
         "groups": {
@@ -240,7 +252,8 @@
             "properties": {
               "id": { "description": "Local to the attachment.", "type": "integer" },
               "name": { "type": "string" },
-              "clipped": { "description": "The whole group draws only where the nearest shape below it that isn't clipped (or in a clipped group) draws, like a clipped shape. Clipped shapes inside the group still clip within it. Defaults to false.", "type": "boolean" }
+              "clipped": { "description": "The whole group draws only where the nearest shape below it that isn't clipped (or in a clipped group) draws, like a clipped shape. Clipped shapes inside the group still clip within it. Defaults to false.", "type": "boolean" },
+              "transform": { "description": "ControlFlow: the group's transform, in its layer.", "$ref": "#/$defs/transform" }
             }
           }
         },
@@ -278,6 +291,7 @@
         },
         "opacity": { "description": "Format 0.2: multiplies the alpha of the fill and of the outline (each on its own). Defaults to 1.", "type": "number", "minimum": 0, "maximum": 1 },
         "clipped": { "description": "Format 0.2: the shape draws only where the nearest unclipped shape below it in the same attachment (and the same group, when it has one) draws (its fill and outline). Defaults to false.", "type": "boolean" },
+        "transform": { "description": "ControlFlow: the shape's transform, in its group (or layer). Its points are before it.", "$ref": "#/$defs/transform" },
         "behindOwner": { "description": "In an accessory's attachment: the shape draws just behind its owner's attachment instead of with the rest of the accessory, in its order among the accessory's other behind shapes. Ignored in a part that isn't an accessory. Defaults to false.", "type": "boolean" },
         "hidden": { "description": "Editor hint: the shape is hidden while editing. Defaults to false. Animation tools draw it as usual.", "type": "boolean" },
         "locked": { "description": "Editor hint: the shape can't be selected or changed while editing. Defaults to false.", "type": "boolean" },

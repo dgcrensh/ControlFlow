@@ -54,13 +54,13 @@ extension DrawingEditor {
         return out
     }
 
-    /// Every editable shape within isolation, in `layers` order, as
+    /// Every editable shape within isolation (in world space), in `layers` order, as
     /// `Drawing.editableShapeRefs` lists them, without looking each one up by id.
     func forEachEditableShape(_ body: (ShapeRef, VectorShape) -> Void) {
         for layer in drawing.layers where isolatedLayer == nil || layer.id == isolatedLayer {
             for i in layer.shapes.indices where (isolatedGroup == nil || layer.shapes[i].group == isolatedGroup) &&
                 layer.isEditable(i) {
-                body(ShapeRef(layer: layer.id, shape: layer.shapes[i].id), layer.shapes[i])
+                body(ShapeRef(layer: layer.id, shape: layer.shapes[i].id), layer.worldShape(i))
             }
         }
     }

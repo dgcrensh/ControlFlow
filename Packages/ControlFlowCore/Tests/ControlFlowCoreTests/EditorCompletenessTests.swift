@@ -512,8 +512,8 @@ final class DuplicateAndClipboardTests: XCTestCase {
         e.modifiers = .alternate
         drag(&e, Vec2(50, 50), Vec2(250, 50))
         XCTAssertEqual(e.drawing.layers.count, 2)
-        assertClose(e.drawing.layers[0].shapes[0].path.points[0].position, Vec2(0, 0))
-        assertClose(e.drawing.layers[1].shapes[0].path.points[0].position, Vec2(200, 0))
+        assertClose(e.drawing.layers[0].worldShape(0).path.points[0].position, Vec2(0, 0))
+        assertClose(e.drawing.layers[1].worldShape(0).path.points[0].position, Vec2(200, 0))
         e.undo()
         XCTAssertEqual(e.drawing.layers.count, 1, "copy and move are one step")
     }
@@ -523,7 +523,7 @@ final class DuplicateAndClipboardTests: XCTestCase {
         e.tool = .select
         e.modifiers = .constrain
         drag(&e, Vec2(50, 50), Vec2(150, 70))
-        assertClose(e.drawing.layers[0].shapes[0].path.points[0].position, Vec2(100, 0))
+        assertClose(e.drawing.layers[0].worldShape(0).path.points[0].position, Vec2(100, 0))
     }
 
     func testCopyAndPasteLayers() throws {

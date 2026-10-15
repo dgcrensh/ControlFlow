@@ -358,9 +358,9 @@ final class DrawingEditorTests: XCTestCase {
         let c = frame.center
         // A quarter turn clockwise: the handle above the center moves to its right.
         let target = c + Vec2(handle.distance(to: c), 0)
-        let before = e.drawing.layers[0].shapes[0].path.points[0].position
+        let before = e.drawing.layers[0].worldShape(0).path.points[0].position
         drag(&e, handle, target)
-        let after = e.drawing.layers[0].shapes[0].path.points[0].position
+        let after = e.drawing.layers[0].worldShape(0).path.points[0].position
         let expected = (Affine2D.translation(c) * Affine2D.rotation(.pi / 2) * Affine2D.translation(-c)).apply(before)
         XCTAssertTrue(after.isApproximately(expected, tolerance: 1e-6))
     }

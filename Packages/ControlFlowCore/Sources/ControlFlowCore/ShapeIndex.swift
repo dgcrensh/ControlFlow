@@ -46,6 +46,8 @@ struct ShapeIndex: Sendable {
 
     init(_ drawing: Drawing, revision: Int) {
         self.revision = revision
+        // Shapes are indexed as they are drawn.
+        let drawing = drawing.world
         // Each shape's place in the draw stack and its clip bases, by its index in `layers`.
         var layerIndex: [Int: Int] = [:]
         for (i, layer) in drawing.layers.enumerated() where layerIndex[layer.id] == nil { layerIndex[layer.id] = i }

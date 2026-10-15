@@ -504,7 +504,7 @@ final class AppearanceEditingTests: XCTestCase {
 
         // The gradient turns with the shape.
         e.rotateSelection(byDegrees: 90)
-        gradient = e.drawing.layers[0].shapes[0].gradient!
+        gradient = e.drawing.layers[0].worldShape(0).gradient!
         XCTAssertTrue(gradient.end.isApproximately(Vec2(50, 100), tolerance: 1e-6), "\(gradient.end)")
 
         e.setGradient(nil)
@@ -519,8 +519,8 @@ final class AppearanceEditingTests: XCTestCase {
         select(&e, 0)
         e.setOutlineDash([4, 2])
         e.drawing.apply(.scale(2), to: e.selection)
-        XCTAssertEqual(e.drawing.layers[0].shapes[0].stroke?.dash, [8, 4])
-        XCTAssertEqual(e.drawing.layers[0].shapes[0].stroke?.width, 4)
+        XCTAssertEqual(e.drawing.layers[0].worldShape(0).stroke?.dash, [8, 4])
+        XCTAssertEqual(e.drawing.layers[0].worldShape(0).stroke?.width, 4)
     }
 
     func testGlobalColors() {

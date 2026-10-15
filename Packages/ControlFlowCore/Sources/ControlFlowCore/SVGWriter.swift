@@ -18,6 +18,8 @@ public enum SVGWriter {
     /// viewport (see `Drawing.exportArea`). Nil when the area is empty.
     public static func document(for drawing: Drawing, area: Rect? = nil) -> String? {
         guard let area = area ?? drawing.exportArea(), area.width > 0, area.height > 0 else { return nil }
+        // Exported as drawn: the transforms go into the points.
+        let drawing = drawing.world
         var writer = Writer(area: area)
         let names = Dictionary(zip(drawing.layers.map(\.id), CharacterFormat.slotNames(for: drawing.layers)),
                                uniquingKeysWith: { a, _ in a })

@@ -145,7 +145,7 @@ public struct TessellationCache: Sendable {
                            wholeLayers: Bool = false) -> RefinePlan {
         var plan = RefinePlan()
         let view = viewRect.map { $0.outset(by: max($0.width, $0.height) / 4) }
-        for layer in drawing.layers {
+        for layer in drawing.world.layers {
             let start = (visible: plan.visible.count, rest: plan.rest.count)
             for index in layer.shapes.indices where layer.isShown(index) {
                 let shape = layer.shapes[index]
@@ -187,7 +187,7 @@ public struct TessellationCache: Sendable {
         made.reserveCapacity(refinement.tessellations.count)
         for t in refinement.tessellations { made[t.shape.id] = t }
         var kept = 0
-        for layer in drawing.layers {
+        for layer in drawing.world.layers {
             for shape in layer.shapes {
                 guard let t = made[shape.id], t.shape == shape else { continue }
                 store(t)

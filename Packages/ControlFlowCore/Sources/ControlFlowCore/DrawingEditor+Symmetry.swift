@@ -83,8 +83,8 @@ extension DrawingEditor {
     func pivotSnapped(_ p: Vec2, layer: Int?) -> Vec2 {
         var targets = drawing.layerPivots(excluding: layer)
         for layer in drawing.layers where !layer.isHidden {
-            for (i, shape) in layer.shapes.enumerated() where layer.isShown(i) {
-                targets += shape.path.points.map(\.position)
+            for i in layer.shapes.indices where layer.isShown(i) {
+                targets += layer.worldShape(i).path.points.map(\.position)
             }
         }
         if let best = targets.min(by: { $0.distance(to: p) < $1.distance(to: p) }), best.distance(to: p) <= snapRadius {
@@ -102,12 +102,13 @@ extension DrawingEditor {
 
     // MARK: Symmetry
 
-    /// The mirror image of `shape` across the symmetry axis, with a fresh id.
-    mutating func mirrorImage(of shape: VectorShape) -> VectorShape {
-        var copy = shape
+    /// The mirror image of shape `index` of `layer` across the symmetry axis, with a
+    /// fresh id, for the same layer and group.
+    mutating func mirrorImage(of index: Int, in layer: Layer) -> VectorShape {
+        var copy = layer.shapes[index]
         copy.id = drawing.makeID()
         copy.path.clearVertexIDs()
-        copy.apply(symmetry.transform)
+        copy.apply(layer.local(symmetry.transform, forShape: index))
         return copy
     }
 
@@ -129,12 +130,13 @@ extension DrawingEditor {
     /// it. Does nothing to a shape that is its own mirror image. Does not record undo.
     mutating func addMirrorImage(of ref: ShapeRef) {
         guard symmetry.isEnabled, let idx = drawing.indices(ref) else { return }
-        let shape = drawing.layers[idx.0].shapes[idx.1]
-        guard !isSymmetric(shape) else { return }
-        let copy = mirrorImage(of: shape)
+        guard !isSymmetric(drawing.layers[idx.0].worldShape(idx.1)) else { return }
+        let copy = mirrorImage(of: idx.1, in: drawing.layers[idx.0])
         drawing.layers[idx.0].shapes.insert(copy, at: idx.1 + 1)
         // A layer the shape just made keeps its pivot in the middle of both.
-        if drawing.layers[idx.0].shapes.count == 2 { drawing.layers[idx.0].pivot = drawing.layers[idx.0].bounds.center }
+        if drawing.layers[idx.0].shapes.count == 2 {
+            drawing.layers[idx.0].setWorldPivot(drawing.layers[idx.0].bounds.center)
+        }
     }
 
     /// What symmetry will add for the shape being drawn or the open pen path, for
@@ -144,7 +146,7 @@ extension DrawingEditor {
         var refs: [ShapeRef] = []
         if let ref = shapeBeingDrawn { refs.append(ref) }
         if let pen = penPath { refs.append(ShapeRef(layer: pen.layer, shape: pen.shape)) }
-        return refs.compactMap { drawing.shape($0) }.filter { !isSymmetric($0) }.map {
+        return refs.compactMap { drawing.worldShape($0) }.filter { !isSymmetric($0) }.map {
             var path = $0.path
             path.apply(symmetry.transform)
             return path
@@ -191,14 +193,14 @@ extension DrawingEditor {
                     let id = drawing.makeID()
                     fresh[group.id] = id
                     drawing.layers[p].groups.append(ShapeGroup(id: id, name: SideName.flipped(group.name) ?? group.name,
-                                                                isClipped: group.isClipped))
+                                                                isClipped: group.isClipped, transform: group.transform))
                 }
                 var shapes: [VectorShape] = []
                 var pending: [VectorShape] = []
                 for (s, shape) in layer.shapes.enumerated() {
                     shapes.append(shape)
                     guard selected.contains(s) else { continue }
-                    var copy = mirrorImage(of: shape)
+                    var copy = mirrorImage(of: s, in: layer)
                     copies.insert(ShapeRef(layer: layer.id, shape: copy.id))
                     guard let g = shape.group, let id = fresh[g] else {
                         shapes.append(copy)
@@ -232,9 +234,9 @@ extension DrawingEditor {
         copy.id = drawing.makeID()
         copy.name = drawing.uniqueLayerName(SideName.flipped(copy.name) ?? copy.name)
         drawing.renewArtIDs(of: &copy)
-        for s in copy.shapes.indices { copy.shapes[s].apply(symmetry.transform) }
+        for s in copy.shapes.indices { copy.shapes[s].apply(copy.local(symmetry.transform, forShape: s)) }
         for g in copy.groups.indices { copy.groups[g].name = SideName.flipped(copy.groups[g].name) ?? copy.groups[g].name }
-        copy.pivot = symmetry.mirror(copy.pivot)
+        copy.setWorldPivot(symmetry.mirror(copy.worldPivot))
         drawing.layers.insert(copy, at: i + 1)
         return copy.id
     }
@@ -245,7 +247,7 @@ extension Drawing {
 
     /// The other layers' pivots, for snapping a pivot.
     public func layerPivots(excluding id: Int?) -> [Vec2] {
-        layers.filter { $0.id != id && !$0.shapes.isEmpty && !$0.isHidden }.map(\.pivot)
+        layers.filter { $0.id != id && !$0.shapes.isEmpty && !$0.isHidden }.map(\.worldPivot)
     }
 
     /// Gives every shape and group `layer` holds a new id (for a copy), keeping each shape

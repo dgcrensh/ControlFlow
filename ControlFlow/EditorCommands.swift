@@ -66,6 +66,7 @@ struct EditorCommands: Commands {
                 .keyboardShortcut("g")
             Button("Ungroup") { store?.ungroupSelection() }
                 .keyboardShortcut("g", modifiers: [.command, .shift])
+            Button("Apply Transform") { store?.applyTransform() }
             Divider()
             Button("Isolate Layer") { store?.isolateSelection() }
                 .keyboardShortcut("i", modifiers: [.command, .shift])

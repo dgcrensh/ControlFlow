@@ -325,7 +325,7 @@ public struct ArtBuilder: Sendable {
         var batch = ArtBatch()
         reusesOtherTolerances = reusingOtherTolerances
         defer { reusesOtherTolerances = false }
-        var layers = drawing.layers
+        var layers = drawing.world.layers
         if let isolatedLayer {
             layers = layers.filter { $0.id != isolatedLayer } + layers.filter { $0.id == isolatedLayer }
         }
@@ -515,16 +515,17 @@ public struct ArtBuilder: Sendable {
         let scale = (t.a * t.a + t.b * t.b).squareRoot()
         let enlarges = scale > 1 + 1e-9
         var before: [Int: VectorShape] = [:]
-        for layer in live.base.layers {
+        for layer in live.base.world.layers {
             for shape in layer.shapes where live.shapes.contains(shape.id) { before[shape.id] = shape }
         }
-        for layer in drawing.layers {
+        for layer in drawing.world.layers {
             for shape in layer.shapes {
                 guard let old = before[shape.id], shape != old, let cached = tessellations.anyTessellation(of: old),
                       cached.carries < Self.maximumCarries else { continue }
                 var moved = old
                 moved.apply(t)
-                guard moved == shape else { continue }
+                // Moving a transform rather than the points rounds a little differently.
+                guard moved.isApproximately(shape) else { continue }
                 let tolerance = enlarges ? cached.tolerance * scale : cached.tolerance
                 tessellations.store(cached.applying(t, as: shape, tolerance: tolerance))
                 result.carried += 1

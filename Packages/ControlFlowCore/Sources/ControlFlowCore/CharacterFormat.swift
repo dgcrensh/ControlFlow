@@ -134,6 +134,8 @@ public enum CharacterFormat {
             (key: "type", value: .string("vector")),
             (key: "pivot", value: vec(layer.pivot)),
         ]
+        // The layer's pivot is the key above.
+        if let transform = transform(layer.transform, withPivot: false) { members.append((key: "transform", value: transform)) }
         members += editorHints(hidden: layer.isHidden, locked: layer.isLocked)
         // Groups are numbered from 1 within the attachment, bottom to top, and written
         // only when the layer has some.
@@ -145,6 +147,9 @@ public enum CharacterFormat {
                 var group: [(key: String, value: JSONValue)] = [(key: "id", value: .number(Double(i + 1))),
                                                                  (key: "name", value: .string(run.group.name))]
                 if run.group.isClipped { group.append((key: "clipped", value: .bool(true))) }
+                if let transform = transform(run.group.transform, withPivot: true) {
+                    group.append((key: "transform", value: transform))
+                }
                 return .object(group)
             }
             members.append((key: "groups", value: .array(groups)))
@@ -182,9 +187,28 @@ public enum CharacterFormat {
         }
         if shape.opacity != 1 { members.append((key: "opacity", value: num(shape.opacity))) }
         if shape.isClipped { members.append((key: "clipped", value: .bool(true))) }
+        if let transform = transform(shape.transform, withPivot: true) { members.append((key: "transform", value: transform)) }
         members += editorHints(hidden: shape.isHidden, locked: shape.isLocked)
         members.append((key: "points", value: .array(shape.path.points.map(point))))
         return .object(members)
+    }
+
+    /// A layer's, group's or shape's transform, or nil (not written) when it moves
+    /// nothing. Each key is written only when it isn't its default.
+    private static func transform(_ t: Transform, withPivot: Bool) -> JSONValue? {
+        guard !t.isIdentity else { return nil }
+        var members: [(key: String, value: JSONValue)] = []
+        if t.position != .zero { members.append((key: "position", value: vec(t.position))) }
+        if t.rotation != 0 { members.append((key: "rotation", value: num(t.rotation))) }
+        if t.scale != Vec2(1, 1) { members.append((key: "scale", value: vec(t.scale))) }
+        if withPivot, t.pivot != .zero { members.append((key: "pivot", value: vec(t.pivot))) }
+        return .object(members)
+    }
+
+    /// Reads a `transform` object; `pivot` is the pivot when it has none.
+    private static func transform(_ node: Node, pivot: Vec2 = .zero) throws -> Transform {
+        Transform(position: try node.vec2("position") ?? .zero, rotation: try node.number("rotation") ?? 0,
+                  scale: try node.vec2("scale") ?? Vec2(1, 1), pivot: try node.vec2("pivot") ?? pivot)
     }
 
     private static func stroke(_ stroke: StrokeStyle, globals: [Int: String]) -> JSONValue {
@@ -315,14 +339,15 @@ public enum CharacterFormat {
             guard let node = (attachments.first { $0.name == slot.attachment } ?? attachments.first)?.node else { continue }
             var layer = Layer(id: drawing.makeID(), name: slot.id)
             if let pivot = try node.vec2("pivot") { layer.pivot = pivot }
+            if let t = try node.field("transform") { layer.transform = try transform(t, pivot: layer.pivot) }
             layer.isHidden = try node.bool("hidden") ?? false
             layer.isLocked = try node.bool("locked") ?? false
             (layer.shapes, layer.groups) = try art(node, globals: globals, drawing: &drawing)
             // Attachments are in their bone's space; the editor works in world space.
-            let transform = world[slot.bone ?? rootBone] ?? world[rootBone] ?? .identity
-            if !transform.isApproximately(.identity, tolerance: 0) {
-                layer.updateAllShapes { $0.apply(transform) }
-                layer.pivot = transform.apply(layer.pivot)
+            let bone = world[slot.bone ?? rootBone] ?? world[rootBone] ?? .identity
+            if !bone.isApproximately(.identity, tolerance: 0) {
+                for s in layer.shapes.indices { layer.shapes[s].apply(layer.local(bone, forShape: s)) }
+                layer.setWorldPivot(bone.apply(layer.worldPivot))
             }
             drawing.layers.append(layer)
         }
@@ -366,8 +391,9 @@ public enum CharacterFormat {
             guard groupIDs[number] == nil else {
                 throw CharacterFileError.invalid(path: groupNode.path + ".id", problem: "repeats group \(number)")
             }
-            let group = ShapeGroup(id: drawing.makeID(), name: try groupNode.field("name")?.string() ?? "Group",
+            var group = ShapeGroup(id: drawing.makeID(), name: try groupNode.field("name")?.string() ?? "Group",
                                    isClipped: try groupNode.field("clipped")?.bool() ?? false)
+            if let t = try groupNode.field("transform") { group.transform = try transform(t) }
             groupIDs[number] = group.id
             groups.append(group)
         }
@@ -443,6 +469,7 @@ public enum CharacterFormat {
         }
         if let opacity = try node.number("opacity") { shape.opacity = min(max(opacity, 0), 1) }
         shape.isClipped = try node.bool("clipped") ?? false
+        if let t = try node.field("transform") { shape.transform = try transform(t) }
         shape.isHidden = try node.bool("hidden") ?? false
         shape.isLocked = try node.bool("locked") ?? false
         return shape

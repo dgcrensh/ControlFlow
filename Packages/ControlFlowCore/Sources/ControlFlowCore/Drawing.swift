@@ -24,9 +24,13 @@ public struct VectorShape: Hashable, Sendable, Codable, Identifiable {
     public var isLocked: Bool
     /// The group (a `ShapeGroup` id in the same layer) this shape belongs to, if any.
     public var group: Int?
+    /// Places the path in its group, or its layer when it has none. The path's points
+    /// are in the shape's own space.
+    public var transform = Transform.identity
 
     public init(id: Int, path: BezierPath, fill: RGBAColor? = nil, stroke: StrokeStyle? = nil,
-                isHidden: Bool = false, isLocked: Bool = false) {
+                isHidden: Bool = false, isLocked: Bool = false, transform: Transform = .identity) {
+        self.transform = transform
         self.id = id
         self.path = path
         self.fill = fill
@@ -57,8 +61,18 @@ public struct VectorShape: Hashable, Sendable, Codable, Identifiable {
         path.controlBounds.outset(by: outlineReach)
     }
 
+    /// The shape with `m` (its whole transform from its own space to world space, see
+    /// `Layer.worldMatrix(ofShape:)`) applied to its path and gradient, and its own
+    /// transform cleared: what it looks like in world space.
+    public func baked(_ m: Affine2D) -> VectorShape {
+        var copy = self
+        copy.transform = .identity
+        if m != .identity { copy.apply(m) }
+        return copy
+    }
+
     /// Transforms the path and gradient; outline width and dashes scale with the
-    /// transform's area scale.
+    /// transform's area scale. The shape's `transform` is left alone.
     public mutating func apply(_ t: Affine2D) {
         path.apply(t)
         gradient?.apply(t)
@@ -68,6 +82,38 @@ public struct VectorShape: Hashable, Sendable, Codable, Identifiable {
             stroke!.dash = stroke!.dash.map { $0 * k }
             stroke!.dashOffset *= k
         }
+    }
+
+    /// True when the shapes are the same but for float rounding (1e-9 points) in their
+    /// geometry: points, handles, gradient, outline width and dashes.
+    public func isApproximately(_ o: VectorShape, tolerance: Double = 1e-9) -> Bool {
+        if self == o { return true }
+        guard id == o.id, path.closed == o.path.closed, path.points.count == o.path.points.count,
+              fill == o.fill, fillGlobal == o.fillGlobal, opacity == o.opacity, isClipped == o.isClipped,
+              isHidden == o.isHidden, isLocked == o.isLocked, group == o.group, transform == o.transform,
+              (stroke == nil) == (o.stroke == nil), (gradient == nil) == (o.gradient == nil) else { return false }
+        for (a, b) in zip(path.points, o.path.points) {
+            guard a.id == b.id, a.mode == b.mode, a.stroked == b.stroked, abs(a.width - b.width) <= tolerance,
+                  a.position.isApproximately(b.position, tolerance: tolerance),
+                  a.inHandle.isApproximately(b.inHandle, tolerance: tolerance),
+                  a.outHandle.isApproximately(b.outHandle, tolerance: tolerance) else { return false }
+        }
+        if var s1 = stroke, let s2 = o.stroke {
+            guard abs(s1.width - s2.width) <= tolerance, abs(s1.dashOffset - s2.dashOffset) <= tolerance,
+                  s1.dash.count == s2.dash.count, zip(s1.dash, s2.dash).allSatisfy({ abs($0 - $1) <= tolerance }) else { return false }
+            s1.width = s2.width
+            s1.dash = s2.dash
+            s1.dashOffset = s2.dashOffset
+            guard s1 == s2 else { return false }
+        }
+        if var g1 = gradient, let g2 = o.gradient {
+            guard g1.start.isApproximately(g2.start, tolerance: tolerance),
+                  g1.end.isApproximately(g2.end, tolerance: tolerance) else { return false }
+            g1.start = g2.start
+            g1.end = g2.end
+            guard g1 == g2 else { return false }
+        }
+        return true
     }
 
     /// True when `p` is inside the fill or within `tolerance` of the outline.
@@ -144,11 +190,14 @@ public struct ShapeGroup: Hashable, Sendable, Codable, Identifiable {
     /// Draws the whole group only where the nearest shape below it draws, like a
     /// clipped shape (see `Layer.clipBase(ofGroup:)`). Clipping inside the group still works.
     public var isClipped = false
+    /// Places the group's shapes in their layer.
+    public var transform = Transform.identity
 
-    public init(id: Int, name: String, isClipped: Bool = false) {
+    public init(id: Int, name: String, isClipped: Bool = false, transform: Transform = .identity) {
         self.id = id
         self.name = name
         self.isClipped = isClipped
+        self.transform = transform
     }
 }
 
@@ -157,8 +206,8 @@ public struct Layer: Hashable, Sendable, Codable, Identifiable {
     public var id: Int
     public var name: String
     public var shapes: [VectorShape]
-    /// The point the layer rotates and scales about.
-    public var pivot: Vec2
+    /// Places the layer's groups and shapes in the world.
+    public var transform = Transform.identity
     /// Editor hints, saved in the file, that apply to every shape in the layer.
     public var isHidden: Bool
     public var isLocked: Bool
@@ -170,9 +219,164 @@ public struct Layer: Hashable, Sendable, Codable, Identifiable {
         self.id = id
         self.name = name
         self.shapes = shapes
-        self.pivot = pivot
+        self.transform = Transform(pivot: pivot)
         self.isHidden = isHidden
         self.isLocked = isLocked
+    }
+
+    /// The point the layer rotates and scales about, in the layer's own space (its
+    /// transform's pivot). See `worldPivot`.
+    public var pivot: Vec2 {
+        get { transform.pivot }
+        set { transform.pivot = newValue }
+    }
+
+    /// Where the pivot is in the world.
+    public var worldPivot: Vec2 { transform.matrix.apply(pivot) }
+
+    /// Moves the pivot to world point `p` without moving the art. Ignored when the
+    /// layer's transform collapses it to a line or a point.
+    public mutating func setWorldPivot(_ p: Vec2) {
+        guard let inverse = transform.matrix.inverted else { return }
+        transform = transform.withPivot(inverse.apply(p))
+    }
+
+    /// True when the layer, or any of its groups or shapes, has a transform.
+    public var hasTransforms: Bool {
+        !transform.isIdentity || groups.contains { !$0.transform.isIdentity } || shapes.contains { !$0.transform.isIdentity }
+    }
+
+    /// Maps a shape's parent space (its group's, or the layer's when it has no group) to
+    /// the world: where a shape in group `group` puts its transform.
+    public func parentMatrix(group: Int?) -> Affine2D {
+        let layerMatrix = transform.matrix
+        guard let group, let g = self.group(group), !g.transform.isIdentity else { return layerMatrix }
+        return layerMatrix * g.transform.matrix
+    }
+
+    /// Maps shape `index`'s points to the world.
+    public func worldMatrix(ofShape index: Int) -> Affine2D {
+        let shape = shapes[index]
+        let parent = parentMatrix(group: shape.group)
+        return shape.transform.isIdentity ? parent : parent * shape.transform.matrix
+    }
+
+    /// Shape `index` as it is drawn: in world space, with no transform.
+    public func worldShape(_ index: Int) -> VectorShape {
+        let m = worldMatrix(ofShape: index)
+        return m == .identity ? shapes[index] : shapes[index].baked(m)
+    }
+
+    /// Every shape as it is drawn (see `worldShape(_:)`).
+    public var worldShapes: [VectorShape] {
+        hasTransforms ? shapes.indices.map(worldShape) : shapes
+    }
+
+    /// Sets shape `index` from a world-space version of it (one with no transform, such as
+    /// `worldShape` returns, edited), keeping its own transform. Returns false, changing
+    /// nothing, when the shape's transform collapses it so it can't be edited.
+    @discardableResult
+    public mutating func setWorldShape(_ index: Int, _ world: VectorShape) -> Bool {
+        let m = worldMatrix(ofShape: index)
+        var shape = world
+        shape.transform = shapes[index].transform
+        shape.group = world.group
+        if m != .identity {
+            guard let inverse = m.inverted else { return false }
+            shape.apply(inverse)
+        }
+        shapes[index] = shape
+        return true
+    }
+
+    /// Changes shape `index` in world space (see `setWorldShape`). Returns false, changing
+    /// nothing, when its transform collapses it.
+    @discardableResult
+    public mutating func updateWorldShape(_ index: Int, _ change: (inout VectorShape) -> Void) -> Bool {
+        if worldMatrix(ofShape: index) == .identity {
+            change(&shapes[index])
+            return true
+        }
+        var world = worldShape(index)
+        change(&world)
+        return setWorldShape(index, world)
+    }
+
+    /// Adds `shape` at `index`, or on top, as `adopting` does.
+    public mutating func insertWorldShape(_ shape: VectorShape, at index: Int? = nil) {
+        shapes.insert(adopting(shape), at: index ?? shapes.count)
+    }
+
+    /// `shape`, whose own transform places it in the world (as if its parent had none),
+    /// made to look the same as a shape of this layer in its group `shape.group`: its
+    /// transform takes the inverse of the layer's and group's, or when that can't be a
+    /// transform, its points do.
+    public func adopting(_ shape: VectorShape) -> VectorShape {
+        adopting(shape, from: .identity)
+    }
+
+    /// `shape`, placed in the world by `from` and its own transform, made to look the
+    /// same as a shape of this layer in its group `shape.group` (see `adopting(_:)`).
+    public func adopting(_ shape: VectorShape, from parent: Affine2D) -> VectorShape {
+        let m = parentMatrix(group: shape.group)
+        guard m != parent, let inverse = m.inverted else { return shape }
+        let change = inverse * parent
+        var out = shape
+        if let t = Transform(matrix: change * shape.transform.matrix, pivot: shape.transform.pivot,
+                             near: shape.transform.rotation) {
+            out.transform = t.isIdentity ? .identity : t
+            if out.transform.isIdentity { out.transform.pivot = .zero }
+            return out
+        }
+        return shape.baked(change * shape.transform.matrix)
+    }
+
+    /// Adds groups and shapes taken from another layer (see `TakenArt`) on top, so they
+    /// look as they did there.
+    public mutating func adopt(_ art: TakenArt) {
+        let own = transform.matrix
+        // Groups whose placement can't be a transform here: their members take it instead.
+        var baked: [Int: Affine2D] = [:]
+        for (group, parent) in art.groups {
+            var copy = group
+            let world = parent * group.transform.matrix
+            if world != own {
+                if let inverse = own.inverted,
+                   let t = Transform(matrix: inverse * world, pivot: group.transform.pivot, near: group.transform.rotation) {
+                    copy.transform = t
+                } else {
+                    copy.transform = .identity
+                    baked[group.id] = world
+                }
+            }
+            groups.append(copy)
+        }
+        for (shape, parent) in art.shapes {
+            if let g = shape.group, art.groups.contains(where: { $0.group.id == g }) {
+                shapes.append(baked[g].map { adopting(shape, from: $0) } ?? shape)
+            } else {
+                shapes.append(adopting(shape, from: parent))
+            }
+        }
+    }
+
+    /// `t` (in world space) as it acts on shape `index`'s own points: what to apply to
+    /// them to move the shape by `t`.
+    public func local(_ t: Affine2D, forShape index: Int) -> Affine2D {
+        let m = worldMatrix(ofShape: index)
+        guard m != .identity, let inverse = m.inverted else { return t }
+        return inverse * t * m
+    }
+
+    /// Moves the whole layer by world translation `shift`: a layer with no transform
+    /// moves its points and pivot, one with a transform moves its position.
+    public mutating func move(by shift: Affine2D) {
+        if transform.isIdentity {
+            for s in shapes.indices { shapes[s].apply(local(shift, forShape: s)) }
+            pivot = shift.apply(pivot)
+        } else {
+            transform.position += Vec2(shift.tx, shift.ty)
+        }
     }
 
     /// Changes every shape in the layer.
@@ -281,15 +485,36 @@ public struct Layer: Hashable, Sendable, Codable, Identifiable {
     /// True when `p` is on shape `index` where it shows: a clipped shape only shows
     /// inside its base, and a shape in a clipped group only inside the group's base.
     public func shape(_ index: Int, contains p: Vec2, tolerance: Double) -> Bool {
-        guard shapes[index].contains(p, tolerance: tolerance) else { return false }
+        guard worldShape(index).contains(p, tolerance: tolerance) else { return false }
         for base in [clipBase(of: index), groupClipBase(of: index)].compactMap({ $0 }) {
-            guard isShown(base), shapes[base].contains(p, tolerance: 0) else { return false }
+            guard isShown(base), worldShape(base).contains(p, tolerance: 0) else { return false }
         }
         return true
     }
 
+    /// The bounds of the art in world space.
     public var bounds: Rect {
-        shapes.reduce(Rect.null) { $0.union($1.bounds) }
+        worldShapes.reduce(Rect.null) { $0.union($1.bounds) }
+    }
+
+    /// The bounds of the art in the layer's own space, before its transform.
+    public var localBounds: Rect {
+        let m = transform.matrix
+        guard m != .identity, let inverse = m.inverted else { return bounds }
+        return shapes.indices.reduce(Rect.null) { $0.union(shapes[$1].baked(inverse * worldMatrix(ofShape: $1)).bounds) }
+    }
+}
+
+/// Shapes and whole groups leaving a layer, each with the matrix that placed its parent
+/// space in the world there (for a shape, its group's or layer's; for a group, its
+/// layer's), so `Layer.adopt` can keep them where they are.
+public struct TakenArt: Sendable {
+    public var shapes: [(shape: VectorShape, parent: Affine2D)] = []
+    public var groups: [(group: ShapeGroup, parent: Affine2D)] = []
+
+    public init(shapes: [(shape: VectorShape, parent: Affine2D)] = [], groups: [(group: ShapeGroup, parent: Affine2D)] = []) {
+        self.shapes = shapes
+        self.groups = groups
     }
 }
 
@@ -570,19 +795,57 @@ public struct Drawing: Hashable, Sendable, Codable {
         case .none:
             return nil
         case .layer(let id):
-            let bounds = layerIndex(id).map { layers[$0].bounds } ?? .null
-            return bounds.isNull ? nil : SelectionFrame(rect: bounds)
+            guard let p = layerIndex(id) else { return nil }
+            let layer = layers[p]
+            let m = layer.transform.matrix
+            if m != .identity, m.inverted != nil {
+                return Self.frame(localBounds: layer.localBounds, matrix: m)
+            }
+            return layer.bounds.isNull ? nil : SelectionFrame(rect: layer.bounds)
         case .layers(let ids):
             let bounds = layers.filter { ids.contains($0.id) }.reduce(Rect.null) { $0.union($1.bounds) }
             return bounds.isNull ? nil : SelectionFrame(rect: bounds)
-        case .shape(let p, let s):
-            return shape(layer: p, shape: s).map { SelectionFrame(rect: $0.bounds) }
+        case .shape(let l, let s):
+            guard let (p, i) = indices(layer: l, shape: s) else { return nil }
+            let m = layers[p].worldMatrix(ofShape: i)
+            if m != .identity, m.inverted != nil {
+                return Self.frame(localBounds: layers[p].shapes[i].bounds, matrix: m)
+            }
+            return SelectionFrame(rect: layers[p].worldShape(i).bounds)
         case .shapes:
-            let bounds = shapeIndices(in: selection).reduce(Rect.null) { $0.union(layers[$1.0].shapes[$1.1].bounds) }
+            if let (p, group) = wholeGroup(selection) {
+                let layer = layers[p]
+                let m = layer.parentMatrix(group: group.id)
+                if m != .identity, let inverse = m.inverted {
+                    let local = layer.members(ofGroup: group.id).reduce(Rect.null) {
+                        $0.union(layer.shapes[$1].baked(inverse * layer.worldMatrix(ofShape: $1)).bounds)
+                    }
+                    return Self.frame(localBounds: local, matrix: m)
+                }
+            }
+            let bounds = shapeIndices(in: selection).reduce(Rect.null) { $0.union(layers[$1.0].worldShape($1.1).bounds) }
             return bounds.isNull ? nil : SelectionFrame(rect: bounds)
         case .reference(let id):
             return referenceIndex(id).map { SelectionFrame(corners: references[$0].corners) }
         }
+    }
+
+    /// A frame round `localBounds` carried into the world by `m`, so it turns and
+    /// stretches with the object.
+    private static func frame(localBounds: Rect, matrix m: Affine2D) -> SelectionFrame? {
+        localBounds.isNull ? nil : SelectionFrame(corners: localBounds.corners.map(m.apply))
+    }
+
+    /// The layer index and group when `selection` is every shape of one group, so
+    /// transforming it changes the group's transform.
+    func wholeGroup(_ selection: Selection) -> (Int, ShapeGroup)? {
+        guard case .shapes = selection else { return nil }
+        let indices = shapeIndices(in: selection)
+        guard let first = indices.first, let id = layers[first.0].shapes[first.1].group,
+              let group = layers[first.0].group(id) else { return nil }
+        let members = layers[first.0].members(ofGroup: id)
+        guard indices.allSatisfy({ $0.0 == first.0 }), Set(indices.map(\.1)) == Set(members) else { return nil }
+        return (first.0, group)
     }
 
     /// The shapes a selection covers, as (layer index, shape index).
@@ -619,40 +882,124 @@ public struct Drawing: Hashable, Sendable, Codable {
         if case .reference(let id) = selection {
             return referenceIndex(id).map { Rect(points: references[$0].corners) }
         }
-        let bounds = shapeIndices(in: selection).reduce(Rect.null) { $0.union(layers[$1.0].shapes[$1.1].path.bounds()) }
+        let bounds = shapeIndices(in: selection).reduce(Rect.null) { $0.union(layers[$1.0].worldShape($1.1).path.bounds()) }
         return bounds.isNull ? nil : bounds
     }
 
-    public mutating func apply(_ t: Affine2D, to selection: Selection) {
+    /// Sets the path of the shape at `idx` (layer and shape index) from a path in world
+    /// space, keeping the shape's transform. Ignored when the shape's transform collapses
+    /// it, so it can't be edited.
+    public mutating func setWorldPath(_ path: BezierPath, at idx: (Int, Int)) {
+        let m = layers[idx.0].worldMatrix(ofShape: idx.1)
+        if m == .identity {
+            layers[idx.0].shapes[idx.1].path = path
+        } else if let inverse = m.inverted {
+            var local = path
+            local.apply(inverse)
+            layers[idx.0].shapes[idx.1].path = local
+        }
+    }
+
+    /// Changes the path of the shape at `idx` in world space (see `setWorldPath`).
+    public mutating func updateWorldPath(at idx: (Int, Int), _ change: (inout BezierPath) -> Void) {
+        if layers[idx.0].worldMatrix(ofShape: idx.1) == .identity {
+            change(&layers[idx.0].shapes[idx.1].path)
+            return
+        }
+        var path = layers[idx.0].worldShape(idx.1).path
+        change(&path)
+        setWorldPath(path, at: idx)
+    }
+
+    /// Shape `ref` as it is drawn: in world space, with no transform.
+    public func worldShape(_ ref: ShapeRef) -> VectorShape? {
+        indices(ref).map { layers[$0.0].worldShape($0.1) }
+    }
+
+    /// Moves, turns, scales or flips the selection by `t` (in world space), as the Select
+    /// tool does: by changing the transform of the selected layers, of a wholly selected
+    /// group, or of each selected shape, so the points stay as they are. When the result
+    /// can't be a transform (a stretch across a turned object skews it), `t` goes into
+    /// the points instead. `pivot` (world space), when given, becomes the pivot of the
+    /// shapes' and group's transforms, so the turn they keep is about it.
+    public mutating func apply(_ t: Affine2D, to selection: Selection, pivot: Vec2? = nil) {
         switch selection {
         case .none:
             break
         case .layer(let id):
-            applyToLayers(t, layerIndex(id).map { [$0] } ?? [])
+            if let p = layerIndex(id) { transformLayer(p, by: t) }
         case .layers(let ids):
-            applyToLayers(t, layers.indices.filter { ids.contains(layers[$0].id) })
-        case .shape(let pid, let sid):
-            guard let idx = indices(layer: pid, shape: sid) else { return }
-            layers[idx.0].shapes[idx.1].apply(t)
-        case .shapes:
-            for (p, s) in shapeIndices(in: selection) { layers[p].shapes[s].apply(t) }
+            for p in layers.indices where ids.contains(layers[p].id) { transformLayer(p, by: t) }
+        case .shape, .shapes:
+            if let (p, group) = wholeGroup(selection), let g = layers[p].groups.firstIndex(where: { $0.id == group.id }) {
+                let parent = layers[p].transform.matrix
+                if let inverse = parent.inverted {
+                    let old = layers[p].groups[g].transform
+                    var start = old
+                    if let pivot, let toOwn = (parent * old.matrix).inverted { start = old.withPivot(toOwn.apply(pivot)) }
+                    if let next = Transform(matrix: inverse * t * parent * old.matrix, pivot: start.pivot, near: old.rotation) {
+                        layers[p].groups[g].transform = next
+                        return
+                    }
+                }
+            }
+            for (p, s) in shapeIndices(in: selection) { transformShape(p, s, by: t, pivot: pivot) }
         case .reference(let id):
             guard let r = referenceIndex(id) else { return }
             references[r].apply(t)
         }
     }
 
-    /// Transforms whole layers (layer indices) and their pivots.
-    private mutating func applyToLayers(_ t: Affine2D, _ indices: [Int]) {
-        for p in indices {
-            for s in layers[p].shapes.indices { layers[p].shapes[s].apply(t) }
-            layers[p].pivot = t.apply(layers[p].pivot)
+    /// `apply` for layer index `p`: its transform takes `t`, about its own pivot.
+    private mutating func transformLayer(_ p: Int, by t: Affine2D) {
+        let old = layers[p].transform
+        if let next = Transform(matrix: t * old.matrix, pivot: old.pivot, near: old.rotation) {
+            layers[p].transform = next
+        } else {
+            for s in layers[p].shapes.indices { layers[p].updateWorldShape(s) { $0.apply(t) } }
         }
     }
 
-    public func applying(_ t: Affine2D, to selection: Selection) -> Drawing {
+    /// `apply` for shape `s` of layer index `p`.
+    private mutating func transformShape(_ p: Int, _ s: Int, by t: Affine2D, pivot: Vec2?) {
+        let layer = layers[p]
+        let parent = layer.parentMatrix(group: layer.shapes[s].group)
+        let old = layer.shapes[s].transform
+        if let inverse = parent.inverted {
+            var start = old
+            if let pivot, let toOwn = (parent * old.matrix).inverted { start = old.withPivot(toOwn.apply(pivot)) }
+            if let next = Transform(matrix: inverse * t * parent * old.matrix, pivot: start.pivot, near: old.rotation) {
+                layers[p].shapes[s].transform = next
+                return
+            }
+        }
+        layers[p].updateWorldShape(s) { $0.apply(t) }
+    }
+
+    /// The drawing as it is drawn: every layer, group and shape transform applied to the
+    /// points, and cleared (a layer keeps its pivot, now in the world). Ids and the rest
+    /// are unchanged. Renderers, exports and the shape index work from this. Without
+    /// transforms it is the drawing itself.
+    public var world: Drawing {
+        guard layers.contains(where: \.hasTransforms) else { return self }
         var copy = self
-        copy.apply(t, to: selection)
+        copy.layers = layers.map(Drawing.worldLayer)
+        return copy
+    }
+
+    /// `layer` as it is drawn (see `world`).
+    public static func worldLayer(_ layer: Layer) -> Layer {
+        guard layer.hasTransforms else { return layer }
+        var copy = layer
+        copy.shapes = layer.worldShapes
+        copy.transform = Transform(pivot: layer.worldPivot)
+        for g in layer.groups.indices { copy.groups[g].transform = .identity }
+        return copy
+    }
+
+    public func applying(_ t: Affine2D, to selection: Selection, pivot: Vec2? = nil) -> Drawing {
+        var copy = self
+        copy.apply(t, to: selection, pivot: pivot)
         return copy
     }
 }

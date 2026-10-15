@@ -574,6 +574,8 @@ private struct ContextBar: View {
             Button("Flip Vertical", systemImage: "arrow.up.and.down.righttriangle.up.righttriangle.down") {
                 store.flip(horizontal: false)
             }
+            Button("Apply Transform", systemImage: "checkmark.rectangle") { store.applyTransform() }
+                .disabled(!ui.canApplyTransform)
         }
         .labelStyle(.iconOnly)
     }

@@ -28,6 +28,8 @@ final class EditorUIState {
     var canSplit = false
     var canJoin = false
     var canTransform = false
+    /// The selection has a layer, group or shape transform that Apply Transform can bake.
+    var canApplyTransform = false
     var penActive = false
     var addToSelection = false
     var autoJoin = false
@@ -274,6 +276,7 @@ final class CanvasStore {
         update(\.canSplit, editingPoints && editor.canSplitAtSelectedAnchor)
         update(\.canJoin, editor.canJoinSelection)
         update(\.canTransform, editor.canTransformSelection)
+        update(\.canApplyTransform, editor.canApplyTransform)
         update(\.penActive, editor.isPenActive)
         update(\.addToSelection, editor.addToSelection)
         update(\.autoJoin, editor.autoJoinSelectedLayer)
@@ -403,6 +406,7 @@ final class CanvasStore {
     func setAutoJoin(_ on: Bool) { edit { $0.editor.autoJoinSelectedLayer = on } }
     func setSnap(_ snap: SnapSettings) { edit { $0.editor.snap = snap } }
     func flip(horizontal: Bool) { edit { $0.editor.flipSelection(horizontal: horizontal) } }
+    func applyTransform() { edit { $0.editor.applyTransform() } }
     func nudge(_ dx: Double, _ dy: Double) { edit { $0.editor.nudge(by: Vec2(dx, dy)) } }
     func resetPivot() { edit { $0.editor.resetPivot() } }
     func rotateSelection(degrees: Double) { edit { $0.editor.rotateSelection(byDegrees: degrees) } }
@@ -530,7 +534,7 @@ final class CanvasStore {
         edit { _ = $0.editor.importLayers(result.layers) }
         let editor = session.editor
         let bounds = editor.drawing.shapeIndices(in: editor.selection).reduce(Rect.null) {
-            $0.union(editor.drawing.layers[$1.0].shapes[$1.1].bounds)
+            $0.union(editor.drawing.layers[$1.0].worldShape($1.1).bounds)
         }
         if !bounds.isNull {
             session.zoom(toFit: bounds, viewSize: Vec2(viewSize))

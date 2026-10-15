@@ -24,6 +24,8 @@ enum ThumbnailRenderer {
     }
 
     private static func renderPNG(for drawing: Drawing, size: Int) -> Data? {
+        // Drawn as it looks: the transforms go into the points.
+        let drawing = drawing.world
         let bounds = drawing.layers.reduce(Rect.null) { $0.union($1.bounds) }
         guard !bounds.isNull, max(bounds.width, bounds.height) > 0 else { return nil }
         guard let context = makeContext(width: size, height: size) else { return nil }
@@ -45,6 +47,7 @@ enum ThumbnailRenderer {
     /// `scale` pixels per point (less if the image would pass `maxExportSide`).
     static func exportPNG(for drawing: Drawing, area: Rect, scale: Double) -> Data? {
         guard !area.isNull, area.width > 0, area.height > 0, scale > 0 else { return nil }
+        let drawing = drawing.world
         let k = min(scale, maxExportSide / max(area.width, area.height))
         let width = max(Int((area.width * k).rounded()), 1), height = max(Int((area.height * k).rounded()), 1)
         guard let context = makeContext(width: width, height: height) else { return nil }

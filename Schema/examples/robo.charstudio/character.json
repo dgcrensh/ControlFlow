@@ -136,6 +136,7 @@
         "Antenna": {
           "type": "vector",
           "pivot": [0, -110],
+          "transform": { "rotation": 12 },
           "shapes": [
             {
               "closed": false,

@@ -104,8 +104,11 @@ extension DrawingEditor {
         let layer = drawing.layers[p]
         if let group = isolatedGroup, layer.id == isolatedLayer, let last = layer.members(ofGroup: group).last {
             shape.group = group
+            shape = layer.adopting(shape)
             drawing.layers[p].shapes.insert(shape, at: last + 1)
         } else {
+            shape.group = shape.group.flatMap { layer.group($0) == nil ? nil : $0 }
+            shape = layer.adopting(shape)
             drawing.layers[p].shapes.append(shape)
         }
     }

@@ -27,7 +27,7 @@ In this order:
 - `bones`: only `root`, with `parent: null`, `length: 0` and no transform, so every attachment is in world space.
 - `slots`: one per layer, all on `root`. A slot's id is the layer's name, kept unique.
 - `drawOrder`: slot ids from back to front.
-- `skins.default[slot][slot]`: a `vector` attachment with the layer's `pivot`, its `groups` and its `shapes`, back to front. Attachments and shapes may carry `hidden: true` and `locked: true`, editor hints written only when set.
+- `skins.default[slot][slot]`: a `vector` attachment with the layer's `pivot`, an optional `transform`, its `groups` and its `shapes`, back to front. Attachments and shapes may carry `hidden: true` and `locked: true`, editor hints written only when set.
 - A shape is `closed`, an optional `fill`, an optional `stroke` (`color`, `width`) and `points`. Each point has the anchor `p`, handles `in` and `out` as offsets from `p`, `smooth: false` on corner points, and `symmetric: true` on points whose handles are kept equally long.
 - `palette`: reusable colors. Plain `#RRGGBBAA` strings come first, then global colors as `{ "name", "color" }`.
 - `references`: editor-only reference images, bottom to top, with placement (`x`, `y` center, `rotation`, `scale`), `opacity` and `hidden`.
@@ -48,6 +48,15 @@ Every key here is optional and written only when it differs from its default, so
 - **Opacity**: `opacity` (0 to 1) multiplies the alpha of the fill and of the outline, each on its own.
 - **Clipping**: a shape with `clipped: true` draws only where the nearest unclipped shape below it in the same attachment draws (its fill and outline), like a clipping mask. Several clipped shapes in a row share that base. A clipped shape with nothing below it draws unclipped. In a [group](#groups), the base is looked for only within the group, so a clipped shape at the bottom of its group draws unclipped. Outside a group, the shapes of a clipped group count as clipped, so a clipped shape above a clipped group shares the group's base.
 - **Global colors**: `fillGlobal` on a shape and `global` on a stroke name a global color in `palette`. `fill` and `color` still hold the current value, so readers that ignore global colors draw the same thing; the editor changes every follower when the global color changes.
+
+## Transforms
+
+ControlFlow's layers, groups and shapes each have a transform, saved as an optional `transform` object on the attachment, on a group and on a shape. These keys are new in ControlFlow; the version stays 0.3, and a file without them reads as before.
+
+- `transform` is `{ "position", "rotation", "scale", "pivot" }`: the object scales by `scale` and turns by `rotation` (degrees, clockwise) about `pivot`, then moves by `position`. As a matrix, `translate(position + pivot) · rotate(rotation) · scale(scale) · translate(-pivot)`.
+- They compose layer, then group, then shape, and a shape's `points` (and its gradient) are in the shape's own space, before its transform. An outline's width scales with the transform as the art does.
+- `transform` is written only when it moves something, and each key only when it isn't its default (`[0, 0]`, `0`, `[1, 1]`, `[0, 0]`). A layer's transform has no `pivot`: its pivot is the attachment's `pivot`.
+- `rotation` is not wrapped, so `720` is two turns, and a negative `scale` flips.
 
 ## Groups
 
