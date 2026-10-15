@@ -28,6 +28,13 @@ final class EditorUIState {
     var canSplit = false
     var canJoin = false
     var canTransform = false
+    /// Align and Distribute apply to the selection (or the selected anchors).
+    var canAlign = false
+    var canDistribute = false
+    /// One unit is selected, so Align lines it up with the viewport whatever `alignTarget` says.
+    var alignsToViewportOnly = false
+    /// What Align and Distribute line things up against. Kept for the session only.
+    var alignTarget: AlignTarget = .selection
     /// The selection has a layer, group or shape transform that Apply Transform can bake.
     var canApplyTransform = false
     var penActive = false
@@ -317,6 +324,9 @@ final class CanvasStore {
         update(\.canSplit, editingPoints && editor.canSplitAtSelectedAnchor)
         update(\.canJoin, editor.canJoinSelection)
         update(\.canTransform, editor.canTransformSelection)
+        update(\.canAlign, editor.canAlign)
+        update(\.canDistribute, editor.canDistribute)
+        update(\.alignsToViewportOnly, editor.alignsToViewportOnly)
         update(\.canApplyTransform, editor.canApplyTransform)
         update(\.penActive, editor.isPenActive)
         update(\.addToSelection, editor.addToSelection)
@@ -564,6 +574,9 @@ final class CanvasStore {
 
     func duplicate() { edit { $0.editor.duplicateSelection() } }
     func arrange(_ move: ArrangeMove) { edit { $0.editor.arrange(move) } }
+    func align(_ edge: AlignEdge) { let target = ui.alignTarget; edit { $0.editor.align(edge, to: target) } }
+    func distribute(_ mode: DistributeMode) { let target = ui.alignTarget; edit { $0.editor.distribute(mode, to: target) } }
+    func setAlignTarget(_ target: AlignTarget) { ui.alignTarget = target }
     func hideSelection() { edit { $0.editor.hideSelection() } }
     func lockSelection() { edit { $0.editor.lockSelection() } }
     func showAll() { edit { $0.editor.showAll() } }
