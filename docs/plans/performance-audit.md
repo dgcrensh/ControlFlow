@@ -29,7 +29,7 @@ frame or every touch sample.**
 | 7 | Undo history is unbounded and holds whole-drawing snapshots (shipped) | `UndoStack.swift:6`, `DrawingEditor.swift:1541` | Long sessions, memory | S |
 | 8 | Full-screen stencil passes per clip base and group; 4x MSAA everywhere (clip clears shipped; MSAA unmeasured) | `ArtBatch.swift:199-203`, `243`; `CanvasRenderer.swift:75` | Many clipped shapes, fill-rate on 12.9" at 2x | M |
 | 9 | Document hand-off and thumbnail re-render on every finished change, including picker ticks (shipped) | `CanvasStore.swift:187-197`, `CharacterDocument.swift:28-31` | Autosave churn, I/O | S |
-| 10 | No benchmarks or signposts, so none of this is measured (shipped: see below) | `Packages/CharacterCore/Tests` | Now | S |
+| 10 | No benchmarks or signposts, so none of this is measured (shipped: see below) | `Packages/ControlFlowCore/Tests` | Now | S |
 
 Suggested order: 10 first (so the rest can be checked), then 1, 3, 6, 7 as quick wins, then 2 and 4,
 then 5, 8, 9. 10 shipped first; the quick wins 1 (its cheap half), 3, 6 and 7 shipped next, on top of
@@ -95,7 +95,7 @@ Recommendations:
   work. A uniform grid or a simple BVH is the next step if the scan itself shows up.
 - Hit-test against the renderer's cached flattened polygon rather than re-flattening: `ArtBuilder`
   already holds `fan` and `outline` for every drawn shape at the current tolerance. Moving the
-  tessellation cache into CharacterCore as a `DrawingGeometryCache` keyed by shape id, shared by the
+  tessellation cache into ControlFlowCore as a `DrawingGeometryCache` keyed by shape id, shared by the
   renderer, hit-testing, the overlay and the thumbnail, is the single change that removes the most
   repeated work. `recommendations.md` #3 (flatten at 0.5/zoom) folds into this.
 - For the eraser, sample along the segment against bounds first, then test only the candidates, and
@@ -338,12 +338,12 @@ Recommendations:
   points plus the predicted tail each frame.
 - Only upload the art buffer when `vertices` changed; with finding 2 done, a drag won't change it.
 
-Shipped (2026-10-11): `VertexBufferPool` (`CharacterStudio/Canvas/VertexBufferPool.swift`) keeps
+Shipped (2026-10-11): `VertexBufferPool` (`ControlFlow/Canvas/VertexBufferPool.swift`) keeps
 up to 16 shared-storage buffers, grown in powers of two, and writes into one only when every frame
 that used it has finished (a `FrameClock` counts committed frames and the command buffers'
 completion handlers report the finished ones); with none free it falls back to a one-off buffer, so
 it never blocks. The art buffer is pinned until the next rebuild. Capsule draws under 4 KB use
-`setVertexBytes`. `LiveStrokeTessellator` (CharacterCore) keeps the committed points' segments
+`setVertexBytes`. `LiveStrokeTessellator` (ControlFlowCore) keeps the committed points' segments
 between frames and tessellates only the new points and the predicted tail; a test checks it matches
 `CapsuleTessellator.vertices(for:)` as a stroke grows, with pressure, and when a quick shape replaces
 the points. The art buffer is still uploaded on every rebuild (that waits on finding 2), and the
@@ -437,7 +437,7 @@ Recommendations:
 
 Shipped (2026-10-11):
 
-- `DocumentHandOff` (CharacterCore) decides when `CanvasStore` hands the drawing to the document.
+- `DocumentHandOff` (ControlFlowCore) decides when `CanvasStore` hands the drawing to the document.
   Restyles (`refreshStyle`: colors, outline width, opacity, gradients, global colors) are held until
   `quietPeriod` (0.5 s) passes without another, then handed off once; any other finished change hands
   off at once, with whatever was held. The store flushes a held change when the document's view goes
@@ -455,7 +455,7 @@ Shipped (2026-10-11):
 
 Done on 2026-10-11, on top of `main` (so before #15-#17 landed):
 
-- `PerformanceTests` in `CharacterCoreTests` times, on a generated `StressDrawing`:
+- `PerformanceTests` in `ControlFlowCoreTests` times, on a generated `StressDrawing`:
   `ArtBuilder.build` cold and warm, `Drawing.hitTest` miss and hit (20 calls each), an eraser
   stroke of 20 samples diagonally across the character, `LayerTree(drawing:)` (10 calls),
   `CharacterFormat.encode` plus `formatted()`, `EditorOverlay.vertices` in outline view with a part
@@ -472,7 +472,7 @@ Done on 2026-10-11, on top of `main` (so before #15-#17 landed):
 - Instead of a stress document in `Schema/examples/`, the generator is the repeatable source: the
   full drawing would be several megabytes of JSON, and the schema check and the byte-for-byte test
   would have to carry it.
-- The app has `os_signpost` intervals (`CharacterStudio/Canvas/Signposts.swift`, Points of Interest
+- The app has `os_signpost` intervals (`ControlFlow/Canvas/Signposts.swift`, Points of Interest
   category): `Frame` around `CanvasRenderer.render`, `Art rebuild`, `Overlay build` and `Encode`
   inside it, and `Refresh` around `CanvasStore.refresh`. More were added later; see "Signposts" below.
 
@@ -485,9 +485,9 @@ color-picker drag with the layers panel open.
 
 ```sh
 # Quarter size, debug, as CI runs it
-swift test --package-path Packages/CharacterCore --filter PerformanceTests
+swift test --package-path Packages/ControlFlowCore --filter PerformanceTests
 # Full size, optimized: closer to the app
-STRESS_DRAWING=full swift test -c release --package-path Packages/CharacterCore --filter PerformanceTests
+STRESS_DRAWING=full swift test -c release --package-path Packages/ControlFlowCore --filter PerformanceTests
 ```
 
 Each test logs `measured [Time, seconds] average: ...` over 10 runs. Compare the averages before
@@ -617,7 +617,7 @@ largest size. The same workloads at the audit's size (2,400 shapes) are also `Pe
 (`testArtRebuildAfterOneEdit`, `testPencilStroke`, `testOpenDocument` and so on).
 
 ```sh
-STRESS_DRAWING=full swift test -c release --package-path Packages/CharacterCore --filter ScalingTests
+STRESS_DRAWING=full swift test -c release --package-path Packages/ControlFlowCore --filter ScalingTests
 ```
 
 First numbers, on top of PR #21, `-c release`, same Mac as above, milliseconds per call, median of 9:
@@ -924,4 +924,4 @@ The vertex counts are identical and other rows are unchanged within noise. Writi
 - `layers-plan.md` phases 3-4 and the group masking in PR #17 are the source of finding 3 and most of
   finding 8; neither needs a design change, only the one-pass clip plan.
 - The shared geometry cache in finding 1 is the enabling piece for findings 2, 5 and 9 and should be
-  designed once, in CharacterCore, with the renderer as its first client.
+  designed once, in ControlFlowCore, with the renderer as its first client.

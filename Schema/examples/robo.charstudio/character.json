@@ -2,26 +2,12 @@
   "formatVersion": "0.3.0",
   "name": "Robo",
   "bones": [
-    { "id": "root", "parent": null, "length": 0, "x": 0, "y": 0, "rotation": 0, "scaleX": 1, "scaleY": 1 },
-    { "id": "Spine", "parent": "root", "length": 80, "x": 0, "y": -10, "rotation": -90, "scaleX": 1, "scaleY": 1 },
-    {
-      "id": "Neck",
-      "parent": "Spine",
-      "length": 20,
-      "x": 80,
-      "y": 0,
-      "rotation": 0,
-      "scaleX": 1,
-      "scaleY": 1,
-      "limits": { "min": -30, "max": 30 }
-    },
-    { "id": "Arm.L", "parent": "Spine", "length": 40, "x": 70, "y": 36, "rotation": 90, "scaleX": 1, "scaleY": 1 },
-    { "id": "Arm.R", "parent": "Spine", "length": 40, "x": 70, "y": -36, "rotation": -90, "scaleX": 1, "scaleY": 1 }
+    { "id": "root", "parent": null, "length": 0, "x": 0, "y": 0, "rotation": 0, "scaleX": 1, "scaleY": 1 }
   ],
   "slots": [
     { "id": "Torso", "bone": "root", "attachment": "Torso" },
-    { "id": "Head", "bone": "Neck", "attachment": "Head" },
-    { "id": "Antenna", "bone": "Neck", "attachment": "Antenna", "accessoryOf": "Head" }
+    { "id": "Head", "bone": "root", "attachment": "Head" },
+    { "id": "Antenna", "bone": "root", "attachment": "Antenna" }
   ],
   "drawOrder": ["Torso", "Head", "Antenna"],
   "skins": {
@@ -94,7 +80,7 @@
       "Head": {
         "Head": {
           "type": "vector",
-          "pivot": [20, 0],
+          "pivot": [0, -110],
           "groups": [
             { "id": 1, "name": "Visor", "clipped": true }
           ],
@@ -105,10 +91,10 @@
               "fillGlobal": "Skin",
               "stroke": { "color": "#222222FF", "global": "Ink", "width": 3, "align": "inside" },
               "points": [
-                { "p": [60, 0], "in": [0, -22.0914], "out": [0, 22.0914] },
-                { "p": [20, 40], "in": [22.0914, 0], "out": [-22.0914, 0] },
-                { "p": [-20, 0], "in": [0, 22.0914], "out": [0, -22.0914] },
-                { "p": [20, -40], "in": [-22.0914, 0], "out": [22.0914, 0] }
+                { "p": [0, -150], "in": [-22.0914, 0], "out": [22.0914, 0] },
+                { "p": [40, -110], "in": [0, -22.0914], "out": [0, 22.0914] },
+                { "p": [0, -70], "in": [22.0914, 0], "out": [-22.0914, 0] },
+                { "p": [-40, -110], "in": [0, 22.0914], "out": [0, -22.0914] }
               ]
             },
             {
@@ -116,10 +102,10 @@
               "group": 1,
               "fill": "#22334AFF",
               "points": [
-                { "p": [24, -44], "in": [0, 0], "out": [0, 0], "smooth": false },
-                { "p": [40, -44], "in": [0, 0], "out": [0, 0], "smooth": false },
-                { "p": [40, 44], "in": [0, 0], "out": [0, 0], "smooth": false },
-                { "p": [24, 44], "in": [0, 0], "out": [0, 0], "smooth": false }
+                { "p": [-44, -114], "in": [0, 0], "out": [0, 0], "smooth": false },
+                { "p": [-44, -130], "in": [0, 0], "out": [0, 0], "smooth": false },
+                { "p": [44, -130], "in": [0, 0], "out": [0, 0], "smooth": false },
+                { "p": [44, -114], "in": [0, 0], "out": [0, 0], "smooth": false }
               ]
             },
             {
@@ -128,19 +114,19 @@
               "fill": "#FFFFFF66",
               "clipped": true,
               "points": [
-                { "p": [34, -44], "in": [0, 0], "out": [0, 0], "smooth": false },
-                { "p": [37, -44], "in": [0, 0], "out": [0, 0], "smooth": false },
-                { "p": [37, 44], "in": [0, 0], "out": [0, 0], "smooth": false },
-                { "p": [34, 44], "in": [0, 0], "out": [0, 0], "smooth": false }
+                { "p": [-44, -124], "in": [0, 0], "out": [0, 0], "smooth": false },
+                { "p": [-44, -127], "in": [0, 0], "out": [0, 0], "smooth": false },
+                { "p": [44, -127], "in": [0, 0], "out": [0, 0], "smooth": false },
+                { "p": [44, -124], "in": [0, 0], "out": [0, 0], "smooth": false }
               ]
             },
             {
               "closed": false,
               "stroke": { "color": "#222222FF", "global": "Ink", "width": 2.5 },
               "points": [
-                { "p": [6, -14], "in": [0, 0], "out": [-5, 4], "w": 0.3 },
-                { "p": [-1, 0], "in": [0, -8], "out": [0, 8], "w": 1.4 },
-                { "p": [6, 14], "in": [-5, -4], "out": [0, 0], "w": 0.3 }
+                { "p": [-14, -96], "in": [0, 0], "out": [4, 5], "w": 0.3 },
+                { "p": [0, -89], "in": [-8, 0], "out": [8, 0], "w": 1.4 },
+                { "p": [14, -96], "in": [-4, 5], "out": [0, 0], "w": 0.3 }
               ]
             }
           ]
@@ -149,15 +135,14 @@
       "Antenna": {
         "Antenna": {
           "type": "vector",
-          "pivot": [20, 0],
+          "pivot": [0, -110],
           "shapes": [
             {
               "closed": false,
               "stroke": { "color": "#222222FF", "global": "Ink", "width": 3 },
-              "behindOwner": true,
               "points": [
-                { "p": [50, 0], "in": [0, 0], "out": [0, 0], "smooth": false },
-                { "p": [78, 0], "in": [0, 0], "out": [0, 0], "smooth": false }
+                { "p": [0, -140], "in": [0, 0], "out": [0, 0], "smooth": false },
+                { "p": [0, -168], "in": [0, 0], "out": [0, 0], "smooth": false }
               ]
             },
             {
@@ -166,10 +151,10 @@
               "fillGlobal": "Body",
               "stroke": { "color": "#222222FF", "global": "Ink", "width": 3 },
               "points": [
-                { "p": [90, 0], "in": [0, -3.3137], "out": [0, 3.3137] },
-                { "p": [84, 6], "in": [3.3137, 0], "out": [-3.3137, 0] },
-                { "p": [78, 0], "in": [0, 3.3137], "out": [0, -3.3137] },
-                { "p": [84, -6], "in": [-3.3137, 0], "out": [3.3137, 0] }
+                { "p": [0, -180], "in": [-3.3137, 0], "out": [3.3137, 0] },
+                { "p": [6, -174], "in": [0, -3.3137], "out": [0, 3.3137] },
+                { "p": [0, -168], "in": [3.3137, 0], "out": [-3.3137, 0] },
+                { "p": [-6, -174], "in": [0, 3.3137], "out": [0, -3.3137] }
               ]
             }
           ]
@@ -177,16 +162,6 @@
       }
     }
   },
-  "poses": {
-    "Nod": {
-      "Neck": { "rotation": 20 }
-    },
-    "Lean": {
-      "Spine": { "rotation": -10 },
-      "Neck": { "rotation": 15 }
-    }
-  },
-  "animations": {},
   "palette": [
     "#FFFFFF80",
     { "name": "Skin", "color": "#F2A65AFF" },
@@ -207,5 +182,5 @@
       "hidden": false
     }
   ],
-  "frame": { "x": -90, "y": -170, "width": 180, "height": 190, "ground": 8 }
+  "viewport": { "width": 1920, "height": 1080, "background": "#FFFFFFFF" }
 }

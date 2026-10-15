@@ -4,5 +4,5 @@ xcuserdata/
 DerivedData/
 .build/
 .swiftpm/
-Packages/CharacterCore/.build/
+Packages/ControlFlowCore/.build/
 .venv/

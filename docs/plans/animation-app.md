@@ -45,7 +45,7 @@ The old `.charstudio` files do not open.
 ## 3. Viewport
 
 - The viewport is a fixed rectangle in world space, `width` × `height` points, with its top-left at the world origin.
-- **Aspect presets:** 16:9 (default, 1920 × 1080), 4:3, 1:1 and 9:16, plus a custom W:H. Changing the aspect keeps the width and the center, and it never moves art.
+- **Aspect presets:** 16:9 (default, 1920 × 1080), 4:3, 1:1 and 9:16, plus a custom W:H. Changing the aspect keeps the width and the top-left (at the world origin), and it never moves art. (Milestone 1 settled this: keeping the center would move the top-left off the origin.)
 - **Background color:** an animatable property of the viewport object (default `#FFFFFFFF`).
 - **While editing,** the canvas stays infinite with the dot grid. The viewport draws as a filled rectangle in its background color with a thin border. Art outside it draws dimmed (a veil at 50%, reusing the isolation veil), so off-stage art can wait there and fly in.
 - **While presenting,** only the viewport draws, letterboxed to the screen, and anything outside it is cropped.
@@ -247,7 +247,13 @@ Design choices now that keep this cheap later:
 
 ## 11. Milestones
 
-1. **Strip and rename:** remove the character infrastructure (§2), rename the app and package to ControlFlow, add the `Viewport` with the editor veil, and keep CI green. The document format can stay on a temporary internal save until milestone 3.
+1. **Strip and rename** (shipped): remove the character infrastructure (§2), rename the app and package to ControlFlow, add the `Viewport` with the editor veil, and keep CI green. The document format can stay on a temporary internal save until milestone 3.
+   - The app, target and scheme are `ControlFlow`, the package is `ControlFlowCore`, and the bundle id is `com.dgcrensh.ControlFlow`.
+   - The interim save is still a `.charstudio` package with format 0.3: the writer emits only the root bone, slots, the default skin, palette, references and an optional `viewport` key, and the reader places old files' art with their bones' rest transforms and drops the rest of the rig. Old Character Studio files therefore still open (art only) until format 1.0 replaces this.
+   - The pip and tam examples went with the rig; robo stays as the format example.
+   - The wiggle preview and joint caps were dropped with the rig. Symmetry, Duplicate Mirrored and pivot snapping stay.
+   - Not done here: `Part` → `Layer` (it comes with milestone 2's transforms, which rework the layer model anyway) and `CharacterFormat`/`CharacterPackage` (milestone 3).
+   - The viewport background is not written into SVG exports (an SVG importer would read it back as a shape); PNG exports fill it.
 2. **Identity and transforms:** vertex ids everywhere, with tests that each editing operation keeps or assigns ids as §4 says. Add layer, group and shape transforms, make Select edit transforms, and add Apply Transform.
 3. **Keyframe core:** sequences, deltas, the resolver with lazy snapshots, edit-to-delta, the timeline commands (§5.3), interpolation (§6, including born and dying vertices) and format 1.0 with its schema and example. Everything is in CharacterCore with Linux tests and the shared test vectors.
 4. **Timeline UI:** the strip, Set Keyframe, the transition popover and curve editor, scrubbing, Play Sequence, onion skin and changed indicators.

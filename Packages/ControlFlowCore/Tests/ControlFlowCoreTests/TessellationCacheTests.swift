@@ -1,0 +1,322 @@
+import XCTest
+@testable import ControlFlowCore
+
+/// The art's tessellation cache and the background refine that `CanvasRenderer` runs
+/// when a pinch crosses a zoom bucket (plan step 1).
+final class TessellationCacheTests: XCTestCase {
+    private static func circle(_ center: Vec2, _ r: Double) -> BezierPath {
+        let k = 0.5523 * r
+        return BezierPath(points: [
+            PathPoint(center + Vec2(r, 0), in: Vec2(0, -k), out: Vec2(0, k)),
+            PathPoint(center + Vec2(0, r), in: Vec2(k, 0), out: Vec2(-k, 0)),
+            PathPoint(center + Vec2(-r, 0), in: Vec2(0, k), out: Vec2(0, -k)),
+            PathPoint(center + Vec2(0, -r), in: Vec2(-k, 0), out: Vec2(k, 0)),
+        ], closed: true)
+    }
+
+    /// A row of circles 100 points apart, alternately filled and outlined, with the
+    /// first two shapes of the second part clipped (a base and a clipped shape).
+    private static func row(count: Int = 8) -> Drawing {
+        var d = Drawing()
+        var parts = [Part(id: d.makeID(), name: "A"), Part(id: d.makeID(), name: "B")]
+        for i in 0..<count {
+            let colors = [RGBAColor(r: 1, g: 0, b: 0), RGBAColor(r: 0, g: 0, b: 1), RGBAColor(r: 0, g: 0.6, b: 0)]
+            var shape = VectorShape(id: d.makeID(), path: circle(Vec2(Double(i) * 100, 0), 40),
+                                    fill: colors[i % 3],
+                                    stroke: i % 2 == 0 ? StrokeStyle(color: .ink, width: 6) : nil)
+            if i == count / 2 + 1 { shape.isClipped = true }
+            parts[i < count / 2 ? 0 : 1].shapes.append(shape)
+        }
+        // The clipped shape overlaps its base.
+        parts[1].shapes[1].path = circle(Vec2(Double(count / 2) * 100 + 30, 0), 40)
+        d.parts = parts
+        return d
+    }
+
+    private static func ids(_ d: Drawing) -> [Int] { d.parts.flatMap { $0.shapes.map(\.id) } }
+
+    /// The same vertices and steps; segment ids are per builder, so they aren't compared.
+    private func assertSameArt(_ a: ArtBatch, _ b: ArtBatch, file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertEqual(a.vertices, b.vertices, file: file, line: line)
+        XCTAssertEqual(a.steps, b.steps, file: file, line: line)
+    }
+
+    // MARK: Merge
+
+    func testMergeKeepsUnchangedShapesAndTheWarmBuildTessellatesNothing() {
+        let drawing = Self.row()
+        var builder = ArtBuilder()
+        _ = builder.build(drawing, isolatedPart: nil, tolerance: 1)
+        let plan = builder.tessellations.refinePlan(for: drawing, tolerance: 0.1, viewRect: nil)
+        XCTAssertEqual(plan.rest.count, drawing.shapeCount)
+        let result = TessellationCache.tessellate(plan.rest, tolerance: 0.1)!
+        XCTAssertEqual(builder.tessellations.merge(result, for: drawing), drawing.shapeCount)
+
+        builder.tessellationCount = 0
+        let warm = builder.build(drawing, isolatedPart: nil, tolerance: 0.1)
+        XCTAssertEqual(builder.tessellationCount, 0)
+        var cold = ArtBuilder()
+        assertSameArt(warm, cold.build(drawing, isolatedPart: nil, tolerance: 0.1))
+    }
+
+    func testMergeDropsAShapeEditedWhileTheJobRan() {
+        let drawing = Self.row()
+        var builder = ArtBuilder()
+        _ = builder.build(drawing, isolatedPart: nil, tolerance: 1)
+        let job = builder.tessellations
+        let result = TessellationCache.tessellate(job.refinePlan(for: drawing, tolerance: 0.1, viewRect: nil).rest,
+                                                  tolerance: 0.1)!
+
+        // Meanwhile on the main thread: one shape is edited, another deleted, and the
+        // edit is built at the old tolerance.
+        var edited = drawing
+        edited.parts[0].shapes[1].path = Self.circle(Vec2(100, 0), 20)
+        let deleted = edited.parts[1].shapes.removeLast().id
+        _ = builder.build(edited, isolatedPart: nil, tolerance: 1)
+
+        XCTAssertEqual(builder.tessellations.merge(result, for: edited), edited.shapeCount - 1)
+        let shape = edited.parts[0].shapes[1]
+        XCTAssertNil(builder.tessellations.tessellation(of: shape, tolerance: 0.1))
+        XCTAssertNotNil(builder.tessellations.tessellation(of: shape, tolerance: 1))
+        XCTAssertTrue(builder.tessellations.tolerances(of: deleted).isEmpty)
+        XCTAssertNotNil(builder.tessellations.tessellation(of: edited.parts[0].shapes[0], tolerance: 0.1))
+
+        // The next build at the new tolerance tessellates only the edited shape.
+        builder.tessellationCount = 0
+        let warm = builder.build(edited, isolatedPart: nil, tolerance: 0.1)
+        XCTAssertEqual(builder.tessellationCount, 1)
+        var cold = ArtBuilder()
+        assertSameArt(warm, cold.build(edited, isolatedPart: nil, tolerance: 0.1))
+    }
+
+    func testACancelledJobReturnsNothing() {
+        let drawing = Self.row()
+        let shapes = drawing.parts.flatMap(\.shapes)
+        var calls = 0
+        XCTAssertNil(TessellationCache.tessellate(shapes, tolerance: 0.1) {
+            calls += 1
+            return calls > 3
+        })
+        XCTAssertEqual(calls, 4)
+    }
+
+    // MARK: Visible first
+
+    func testThePlanPutsTheShapesMeetingTheViewFirst() {
+        let drawing = Self.row(count: 12)
+        var builder = ArtBuilder()
+        _ = builder.build(drawing, isolatedPart: nil, tolerance: 1)
+        // 160 × 80 around x = 300: grown by a quarter of 160, it reaches x = 180...420.
+        let view = Rect(minPoint: Vec2(220, -40), maxPoint: Vec2(380, 40))
+        let plan = builder.tessellations.refinePlan(for: drawing, tolerance: 0.1, viewRect: view)
+        let grown = view.outset(by: 40)
+        let meeting = drawing.parts.flatMap(\.shapes).filter { $0.hitBounds.intersects(grown) }.map(\.id)
+        XCTAssertEqual(plan.visible.map(\.id), meeting)
+        XCTAssertEqual(Set(meeting), Set(drawing.parts.flatMap(\.shapes).filter {
+            let x = $0.path.points[2].position.x + 40 // the circle's center
+            return x > 100 && x < 500
+        }.map(\.id)))
+        XCTAssertEqual(Set(plan.visible.map(\.id) + plan.rest.map(\.id)), Set(Self.ids(drawing)))
+        XCTAssertTrue(Set(plan.visible.map(\.id)).isDisjoint(with: plan.rest.map(\.id)))
+
+        // The first result is exactly those shapes.
+        let first = TessellationCache.tessellate(plan.visible, tolerance: 0.1)!
+        XCTAssertEqual(first.shapeIDs, meeting)
+    }
+
+    func testThePlanSkipsHiddenShapesAndShapesAlreadyAtTheTolerance() {
+        var drawing = Self.row()
+        drawing.parts[0].shapes[0].isHidden = true
+        var builder = ArtBuilder()
+        _ = builder.build(drawing, isolatedPart: nil, tolerance: 1)
+        var plan = builder.tessellations.refinePlan(for: drawing, tolerance: 1, viewRect: nil)
+        XCTAssertTrue(plan.isEmpty)
+        plan = builder.tessellations.refinePlan(for: drawing, tolerance: 0.1, viewRect: nil)
+        XCTAssertEqual(plan.rest.count, drawing.shapeCount - 1)
+        XCTAssertFalse(plan.rest.contains { $0.id == drawing.parts[0].shapes[0].id })
+    }
+
+    // MARK: Mixed tolerances
+
+    /// While a refine is under way, the renderer builds with some shapes at the new
+    /// tolerance and the rest at the old one. That draws the same picture as an all-fine
+    /// build, except within the coarse flattening's error of an edge.
+    func testAMixedToleranceBuildDrawsLikeAnAllFineBuild() {
+        let drawing = Self.row(count: 8)
+        let coarse = 4.0, fine = 0.1
+        var builder = ArtBuilder()
+        _ = builder.build(drawing, isolatedPart: nil, tolerance: coarse)
+        // Refine the shapes around x = 300...500 (both parts, including the clip base
+        // and its clipped shape), as the job's first result would.
+        let view = Rect(minPoint: Vec2(330, -40), maxPoint: Vec2(470, 40))
+        let plan = builder.tessellations.refinePlan(for: drawing, tolerance: fine, viewRect: view)
+        XCTAssertFalse(plan.visible.isEmpty)
+        XCTAssertFalse(plan.rest.isEmpty)
+        builder.tessellations.merge(TessellationCache.tessellate(plan.visible, tolerance: fine)!, for: drawing)
+
+        builder.tessellationCount = 0
+        let mixed = builder.build(drawing, isolatedPart: nil, tolerance: fine, reusingOtherTolerances: true)
+        XCTAssertEqual(builder.tessellationCount, 0, "a mixed build reuses the coarse shapes")
+        for shape in plan.visible {
+            XCTAssertEqual(builder.tessellations.tolerances(of: shape.id).first, fine)
+        }
+        for shape in plan.rest {
+            XCTAssertEqual(builder.tessellations.tolerances(of: shape.id), [coarse])
+        }
+        var allFine = ArtBuilder()
+        let expected = allFine.build(drawing, isolatedPart: nil, tolerance: fine)
+        XCTAssertNotEqual(mixed, expected)
+
+        // Points near an edge (within the coarse error and the outline) may differ.
+        let polygons = drawing.parts.flatMap(\.shapes).map { $0.path.flattened(tolerance: 0.25) }
+        func nearAnEdge(_ p: Vec2) -> Bool {
+            polygons.contains { poly in
+                (0..<poly.count).contains { i in p.distance(toSegment: poly[i], poly[(i + 1) % poly.count]) < coarse + 4.5 }
+            }
+        }
+        var compared = 0
+        for x in stride(from: -50.0, through: 750, by: 10) {
+            for y in stride(from: -50.0, through: 50, by: 10) {
+                let p = Vec2(x, y)
+                guard !nearAnEdge(p) else { continue }
+                let a = StencilSimulator.run(mixed, at: p), b = StencilSimulator.run(expected, at: p)
+                XCTAssertTrue(a.isColor(RGBAColor(r: b.color.r, g: b.color.g, b: b.color.b)), "at \(p)")
+                compared += 1
+            }
+        }
+        XCTAssertGreaterThan(compared, 300)
+    }
+
+    // MARK: First frame after opening
+
+    /// The renderer's first build after opening has nothing cached: leaving out the
+    /// uncached parts, it draws nothing and tessellates nothing.
+    func testAColdBuildLeavingOutUncachedTessellatesNothing() {
+        let drawing = Self.row()
+        var builder = ArtBuilder()
+        let batch = builder.build(drawing, isolatedPart: nil, tolerance: 0.1, reusingOtherTolerances: true,
+                                  leavingOutUncached: true)
+        XCTAssertTrue(batch.steps.isEmpty)
+        XCTAssertTrue(batch.segments.isEmpty)
+        XCTAssertEqual(batch.partsLeftOut, drawing.parts.count)
+        XCTAssertEqual(builder.tessellationCount, 0)
+        XCTAssertEqual(builder.cachedShapeCount, 0)
+    }
+
+    /// With `wholeParts`, the job's first batch is every part in view, whole, so each
+    /// merge shows complete parts: first those in view, then the rest. Neither build
+    /// tessellates anything, and the last draws what a cold build draws.
+    func testTheFirstFrameShowsWholePartsAsTheJobMerges() {
+        var drawing = Self.row()
+        // A hidden shape never gets a tessellation, and doesn't hold its part back.
+        drawing.parts[0].shapes[3].isHidden = true
+        // Around the first two circles of part A only.
+        let view = Rect(minPoint: Vec2(-40, -40), maxPoint: Vec2(60, 40))
+        var builder = ArtBuilder()
+        let byShape = builder.tessellations.refinePlan(for: drawing, tolerance: 0.1, viewRect: view)
+        XCTAssertEqual(byShape.visible.count, 2)
+        let plan = builder.tessellations.refinePlan(for: drawing, tolerance: 0.1, viewRect: view, wholeParts: true)
+        XCTAssertEqual(plan.visible.map(\.id), drawing.parts[0].shapes.prefix(3).map(\.id))
+        XCTAssertEqual(plan.rest.map(\.id), drawing.parts[1].shapes.map(\.id))
+
+        builder.tessellations.merge(TessellationCache.tessellate(plan.visible, tolerance: 0.1)!, for: drawing)
+        let first = builder.build(drawing, isolatedPart: nil, tolerance: 0.1, reusingOtherTolerances: true,
+                                  leavingOutUncached: true)
+        XCTAssertEqual(first.partsLeftOut, 1)
+        var onlyA = drawing
+        onlyA.parts.removeLast()
+        var reference = ArtBuilder()
+        assertSameArt(first, reference.build(onlyA, isolatedPart: nil, tolerance: 0.1))
+
+        builder.tessellations.merge(TessellationCache.tessellate(plan.rest, tolerance: 0.1)!, for: drawing)
+        let all = builder.build(drawing, isolatedPart: nil, tolerance: 0.1, reusingOtherTolerances: true,
+                                leavingOutUncached: true)
+        XCTAssertEqual(all.partsLeftOut, 0)
+        XCTAssertEqual(builder.tessellationCount, 0)
+        var cold = ArtBuilder()
+        assertSameArt(all, cold.build(drawing, isolatedPart: nil, tolerance: 0.1))
+    }
+
+    /// A part waiting for the job keeps the slot and tessellations it had, so an edit
+    /// made before the job finishes is built as usual once the renderer stops leaving out.
+    func testAnEditedPartWaitsAndIsBuiltOnceTheJobIsDone() {
+        let drawing = Self.row()
+        var builder = ArtBuilder()
+        let plan = builder.tessellations.refinePlan(for: drawing, tolerance: 0.1, viewRect: nil, wholeParts: true)
+        builder.tessellations.merge(TessellationCache.tessellate(plan.rest, tolerance: 0.1)!, for: drawing)
+        var edited = drawing
+        edited.parts[0].shapes[1].path = Self.circle(Vec2(100, 0), 20)
+        let waiting = builder.build(edited, isolatedPart: nil, tolerance: 0.1, reusingOtherTolerances: true,
+                                    leavingOutUncached: true)
+        XCTAssertEqual(waiting.partsLeftOut, 1)
+        XCTAssertEqual(builder.tessellationCount, 0)
+
+        let done = builder.build(edited, isolatedPart: nil, tolerance: 0.1)
+        XCTAssertEqual(done.partsLeftOut, 0)
+        XCTAssertEqual(builder.tessellationCount, 1)
+        var cold = ArtBuilder()
+        assertSameArt(done, cold.build(edited, isolatedPart: nil, tolerance: 0.1))
+    }
+
+    // MARK: Second tier
+
+    func testASecondTierMakesABucketBackAndForthWarm() {
+        let drawing = Self.row()
+        let n = drawing.shapeCount
+        var builder = ArtBuilder()
+        _ = builder.build(drawing, isolatedPart: nil, tolerance: 0.2)
+        _ = builder.build(drawing, isolatedPart: nil, tolerance: 0.1)
+        XCTAssertEqual(builder.tessellationCount, 2 * n)
+        XCTAssertGreaterThan(builder.tessellations.secondTierVertexCount, 0)
+        let back = builder.build(drawing, isolatedPart: nil, tolerance: 0.2)
+        _ = builder.build(drawing, isolatedPart: nil, tolerance: 0.1)
+        XCTAssertEqual(builder.tessellationCount, 2 * n)
+        var cold = ArtBuilder()
+        assertSameArt(back, cold.build(drawing, isolatedPart: nil, tolerance: 0.2))
+
+        // A third tolerance pushes out the least recently used one.
+        _ = builder.build(drawing, isolatedPart: nil, tolerance: 0.05)
+        XCTAssertEqual(builder.tessellations.tolerances(of: drawing.parts[0].shapes[0].id), [0.05, 0.1])
+        XCTAssertEqual(builder.tessellationCount, 3 * n)
+    }
+
+    func testTheSecondTierIsDroppedAboveTheVertexLimit() {
+        let drawing = Self.row()
+        let n = drawing.shapeCount
+        var builder = ArtBuilder()
+        _ = builder.build(drawing, isolatedPart: nil, tolerance: 1)
+        _ = builder.build(drawing, isolatedPart: nil, tolerance: 0.05)
+        XCTAssertGreaterThan(builder.tessellations.secondTierVertexCount, 0)
+
+        // Lowering the limit below what the first tier holds drops the second tier.
+        builder.tessellations.secondTierLimit = builder.tessellations.vertexCount - 1
+        XCTAssertEqual(builder.tessellations.secondTierVertexCount, 0)
+        for id in Self.ids(drawing) { XCTAssertEqual(builder.tessellations.tolerances(of: id), [0.05]) }
+
+        // A coarser tolerance holds fewer vertices, so it can keep the fine one below it...
+        _ = builder.build(drawing, isolatedPart: nil, tolerance: 1)
+        XCTAssertEqual(builder.tessellationCount, 3 * n)
+        XCTAssertGreaterThan(builder.tessellations.secondTierVertexCount, 0)
+        // ...but no limit leaves room for none.
+        builder.tessellations.secondTierLimit = 0
+        _ = builder.build(drawing, isolatedPart: nil, tolerance: 0.05)
+        _ = builder.build(drawing, isolatedPart: nil, tolerance: 1)
+        XCTAssertEqual(builder.tessellationCount, 5 * n)
+        XCTAssertEqual(builder.tessellations.secondTierVertexCount, 0)
+    }
+
+    func testVertexCountsFollowDeletedShapes() {
+        var drawing = Self.row()
+        var builder = ArtBuilder()
+        _ = builder.build(drawing, isolatedPart: nil, tolerance: 0.2)
+        _ = builder.build(drawing, isolatedPart: nil, tolerance: 0.1)
+        drawing.parts.removeLast()
+        _ = builder.build(drawing, isolatedPart: nil, tolerance: 0.1)
+        var expected = ArtBuilder()
+        _ = expected.build(drawing, isolatedPart: nil, tolerance: 0.2)
+        _ = expected.build(drawing, isolatedPart: nil, tolerance: 0.1)
+        XCTAssertEqual(builder.tessellations.count, drawing.shapeCount)
+        XCTAssertEqual(builder.tessellations.vertexCount, expected.tessellations.vertexCount)
+        XCTAssertEqual(builder.tessellations.secondTierVertexCount, expected.tessellations.secondTierVertexCount)
+    }
+}

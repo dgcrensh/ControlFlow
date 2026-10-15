@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/dgcrensh/CharacterStudio/Schema/character-0.3.schema.json",
-  "title": "Character Studio character",
-  "description": "character.json inside a .charstudio package, format 0.3 (0.1 and 0.2 files are valid too). Units are points with the y-axis down, angles are degrees (clockwise on screen), and colors are sRGB hex with alpha. Readers should ignore keys they do not know.",
+  "$id": "https://github.com/dgcrensh/ControlFlow/Schema/character-0.3.schema.json",
+  "title": "ControlFlow document (interim)",
+  "description": "character.json inside a .charstudio package, format 0.3 (0.1 and 0.2 files are valid too). ControlFlow writes a subset of it until its own format replaces it: a root bone, slots, the default skin, palette, references and viewport. It reads older files with their rig and keeps only the art. Units are points with the y-axis down, angles are degrees (clockwise on screen), and colors are sRGB hex with alpha. Readers should ignore keys they do not know.",
   "type": "object",
   "required": ["formatVersion"],
   "properties": {
@@ -90,17 +90,14 @@
       "type": "array",
       "items": { "$ref": "#/$defs/reference" }
     },
-    "frame": {
-      "description": "Optional editor hint: the target box the character is drawn for (top-left x, y and size, in world space) and the y of the ground line it stands on. Also the area the editor exports. Written only when set.",
+    "viewport": {
+      "description": "The stage the presentation shows: a width × height box with its top-left at the world origin, filled with background. Also the area the editor exports. Defaults to 1920 × 1080 on white.",
       "type": "object",
-      "required": ["x", "y", "width", "height"],
+      "required": ["width", "height"],
       "properties": {
-        "x": { "type": "number" },
-        "y": { "type": "number" },
         "width": { "type": "number", "exclusiveMinimum": 0 },
         "height": { "type": "number", "exclusiveMinimum": 0 },
-        "ground": { "description": "Defaults to the bottom of the box.", "type": "number" },
-        "hidden": { "description": "Written only when true: the editor doesn't show the frame.", "type": "boolean" }
+        "background": { "$ref": "#/$defs/color" }
       }
     }
   },
