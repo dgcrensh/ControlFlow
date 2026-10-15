@@ -1,5 +1,7 @@
 import ControlFlowCore
+import CoreText
 import SwiftUI
+import UIKit
 import UniformTypeIdentifiers
 
 /// The editor for one document.
@@ -295,6 +297,8 @@ private struct EditMenu: View {
             Button("Paste", systemImage: "doc.on.clipboard") { store.paste() }
             Button("Delete", systemImage: "trash", role: .destructive) { store.deleteSelection() }
                 .disabled(ui.selection == .none)
+            Button("Convert to Outlines", systemImage: "character.textbox") { store.convertTextToOutlines() }
+                .disabled(!ui.canConvertToOutlines)
             Menu("Select", systemImage: "cursorarrow.rays") {
                 Button("Select Layer", systemImage: "arrow.up.square") { store.selectParent() }
                     .disabled(!ui.canSelectParent)
@@ -381,6 +385,7 @@ private struct ToolButton: View {
         (.pencil, "Pencil", "pencil.tip"),
         (.pen, "Pen", "pencil.and.outline"),
         (.shape, "Shapes", "square.on.circle"),
+        (.text, "Text", "textformat"),
         (.select, "Select", "cursorarrow"),
         (.directSelect, "Direct Select", "point.topleft.down.to.point.bottomright.curvepath"),
         (.eraser, "Eraser", "eraser"),
@@ -481,6 +486,17 @@ private struct ContextBar: View {
                 Text("Tap an outline to cut it there")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
+            case .text:
+                TextStyleControls(store: store, ui: ui)
+                if !ui.isEditingText {
+                    Text("Tap to type, drag for a box that wraps")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            if ui.tool == .select, ui.selectionHasText {
+                Divider().frame(height: 24)
+                TextStyleControls(store: store, ui: ui)
             }
 
             if [Tool.pen, .shape, .select, .directSelect].contains(ui.tool) { snapMenu }
@@ -653,6 +669,124 @@ private struct ContextBar: View {
             Button("Nudge Right", systemImage: "arrow.right") { store.nudge(1, 0) }
         }
         .labelStyle(.iconOnly)
+    }
+}
+
+/// The style of new text and of the selected text: font, size, weight and slant (for
+/// the system font), alignment, and line height and tracking under More.
+private struct TextStyleControls: View {
+    let store: CanvasStore
+    let ui: EditorUIState
+    @State private var choosingFont = false
+    @State private var showingMore = false
+
+    private static let weights: [(value: Int, name: String)] = [
+        (100, "Thin"), (200, "Extra Light"), (300, "Light"), (400, "Regular"), (500, "Medium"),
+        (600, "Semibold"), (700, "Bold"), (800, "Heavy"), (900, "Black"),
+    ]
+
+    var body: some View {
+        let style = ui.textStyle
+        HStack(spacing: 14) {
+            Menu {
+                Button("System") { store.setTextFont(TextContent.systemFont) }
+                Button("Choose Font…") { choosingFont = true }
+            } label: {
+                Label(Self.fontName(style.font), systemImage: "textformat")
+                    .labelStyle(.titleAndIcon)
+                    .lineLimit(1)
+            }
+            .popover(isPresented: $choosingFont) {
+                FontPicker { name in
+                    store.setTextFont(name)
+                    choosingFont = false
+                }
+                .frame(minWidth: 320, minHeight: 480)
+            }
+            Stepper("\(Int(style.size.rounded())) pt", value: Binding(get: { style.size }, set: { store.setTextSize($0) }),
+                    in: TextContent.sizeRange, step: 4)
+                .fixedSize()
+            if style.isSystemFont {
+                Picker("Weight", selection: Binding(get: { style.weight }, set: { store.setTextWeight($0) })) {
+                    ForEach(Self.weights, id: \.value) { Text($0.name).tag($0.value) }
+                }
+                .pickerStyle(.menu)
+                .fixedSize()
+                Toggle(isOn: Binding(get: { style.italic }, set: { store.setTextItalic($0) })) {
+                    Label("Italic", systemImage: "italic")
+                }
+                .toggleStyle(.button)
+                .labelStyle(.iconOnly)
+            }
+            Picker("Alignment", selection: Binding(get: { style.align }, set: { store.setTextAlignment($0) })) {
+                Image(systemName: "text.alignleft").accessibilityLabel("Left").tag(ControlFlowCore.TextAlignment.left)
+                Image(systemName: "text.aligncenter").accessibilityLabel("Center").tag(ControlFlowCore.TextAlignment.center)
+                Image(systemName: "text.alignright").accessibilityLabel("Right").tag(ControlFlowCore.TextAlignment.right)
+            }
+            .pickerStyle(.segmented)
+            .frame(width: 130)
+            Button("More", systemImage: "ellipsis.circle") { showingMore = true }
+                .labelStyle(.iconOnly)
+                .popover(isPresented: $showingMore) {
+                    Form {
+                        LabeledContent("Line Height") {
+                            Slider(value: Binding(get: { style.lineHeight }, set: { store.setTextLineHeight(($0 * 20).rounded() / 20) }),
+                                   in: 0.5...3)
+                                .frame(width: 160)
+                            Text("\(style.lineHeight, format: .number.precision(.fractionLength(2)))x")
+                                .monospacedDigit()
+                                .frame(width: 52, alignment: .trailing)
+                        }
+                        LabeledContent("Tracking") {
+                            Slider(value: Binding(get: { style.tracking }, set: { store.setTextTracking($0.rounded()) }),
+                                   in: -20...100)
+                                .frame(width: 160)
+                            Text("\(Int(style.tracking)) pt")
+                                .monospacedDigit()
+                                .frame(width: 52, alignment: .trailing)
+                        }
+                    }
+                    .frame(minWidth: 340, minHeight: 140)
+                }
+        }
+    }
+
+    /// A font's name as the picker shows it, "System" for the system font, and a note
+    /// for a font this iPad doesn't have.
+    static func fontName(_ name: String) -> String {
+        guard name != TextContent.systemFont else { return "System" }
+        guard let font = UIFont(name: name, size: 17) else { return "\(name) (missing)" }
+        return CTFontCopyFullName(font as CTFont) as String
+    }
+}
+
+/// The system font picker, choosing a font face by its PostScript name.
+private struct FontPicker: UIViewControllerRepresentable {
+    let onPick: (String) -> Void
+
+    func makeUIViewController(context: Context) -> UIFontPickerViewController {
+        let configuration = UIFontPickerViewController.Configuration()
+        configuration.includeFaces = true
+        let picker = UIFontPickerViewController(configuration: configuration)
+        picker.delegate = context.coordinator
+        return picker
+    }
+
+    func updateUIViewController(_ controller: UIFontPickerViewController, context: Context) {
+        context.coordinator.onPick = onPick
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator(onPick: onPick) }
+
+    final class Coordinator: NSObject, UIFontPickerViewControllerDelegate {
+        var onPick: (String) -> Void
+
+        init(onPick: @escaping (String) -> Void) { self.onPick = onPick }
+
+        func fontPickerViewControllerDidPickFont(_ viewController: UIFontPickerViewController) {
+            guard let descriptor = viewController.selectedFontDescriptor else { return }
+            onPick(descriptor.postscriptName)
+        }
     }
 }
 

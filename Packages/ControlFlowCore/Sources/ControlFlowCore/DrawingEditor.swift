@@ -16,6 +16,8 @@ public enum Tool: String, Hashable, Sendable, CaseIterable {
     case eraser
     /// Tap an outline to cut the path there.
     case scissors
+    /// Tap to type a text, drag to make a text box that wraps, or tap a text to edit it.
+    case text
 }
 
 /// Live symmetry: new strokes, shapes and pen paths get a mirrored copy across a
@@ -134,6 +136,9 @@ public struct DrawingEditor: Sendable {
             selectedAnchors = []
             customPivot = nil
             if let selected = selectionStyle { style = selected }
+            if let text = selectedText { textStyle = text.style }
+            // Editing a text ends when it is no longer the selection.
+            if let edit = textEdit, selection != .shape(layer: edit.ref.layer, shape: edit.ref.shape) { endTextEdit() }
         }
     }
     /// The selected anchor indices of the one shape the direct-select tool is editing.
@@ -148,6 +153,7 @@ public struct DrawingEditor: Sendable {
             guard tool != oldValue else { return }
             cancelGesture()
             if oldValue == .pen { penFinish() }
+            if textEdit != nil, !textEditKeepsTool { endTextEdit() }
             penCursor = nil
             previousTool = oldValue
             lastTap = nil
@@ -160,6 +166,15 @@ public struct DrawingEditor: Sendable {
     /// Dims everything but the selection (see `ghostFocus`).
     public var ghostsUnselected = false
     public var symmetry = SymmetrySettings()
+    /// The style new text is set in (its `string` is unused).
+    public var textStyle = TextContent()
+    /// The text being typed into, if any (see `beginTextEdit`).
+    public internal(set) var textEdit: TextEditState?
+    /// Numbers the editing sessions, so each is one undo step.
+    var textEditCount = 0
+    /// Set while a select-tool double tap switches to the text tool to edit, so the
+    /// switch doesn't end the edit it starts.
+    var textEditKeepsTool = false
     /// What the shape tool draws, and its settings.
     public var shapeKind: ShapeKind = .rectangle
     public var shapeOptions = ShapeToolOptions()
@@ -330,6 +345,10 @@ public struct DrawingEditor: Sendable {
         case penJoin(ShapeRef, PathEnd)
         /// A scissors press on an outline.
         case cut(ShapeRef, segment: Int, t: Double)
+        /// The text tool on the text being edited: a tap places the caret, a drag selects.
+        case textCaret(ShapeRef)
+        /// The text tool on empty canvas: a tap starts a text, a drag a text box.
+        case textNew
         case empty
     }
 
@@ -354,6 +373,12 @@ public struct DrawingEditor: Sendable {
         /// The shape tool's drag; `ref` is the shape once the drag has made one.
         case shapeDraw(start: Vec2, ref: ShapeRef?, before: Drawing)
         case erase(before: Drawing, last: Vec2)
+        /// The text tool dragging out a text box's width (shown as the marquee).
+        case textBox(start: Vec2)
+        /// The text tool dragging a selection in the text being edited, from `anchor`.
+        case textSelect(ShapeRef, anchor: Int)
+        /// The select tool dragging a text box's side, changing its wrap width.
+        case textWidth(ShapeRef, leftSide: Bool, before: Drawing)
         /// A drag that does nothing (for example, from a pen shortcut target).
         case idle
     }
@@ -383,6 +408,8 @@ public struct DrawingEditor: Sendable {
             } else {
                 gesture = .pending(.empty, start: p)
             }
+        case .text:
+            gesture = beginText(at: p, px: px)
         }
     }
 
@@ -404,6 +431,10 @@ public struct DrawingEditor: Sendable {
             return hitShape(at: p, tolerance: reach)
         case .scissors:
             return hoverCut?.ref
+        case .text:
+            guard let hit = hitShape(at: p, tolerance: EditorMetrics.shapeHit / hoverZoom),
+                  drawing.shape(hit)?.text != nil, hit != textEdit?.ref else { return nil }
+            return hit
         case .pencil, .pen, .shape:
             return nil
         }
@@ -510,6 +541,16 @@ public struct DrawingEditor: Sendable {
             eraseAlong(last, p)
             self.gesture = .erase(before: before, last: p)
 
+        case .textBox(let start):
+            marquee = Rect(from: start, to: p)
+
+        case .textSelect(let ref, let anchor):
+            guard textEdit?.ref == ref, let offset = textOffset(at: p, in: ref) else { return }
+            setTextSelection(min(anchor, offset)..<max(anchor, offset), fromApp: false)
+
+        case .textWidth(let ref, let leftSide, let before):
+            setTextWidth(of: ref, dragging: leftSide, to: p, before: before)
+
         case .idle:
             break
         }
@@ -552,7 +593,12 @@ public struct DrawingEditor: Sendable {
         case .marquee(_, let additive, let baseShapes, let baseAnchors):
             if let rect = marquee { finishMarquee(rect, additive: additive, baseShapes: baseShapes, baseAnchors: baseAnchors) }
             marquee = nil
-        case .idle:
+        case .textBox(let start):
+            marquee = nil
+            startText(at: Vec2(min(start.x, p.x), min(start.y, p.y)), width: abs(p.x - start.x))
+        case .textWidth(_, _, let before):
+            commit(from: before)
+        case .textSelect, .idle:
             break
         }
     }
@@ -579,9 +625,11 @@ public struct DrawingEditor: Sendable {
         case .penPlace(_, _, let before, let penBefore):
             drawing = before
             penPath = penBefore
-        case .marquee:
+        case .marquee, .textBox:
             marquee = nil
-        case .pending, .idle:
+        case .textWidth(_, _, let before):
+            drawing = before
+        case .pending, .textSelect, .idle:
             break
         }
     }
@@ -611,6 +659,10 @@ public struct DrawingEditor: Sendable {
                 let mids = frame.edgeMidpoints
                 if let k = mids.indices.min(by: { mids[$0].distance(to: p) < mids[$1].distance(to: p) }),
                    mids[k].distance(to: p) <= reach {
+                    // A text box's sides change where it wraps instead.
+                    if k % 2 == 1, let ref = activeShape, drawing.shape(ref)?.text?.width != nil {
+                        return .textWidth(ref, leftSide: k == 3, before: drawing)
+                    }
                     return .transform(.stretch(anchor: mids[(k + 2) % 4], horizontal: k % 2 == 1),
                                       target: selection, before: drawing, start: p)
                 }
@@ -638,7 +690,10 @@ public struct DrawingEditor: Sendable {
         guard tool == .select else { return }
         if let hit = hitShape(at: p, tolerance: EditorMetrics.shapeHit / gestureZoom) {
             let ref = ShapeRef(layer: hit.layer, shape: hit.shape)
-            if let group = tapGroup(of: ref) {
+            if drawing.shape(ref)?.text != nil, tapGroup(of: ref) == nil {
+                // Double-tapping a text edits it, with the caret where it was tapped.
+                editText(ref, at: p)
+            } else if let group = tapGroup(of: ref) {
                 isolate(group: group, inLayer: hit.layer)
                 selection = .shape(layer: hit.layer, shape: hit.shape)
             } else if isolatedLayer != hit.layer {
@@ -740,6 +795,11 @@ public struct DrawingEditor: Sendable {
 
     static func marqueeTouches(_ shape: VectorShape, _ rect: Rect) -> Bool {
         guard shape.hitBounds.intersects(rect) else { return false }
+        // A text's box counts, so an empty one can be caught too.
+        if let frame = shape.textFrame {
+            if frame.contains(where: { rect.contains($0) }) { return true }
+            for i in frame.indices where rect.intersectsSegment(frame[i], frame[(i + 1) % frame.count]) { return true }
+        }
         let poly = shape.path.flattened(tolerance: 0.5)
         if poly.contains(where: { rect.contains($0) }) { return true }
         guard poly.count > 1 else { return false }
@@ -751,7 +811,8 @@ public struct DrawingEditor: Sendable {
 
     private mutating func beginDirectSelect(at p: Vec2, px: Double) -> Gesture {
         // The selected anchor's handles come first.
-        if let ref = activeShape, let path = drawing.worldShape(ref)?.path {
+        if let ref = activeShape, let shape = drawing.worldShape(ref), shape.text == nil {
+            let path = shape.path
             // A handle folded into its anchor (a corner with no handle) can't be grabbed,
             // so the anchor underneath stays draggable.
             let handles = visibleHandles(of: path).filter { path.points[$0.index].position.distance(to: $0.position) > 1e-6 }
@@ -792,7 +853,7 @@ public struct DrawingEditor: Sendable {
     private func pickAnchorOrCurve(at p: Vec2, among refs: [ShapeRef], px: Double) -> Pending? {
         var bestAnchor: (ref: ShapeRef, index: Int, distance: Double)?
         for ref in refs {
-            guard let shape = drawing.worldShape(ref) else { continue }
+            guard let shape = drawing.worldShape(ref), shape.text == nil else { continue }
             for (i, point) in shape.path.points.enumerated() {
                 let d = point.position.distance(to: p)
                 if d <= EditorMetrics.anchorHit * px, d < (bestAnchor?.distance ?? .infinity) {
@@ -804,7 +865,7 @@ public struct DrawingEditor: Sendable {
 
         var bestCurve: (ref: ShapeRef, segment: Int, t: Double, distance: Double)?
         for ref in refs {
-            guard let shape = drawing.worldShape(ref), let near = shape.path.nearestSegment(to: p),
+            guard let shape = drawing.worldShape(ref), shape.text == nil, let near = shape.path.nearestSegment(to: p),
                   near.distance <= EditorMetrics.curveHit * px + (shape.stroke?.width ?? 0) / 2,
                   near.distance < (bestCurve?.distance ?? .infinity) else { continue }
             bestCurve = (ref, near.segment, near.t, near.distance)
@@ -1005,6 +1066,13 @@ public struct DrawingEditor: Sendable {
                             baseShapes: Set(drawing.shapeRefs(in: selection)), baseAnchors: selectedAnchors)
         case .penFinish, .penClose, .penJoin:
             return .idle
+        case .textNew:
+            marquee = Rect(from: start, to: start)
+            return .textBox(start: start)
+        case .textCaret(let ref):
+            guard let offset = textOffset(at: start, in: ref) else { return .idle }
+            setTextSelection(offset..<offset, fromApp: false)
+            return .textSelect(ref, anchor: offset)
         }
     }
 
@@ -1063,7 +1131,7 @@ public struct DrawingEditor: Sendable {
                 }
             case .handle:
                 break
-            case .empty, .selectionBody, .pivot, .penFinish, .penClose, .penJoin, .cut:
+            case .empty, .selectionBody, .pivot, .penFinish, .penClose, .penJoin, .cut, .textCaret, .textNew:
                 if !selectedAnchors.isEmpty {
                     selectedAnchors = []
                 } else if !addToSelection {
@@ -1072,7 +1140,41 @@ public struct DrawingEditor: Sendable {
             }
         case .scissors:
             if case .cut(let ref, let segment, let t) = pending { cut(ref, segment: segment, t: t) }
+        case .text:
+            tapText(pending, at: p)
         case .shape, .eraser:
+            break
+        }
+    }
+
+    // MARK: Text tool
+
+    private mutating func beginText(at p: Vec2, px: Double) -> Gesture {
+        if let edit = textEdit, textOffset(at: p, in: edit.ref, tolerance: EditorMetrics.shapeHit * px) != nil {
+            return .pending(.textCaret(edit.ref), start: p)
+        }
+        if let hit = hitShape(at: p, tolerance: EditorMetrics.shapeHit * px), drawing.shape(hit)?.text != nil {
+            return .pending(.shape(hit), start: p)
+        }
+        return .pending(.textNew, start: p)
+    }
+
+    /// A text-tool tap: places the caret in the text being edited, edits another text,
+    /// ends the edit when it lands elsewhere, or else starts a new text there.
+    private mutating func tapText(_ pending: Pending, at p: Vec2) {
+        switch pending {
+        case .textCaret(let ref):
+            if let offset = textOffset(at: p, in: ref) { setTextSelection(offset..<offset, fromApp: false) }
+        case .shape(let ref):
+            editText(ref, at: p)
+        case .textNew:
+            if textEdit != nil {
+                endTextEdit()
+            } else {
+                // The tap is the middle of the first line, at its start.
+                startText(at: p - Vec2(0, textStyle.lineSpacing / 2), width: nil)
+            }
+        default:
             break
         }
     }
@@ -1207,14 +1309,16 @@ public struct DrawingEditor: Sendable {
             addToActiveLayer(&shape, layer: p)
             return ShapeRef(layer: target, shape: shape.id)
         }
+        // Where the shape is in the world, its own transform included (a new text has one).
+        let placed = shape.baked(shape.transform.matrix).bounds
         if autoJoinSelectedLayer, let target = selectedLayerID, let p = drawing.layerIndex(target),
-           !joinNeedsOverlap || drawing.layers[p].bounds.intersects(shape.bounds) {
+           !joinNeedsOverlap || drawing.layers[p].bounds.intersects(placed) {
             drawing.layers[p].insertWorldShape(shape)
             return ShapeRef(layer: target, shape: shape.id)
         }
         let id = drawing.makeID()
         let name = drawing.uniqueLayerName("Layer \(drawing.layers.count + 1)")
-        drawing.layers.append(Layer(id: id, name: name, shapes: [shape], pivot: shape.bounds.center))
+        drawing.layers.append(Layer(id: id, name: name, shapes: [shape], pivot: placed.center))
         return ShapeRef(layer: id, shape: shape.id)
     }
 
@@ -1267,12 +1371,14 @@ public struct DrawingEditor: Sendable {
 
     public mutating func undo() {
         cancelGesture()
+        endTextEdit()
         guard let state = undoStack.undo(current: snapshot) else { return }
         restore(state)
     }
 
     public mutating func redo() {
         cancelGesture()
+        endTextEdit()
         guard let state = undoStack.redo(current: snapshot) else { return }
         restore(state)
     }
@@ -1467,6 +1573,7 @@ public struct DrawingEditor: Sendable {
     /// Replaces the whole document (opening state and keyframes), as one undo step,
     /// staying on the same keyframe when it is still there.
     public mutating func replacePresentation(_ presentation: Presentation) {
+        endTextEdit()
         cancelGesture()
         let before = snapshot
         var presentation = presentation
@@ -1578,6 +1685,7 @@ public struct DrawingEditor: Sendable {
     }
 
     mutating func validateSelection() {
+        if let edit = textEdit, drawing.shape(edit.ref)?.text == nil { textEdit = nil }
         if !drawing.exists(selection) { selection = .none }
         let count = activeShape.flatMap { drawing.shape($0)?.path.points.count } ?? 0
         let valid = selectedAnchors.filter { $0 < count }

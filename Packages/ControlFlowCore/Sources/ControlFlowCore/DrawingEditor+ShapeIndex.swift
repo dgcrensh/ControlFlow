@@ -4,7 +4,7 @@ extension Tool {
     /// The tools whose hover or touch looks for shapes near the Pencil.
     var usesShapeIndex: Bool {
         switch self {
-        case .select, .directSelect, .eraser, .scissors: true
+        case .select, .directSelect, .eraser, .scissors, .text: true
         case .pencil, .pen, .shape: false
         }
     }
@@ -71,6 +71,8 @@ extension DrawingEditor {
         var best: (ref: ShapeRef, segment: Int, t: Double, distance: Double, path: BezierPath)?
         let hit = EditorMetrics.curveHit / zoom
         func consider(_ ref: ShapeRef, _ shape: VectorShape, _ control: Rect) {
+            // A text's glyphs are laid out, not cut.
+            guard shape.text == nil else { return }
             let reach = hit + (shape.stroke?.width ?? 0) / 2
             let limit = min(reach, best?.distance ?? .infinity)
             guard control.outset(by: reach).contains(p),

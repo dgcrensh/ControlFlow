@@ -28,6 +28,12 @@ public struct UndoStack<State: Sendable>: Sendable {
         lastKey = coalescingKey
     }
 
+    /// Forgets the newest undo step, for one that turned out to change nothing.
+    public mutating func dropLast() {
+        _ = undoStates.popLast()
+        lastKey = nil
+    }
+
     public mutating func undo(current: State) -> State? {
         guard let state = undoStates.popLast() else { return nil }
         redoStates.append(current)

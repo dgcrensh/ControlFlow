@@ -12,6 +12,9 @@ extension FocusedValues {
 struct EditorCommands: Commands {
     @FocusedValue(\.canvasStore) private var store
 
+    /// While a text is being typed into, single keys are typing, not commands.
+    private var typing: Bool { store?.ui.isEditingText == true }
+
     var body: some Commands {
         CommandGroup(replacing: .undoRedo) {
             Group {
@@ -36,6 +39,9 @@ struct EditorCommands: Commands {
                     .keyboardShortcut("d", modifiers: [.command, .shift])
                 Button("Delete") { store?.deleteSelection() }
                     .keyboardShortcut(.delete, modifiers: [])
+                    .disabled(typing)
+                Button("Convert to Outlines") { store?.convertTextToOutlines() }
+                    .keyboardShortcut("o", modifiers: [.command, .shift])
             }
             .disabled(store == nil)
         }
@@ -43,8 +49,10 @@ struct EditorCommands: Commands {
             Group {
                 Button("Select Layer") { store?.selectParent() }
                     .keyboardShortcut(.upArrow)
+                    .disabled(typing)
                 Button("Select All in Layer") { store?.selectAllInLayer() }
                     .keyboardShortcut("a")
+                    .disabled(typing)
                 Button("Invert Selection") { store?.invertSelection() }
                 Divider()
                 Button("Same Fill") { store?.selectSameFill() }
@@ -82,15 +90,19 @@ struct EditorCommands: Commands {
                     .keyboardShortcut("i", modifiers: [.command, .shift])
                 Button("Exit Isolation") { store?.stepOutOfIsolation() }
                     .keyboardShortcut(.escape, modifiers: [])
+                    .disabled(typing)
                 Divider()
-                Button("Nudge Left") { store?.nudge(-1, 0) }
-                    .keyboardShortcut(.leftArrow, modifiers: [])
-                Button("Nudge Right") { store?.nudge(1, 0) }
-                    .keyboardShortcut(.rightArrow, modifiers: [])
-                Button("Nudge Up") { store?.nudge(0, -1) }
-                    .keyboardShortcut(.upArrow, modifiers: [])
-                Button("Nudge Down") { store?.nudge(0, 1) }
-                    .keyboardShortcut(.downArrow, modifiers: [])
+                Group {
+                    Button("Nudge Left") { store?.nudge(-1, 0) }
+                        .keyboardShortcut(.leftArrow, modifiers: [])
+                    Button("Nudge Right") { store?.nudge(1, 0) }
+                        .keyboardShortcut(.rightArrow, modifiers: [])
+                    Button("Nudge Up") { store?.nudge(0, -1) }
+                        .keyboardShortcut(.upArrow, modifiers: [])
+                    Button("Nudge Down") { store?.nudge(0, 1) }
+                        .keyboardShortcut(.downArrow, modifiers: [])
+                }
+                .disabled(typing)
             }
             .disabled(store == nil)
         }
@@ -111,6 +123,7 @@ struct EditorCommands: Commands {
             Group {
                 Button("Set Keyframe") { store?.setKeyframe() }
                     .keyboardShortcut("k", modifiers: [])
+                    .disabled(typing)
                 Button("New Sequence") { store?.newSequence() }
                     .keyboardShortcut("k", modifiers: [.command, .shift])
                 Button("Play Sequence") { if let store { if store.isPlaying { store.stopPlaying() } else { store.playSequence() } } }
@@ -130,10 +143,11 @@ struct EditorCommands: Commands {
                 tool(.pen, "Pen", key: "p")
                 tool(.pencil, "Pencil", key: "n")
                 tool(.shape, "Shapes", key: "m")
+                tool(.text, "Text", key: "t")
                 tool(.eraser, "Eraser", key: "e")
                 tool(.scissors, "Scissors", key: "c")
             }
-            .disabled(store == nil)
+            .disabled(store == nil || typing)
         }
     }
 

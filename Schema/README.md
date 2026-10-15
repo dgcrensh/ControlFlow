@@ -1,14 +1,14 @@
-# Presentation file format 1.0
+# Presentation file format 1.1
 
 A ControlFlow document is a `.controlflow` package (a folder that Files shows as one document):
 
 | File | What it is |
 | --- | --- |
-| `presentation.json` | The document. Validated by [`controlflow-1.0.schema.json`](controlflow-1.0.schema.json). |
+| `presentation.json` | The document. Validated by [`controlflow-1.0.schema.json`](controlflow-1.0.schema.json), which covers every 1.x version. |
 | `thumbnail.png` | Optional 512 x 512 preview of the opening state. |
 | `references/` | Pixels of editor-only reference images, named `reference-1.png`, `reference-2.jpg`, ... |
 
-[`examples/demo.controlflow`](examples/demo.controlflow) is a complete example: a robot in three sequences that turns its head, changes color, pops up a speech bubble, grows a point on it and takes it away. The core tests check that the app re-saves it byte for byte, and CI validates it against the schema (`python Schema/validate.py`, which needs `pip install "jsonschema>=4.18"`). [`vectors/`](vectors) holds the [test vectors](#test-vectors).
+[`examples/demo.controlflow`](examples/demo.controlflow) is a complete example: a robot in three sequences that turns its head, changes color, pops up a speech bubble, grows a point on it and takes it away, with a title that spreads its letters and then changes its words. The core tests check that the app re-saves it byte for byte, and CI validates it against the schema (`python Schema/validate.py`, which needs `pip install "jsonschema>=4.18"`). [`vectors/`](vectors) holds the [test vectors](#test-vectors).
 
 Character Studio's `.charstudio` files (formats 0.1 to 0.3), which ControlFlow saved until milestone 3, don't open.
 
@@ -16,7 +16,7 @@ Character Studio's `.charstudio` files (formats 0.1 to 0.3), which ControlFlow s
 
 - Points, y-axis down. Angles in degrees, clockwise on screen. Colors are `#RRGGBBAA` sRGB with straight alpha.
 - Numbers are written with at most 4 decimal places. Keys are written in a fixed order, so saving twice gives the same file.
-- `formatVersion` is `MAJOR.MINOR`. Readers refuse a newer major version; a newer minor version only adds keys, which older readers ignore. Older files are upgraded on open by the steps in `PresentationFormat.migrations` (none yet).
+- `formatVersion` is `MAJOR.MINOR`. Readers refuse a newer major version; a newer minor version only adds keys, which older readers ignore. Older files are upgraded on open by the steps in `PresentationFormat.migrations` (none yet). 1.1 added [text](#text); a 1.0 file is a valid 1.1 file.
 - Readers should ignore keys they do not know.
 - **Ids** are positive whole numbers, each used once in the file: the viewport, global colors, layers, groups, shapes, vertices, sequences and keyframes all share one numbering. The one exception is an object created by a keyframe after an object with its id was deleted: a shape moved to another layer is deleted from one and created in the other with the same id, so it animates as one shape.
 
@@ -36,7 +36,7 @@ In this order:
 
 - A **layer** is `{ "id", "name", "transform", "groups", "shapes" }`, back to front. `groups` is written only when there are some.
 - A **group** is `{ "id", "name" }`, with `"clipped": true` on a clipped group and an optional `transform`. A shape's `group` holds its group's id; a group's shapes are next to each other in `shapes`, and groups don't nest.
-- A **shape** is `{ "id", "group", "closed", "fill", "fillGlobal", "gradient", "stroke", "opacity", "clipped", "transform", "points" }`, with only `id`, `closed` and `points` always written.
+- A **shape** is `{ "id", "group", "closed", "fill", "fillGlobal", "gradient", "stroke", "opacity", "clipped", "transform", "text", "points" }`, with only `id`, `closed` and `points` always written. A shape with `text` is a [text](#text).
 - A **vertex** is `{ "id", "p", "in", "out" }`: the anchor `p` and its handles as offsets from `p`. Optional keys: `w` (the outline width there as a multiple of the stroke width, blended along each segment; default 1), `smooth: false` on corner points, `symmetric: true` on points whose handles are kept equally long, and `stroked: false` to leave the segment to the next point without an outline (the fill still covers it).
 - **Editor hints**: layers, groups and shapes may carry `hidden: true` and `locked: true`, written only when set. Like names, they are the same at every keyframe. The app's presentation mode and the HTML export leave hidden art out, as the SVG export does.
 
@@ -48,6 +48,23 @@ Every key here is optional and written only when it differs from its default.
 - **Gradients**: `gradient` replaces a shape's solid `fill` with `{ "type", "start", "end", "stops" }`. `linear` runs from `start` to `end`; `radial` runs from `start` (the center) out to the circle through `end`. Stops are `{ "offset", "color" }`, interpolated in straight alpha. The points are in the shape's space. `fill` stays as the color for readers without gradients (the app keeps it equal to the first stop).
 - **Opacity**: `opacity` (0 to 1) multiplies the alpha of the fill and of the outline, each on its own.
 - **Clipping**: a shape with `clipped: true` draws only where the nearest unclipped shape below it in the same layer draws (its fill and outline). Several clipped shapes in a row share that base, and one with nothing below it draws unclipped. In a group the base is looked for only within the group. A clipped group draws only where the nearest shape below the group that isn't clipped (or in another clipped group) draws, and clipping inside it still works.
+
+### Text
+
+A shape with a `text` key is a text: its words are laid out in the shape's own space and filled with the shape's `fill` (and `fillGlobal`), `opacity`, `transform` and clipping, like any closed shape. A text has `"closed": true` and empty `points`, and a `stroke` on it is not drawn (outlines on text come later). Readers that don't know `text` (1.0 readers) see an empty shape and draw nothing.
+
+`text` is `{ "string", "font", "weight", "italic", "size", "align", "width", "lineHeight", "tracking" }`, with only `string` always written:
+
+- `string`: the words; `\n` breaks a line.
+- `font`: a font's PostScript name, or `"system"` (the default) for the platform's system font. A reader without the font uses the system font (the app says so when it opens the file).
+- `weight` (100 to 900, default 400) and `italic` (default false).
+- `size`: in points, default 72.
+- `align`: `left` (default), `center` or `right`.
+- `width`: the box's width, which lines wrap to (before the word that would overflow it). Without it the text is one line per `\n` and the box is as wide as the widest line; the other lines align within it.
+- `lineHeight`: line spacing as a multiple of `size`, default 1.2. Line n's box starts n × spacing below the origin, and the line's ascent and descent sit centered in it.
+- `tracking`: extra points after each character but each line's last, default 0.
+
+The box's top-left is the shape's origin. Where lines break and how the glyphs look depend on the font, so a reader with other fonts can set a text differently. The app hit-tests a text by its box, and its SVG export and HTML export carry the glyphs as outlines (the HTML export in `text.json`, beside `presentation.json`), so they look as the app does.
 
 ### Transforms
 
@@ -84,6 +101,7 @@ A transition into a keyframe animates from the scene before it to its own over `
 
 - **Numbers** (transform fields, opacity, outline width, miter limit, dash lengths and offset, per-point width, gradient points and stop offsets) and **points** (vertex positions and handle offsets) move linearly. Rotation is a plain number, so 0 to 720 turns twice.
 - **Colors** (fills, outlines, gradient stops, global colors, the viewport background) move componentwise in sRGB with straight alpha, as CSS does. Shapes following a global color follow it as it moves.
+- **Text**: `tracking` and `lineHeight` move like numbers, with lines broken as they will be at the end. Every other text key (`string`, `font`, `weight`, `italic`, `size`, `align`, `width`) takes its new value at the start.
 - **Everything else** takes its new value at the **start**: `closed`, handle modes, ends, corners, outline position, gradient kind, clipping, fill or outline turned on or off, stroked edges, group membership and draw order. Dash lists and gradient stops that change length snap too.
 - **Created** objects appear at the start. **Deleted** objects stay, as they were, until the end, in their old place.
 - Values a curve carries past its ends are clamped where they must be: colors and opacity to 0 to 1, widths to 0 or more, the miter limit to 1 or more, and a scale to the sign both ends share.
@@ -103,7 +121,9 @@ The files in [`vectors/`](vectors) check another player (such as the HTML export
 
 A `scene` is `{ "background", "globalColors", "layers" }`, in the file's own JSON for those objects, with numbers rounded to 4 decimals; compare numbers to within 0.0002. Layers include objects that are leaving.
 
+Glyph shapes depend on the font, so the vectors check text against a stand-in font that draws every character as a box with a hole (ControlFlowCore's `StubTextShaper`). A file with text also has `texts`, the `text.json` the HTML export would write for it with that font (each text's lines, and its glyphs' outlines as flat `x, y, inX, inY, outX, outY` lists), and samples where a text's spacing is moving have `outlines`: `[{ "shape", "points" }]`, each text's glyphs as one path in its own space, bridged into one ring as the app does, drawn from `texts`.
+
 - `demo.json` plays the example.
-- `morph.json` exercises each rule: points born and dying on segments and at an open path's end, turns past 360, a flip, an overshooting curve and color, a cut, a shape created and one deleted, a new draw order and a shape that can't be merged.
+- `morph.json` exercises each rule: points born and dying on segments and at an open path's end, turns past 360, a flip, an overshooting curve and color, a cut, a shape created and one deleted, a new draw order, a shape that can't be merged, and a wrapping text whose spacing and words change.
 
 `TestVectorTests` checks them; run it with `UPDATE_VECTORS=1` to write them afresh after an intended change to these rules. `test_player.js` (`node Schema/test_player.js`, Node 18 or later) checks the HTML export's player against the same samples, so a change to these rules goes into `Packages/ControlFlowCore/Sources/ControlFlowCore/Player/player.js` too.
