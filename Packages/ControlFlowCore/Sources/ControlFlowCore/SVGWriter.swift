@@ -8,19 +8,20 @@ import Foundation
 /// opacity, and clipping (as a mask made of the base shape). What SVG can't say
 /// directly is drawn the way the canvas draws it: an inside or outside outline is
 /// stroked twice as wide and clipped or masked by the path, and an outline whose width
-/// varies is written as the stroker's triangles in one filled path. Hidden art and
-/// reference images are left out.
+/// varies is written as the stroker's triangles in one filled path. An image shape is
+/// an `<image>` stretched over its frame. Hidden art and reference images are left out.
 public enum SVGWriter {
     /// How finely variable-width outlines are flattened, in points.
     public static let tolerance = 0.1
 
     /// The SVG text. `area` is the layer of the canvas the document shows; by default the
-    /// viewport (see `Drawing.exportArea`). Nil when the area is empty.
-    public static func document(for drawing: Drawing, area: Rect? = nil) -> String? {
+    /// viewport (see `Drawing.exportArea`). Nil when the area is empty. Image shapes embed
+    /// their bytes from `images` (by `src`) as data URLs, or else link to their `src`.
+    public static func document(for drawing: Drawing, area: Rect? = nil, images: [String: Data] = [:]) -> String? {
         guard let area = area ?? drawing.exportArea(), area.width > 0, area.height > 0 else { return nil }
         // Exported as drawn: the transforms go into the points.
         let drawing = drawing.world
-        var writer = Writer(area: area)
+        var writer = Writer(area: area, images: images)
         let names = Dictionary(zip(drawing.layers.map(\.id), PresentationFormat.uniqueNames(drawing.layers.map(\.name), fallback: "Layer")),
                                uniquingKeysWith: { a, _ in a })
         for layer in drawing.layers where !layer.isHidden {
@@ -102,14 +103,30 @@ public enum SVGWriter {
     /// `#RRGGBB`, with the alpha written separately as an opacity.
     static func rgb(_ c: RGBAColor) -> String { String(c.hexString.prefix(7)) }
 
+    /// Where an `<image>` finds its pixels: a data URL with the bytes, or the path.
+    static func imageReference(_ src: String, data: Data?) -> String {
+        guard let data else { return src }
+        let type = switch PresentationPackage.fileExtension(for: data) {
+        case "png": "image/png"
+        case "jpg": "image/jpeg"
+        case "heic": "image/heic"
+        default: "application/octet-stream"
+        }
+        return "data:\(type);base64,\(data.base64EncodedString())"
+    }
+
     private struct Writer {
         let area: Rect
+        let images: [String: Data]
         var defs: [String] = []
         var body: [String] = []
         var nextID = 1
+        /// An `<image>` was written, so the root declares the xlink namespace.
+        var hasImages = false
 
-        init(area: Rect) {
+        init(area: Rect, images: [String: Data]) {
             self.area = area
+            self.images = images
         }
 
         mutating func makeID(_ prefix: String) -> String {
@@ -175,11 +192,13 @@ public enum SVGWriter {
                 "y=\"\(SVGWriter.number(area.minPoint.y))\" width=\"\(SVGWriter.number(area.width))\" " +
                 "height=\"\(SVGWriter.number(area.height))\">"]
             let d = SVGWriter.pathData(base.path)
-            if base.visibleFill != nil { lines.append("      <path d=\"\(d)\" fill=\"#FFFFFF\"/>") }
+            // An image clips to its frame, as a fill does to its path.
+            let covers = base.visibleFill != nil || base.image != nil
+            if covers { lines.append("      <path d=\"\(d)\" fill=\"#FFFFFF\"/>") }
             if let stroke = base.stroke, stroke.width > 0 {
                 let alignment = base.path.closed ? stroke.alignment : .center
                 // An inside outline lies within the fill; an outside one is the far half of a doubled one.
-                if alignment != .inside || base.visibleFill == nil {
+                if alignment != .inside || !covers {
                     let scale = alignment == .outside ? 2.0 : 1.0
                     if base.path.hasVariableWidth {
                         let triangles = Stroker.triangles(for: base.path, style: stroke, widthScale: scale,
@@ -199,6 +218,16 @@ public enum SVGWriter {
         mutating func shape(_ shape: VectorShape, indent: String) {
             let d = SVGWriter.pathData(shape.path)
             let opacity = min(max(shape.opacity, 0), 1)
+            if let image = shape.image, let m = shape.imagePlacement {
+                // The unit square, stretched over the image's frame.
+                let n = SVGWriter.number
+                var line = indent + "<image width=\"1\" height=\"1\" preserveAspectRatio=\"none\" " +
+                    "transform=\"matrix(\(n(m.a)) \(n(m.b)) \(n(m.c)) \(n(m.d)) \(n(m.tx)) \(n(m.ty)))\" " +
+                    "xlink:href=\"\(SVGWriter.escaped(SVGWriter.imageReference(image.src, data: images[image.src])))\""
+                if opacity < 1 { line += " opacity=\"\(n(opacity))\"" }
+                body.append(line + "/>")
+                hasImages = true
+            }
             var fill = "fill=\"none\""
             if let color = shape.visibleFill {
                 if let gradient = shape.gradient, !gradient.stops.isEmpty {
@@ -301,7 +330,8 @@ public enum SVGWriter {
             let n = SVGWriter.number
             var lines = [
                 "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
-                "<svg xmlns=\"http://www.w3.org/2000/svg\" version=\"1.1\" width=\"\(n(area.width))\" " +
+                "<svg xmlns=\"http://www.w3.org/2000/svg\"" +
+                    (hasImages ? " xmlns:xlink=\"http://www.w3.org/1999/xlink\"" : "") + " version=\"1.1\" width=\"\(n(area.width))\" " +
                     "height=\"\(n(area.height))\" viewBox=\"\(n(area.minPoint.x)) \(n(area.minPoint.y)) " +
                     "\(n(area.width)) \(n(area.height))\">",
                 "  <title>\(SVGWriter.escaped(title))</title>",

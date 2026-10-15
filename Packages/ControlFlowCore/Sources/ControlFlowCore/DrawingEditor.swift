@@ -830,7 +830,7 @@ public struct DrawingEditor: Sendable {
 
     private mutating func beginDirectSelect(at p: Vec2, px: Double) -> Gesture {
         // The selected anchor's handles come first.
-        if let ref = activeShape, let shape = drawing.worldShape(ref), shape.text == nil {
+        if let ref = activeShape, let shape = drawing.worldShape(ref), shape.hasEditablePath {
             let path = shape.path
             // A handle folded into its anchor (a corner with no handle) can't be grabbed,
             // so the anchor underneath stays draggable.
@@ -872,7 +872,7 @@ public struct DrawingEditor: Sendable {
     private func pickAnchorOrCurve(at p: Vec2, among refs: [ShapeRef], px: Double) -> Pending? {
         var bestAnchor: (ref: ShapeRef, index: Int, distance: Double)?
         for ref in refs {
-            guard let shape = drawing.worldShape(ref), shape.text == nil else { continue }
+            guard let shape = drawing.worldShape(ref), shape.hasEditablePath else { continue }
             for (i, point) in shape.path.points.enumerated() {
                 let d = point.position.distance(to: p)
                 if d <= EditorMetrics.anchorHit * px, d < (bestAnchor?.distance ?? .infinity) {
@@ -884,7 +884,7 @@ public struct DrawingEditor: Sendable {
 
         var bestCurve: (ref: ShapeRef, segment: Int, t: Double, distance: Double)?
         for ref in refs {
-            guard let shape = drawing.worldShape(ref), shape.text == nil, let near = shape.path.nearestSegment(to: p),
+            guard let shape = drawing.worldShape(ref), shape.hasEditablePath, let near = shape.path.nearestSegment(to: p),
                   near.distance <= EditorMetrics.curveHit * px + (shape.stroke?.width ?? 0) / 2,
                   near.distance < (bestCurve?.distance ?? .infinity) else { continue }
             bestCurve = (ref, near.segment, near.t, near.distance)

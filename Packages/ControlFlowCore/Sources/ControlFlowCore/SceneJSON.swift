@@ -53,6 +53,7 @@ enum SceneJSON {
         if let group = shape.group { members.append((key: "group", value: id(group))) }
         members.append((key: "closed", value: .bool(shape.path.closed)))
         if let text = shape.text { members.append((key: "text", value: self.text(text))) }
+        if let image = shape.image { members.append((key: "image", value: .object([(key: "src", value: .string(image.src))]))) }
         if let fill = shape.fill {
             members.append((key: "fill", value: color(fill)))
             if let global = shape.fillGlobal { members.append((key: "fillGlobal", value: id(global))) }
@@ -224,6 +225,7 @@ enum SceneJSON {
             shape.gradient = try node.field("gradient").map(readGradient)
         }
         shape.text = try node.field("text").map(readText)
+        shape.image = try node.field("image").map(readImage)
         shape.stroke = try node.field("stroke").map { try readStroke($0, context: context) }
         shape.opacity = min(max(try node.number("opacity") ?? 1, 0), 1)
         shape.isClipped = try node.bool("clipped") ?? false
@@ -291,6 +293,14 @@ enum SceneJSON {
         }
         text.tracking = try node.number("tracking") ?? 0
         return text
+    }
+
+    static func readImage(_ node: Node) throws -> ShapeImage {
+        let src = try node.require("src").string()
+        guard ImageAssets.isValidSource(src) else {
+            throw PresentationFileError.invalid(path: node.childPath("src"), problem: "is not a file in \(ImageAssets.folder)/")
+        }
+        return ShapeImage(src: src)
     }
 
     static func readGradient(_ node: Node) throws -> ShapeGradient {

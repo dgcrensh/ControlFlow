@@ -865,7 +865,8 @@ extension DrawingEditor {
     }
 
     /// The art as an SVG document (see `SVGWriter`), or nil when there is nothing to export.
-    public func svgDocument() -> String? {
-        SVGWriter.document(for: drawing)
+    /// `images` holds the encoded pixels of image shapes by `src`, embedded in the SVG.
+    public func svgDocument(images: [String: Data] = [:]) -> String? {
+        SVGWriter.document(for: drawing, images: images)
     }
 }

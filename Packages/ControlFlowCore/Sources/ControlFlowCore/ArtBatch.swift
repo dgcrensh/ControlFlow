@@ -81,18 +81,38 @@ public struct ArtPaint: Hashable, Sendable {
     public var color: RGBAColor
     public var gradient: ShapeGradient?
     public var opacity: Double
+    /// An image shape's picture, painted instead of `color` when the renderer has its
+    /// pixels; `color` is then what shows while they are missing.
+    public var image: ArtImage?
 
-    public init(color: RGBAColor, gradient: ShapeGradient? = nil, opacity: Double = 1) {
+    public init(color: RGBAColor, gradient: ShapeGradient? = nil, opacity: Double = 1, image: ArtImage? = nil) {
         self.color = color
         self.gradient = gradient
         self.opacity = opacity
+        self.image = image
     }
+
+    /// What an image shape shows where its pixels are missing.
+    public static let missingImage = RGBAColor(r: 0.5, g: 0.5, b: 0.5, a: 0.25)
 
     /// The straight-alpha color at world point `p`, opacity applied.
     public func color(at p: Vec2) -> RGBAColor {
         var c = gradient.map { $0.color(at: $0.parameter(at: p)) } ?? color
         c.a *= min(max(opacity, 0), 1)
         return c
+    }
+}
+
+/// An image painted by a cover step: its pixels' `src` and where they go.
+public struct ArtImage: Hashable, Sendable {
+    public var src: String
+    /// Maps a world point to the image's unit square (x across, y down, 0...1), the
+    /// texture coordinate to sample there.
+    public var worldToImage: Affine2D
+
+    public init(src: String, worldToImage: Affine2D) {
+        self.src = src
+        self.worldToImage = worldToImage
     }
 }
 
@@ -468,7 +488,7 @@ public struct ArtBuilder: Sendable {
             guard layer.isShown(j), drawn.contains(j) else { continue }
             if moving.contains(shape.id) { return nil }
             let geometry = tessellation(of: shape, tolerance: tolerance)
-            if shape.visibleFill != nil, !geometry.fan.isEmpty { area = area.union(geometry.fanBounds) }
+            if shape.visibleFill != nil || shape.image != nil, !geometry.fan.isEmpty { area = area.union(geometry.fanBounds) }
             if shape.stroke != nil, !geometry.outline.isEmpty { area = area.union(geometry.outlineBounds) }
         }
         return area
@@ -584,7 +604,16 @@ public struct ArtBuilder: Sendable {
             }
         }
 
-        if let fill = shape.visibleFill, !geometry.fan.isEmpty {
+        if let image = shape.image, !geometry.fan.isEmpty {
+            // Stencilled like a fill, then covered with the picture.
+            let fan = add(to: &batch, geometry.fan)
+            batch.steps.append(.stencil(vertices: fan, state: ArtStencil.winding, reference: 0))
+            let cover = addRect(to: &batch, geometry.fanBounds)
+            let (state, reference) = Self.fillCover(role, masked: masked)
+            let placed = shape.imagePlacement?.inverted.map { ArtImage(src: image.src, worldToImage: $0) }
+            let paint = ArtPaint(color: ArtPaint.missingImage, opacity: shape.opacity * fade, image: placed)
+            batch.steps.append(.cover(vertices: cover, paint: paint, state: state, reference: reference))
+        } else if let fill = shape.visibleFill, !geometry.fan.isEmpty {
             let fan = add(to: &batch, geometry.fan)
             batch.steps.append(.stencil(vertices: fan, state: ArtStencil.winding, reference: 0))
             let cover = addRect(to: &batch, geometry.fanBounds)

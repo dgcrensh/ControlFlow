@@ -21,7 +21,9 @@ struct AppearancePanel: View {
                             .disabled(!ui.canClipSelectedGroup && !ui.selectedGroupClipped)
                     }
                 }
-                if appearance.isClosed {
+                if ui.selectionHasImage {
+                    Section { Text("An image shows its picture in place of a fill. Its opacity, outline, clipping, place and size change and animate like any shape's.").foregroundStyle(.secondary) }
+                } else if appearance.isClosed {
                     GradientSection(store: store, ui: ui, gradient: appearance.gradient)
                 }
             } else {

@@ -148,6 +148,22 @@ enum ShaderSource {
         return float4(c.rgb * alpha, alpha); // premultiplied
     }
 
+    // An image shape's picture, painted by a cover step in place of a fill. See
+    // ImagePaintUniforms: each texture coordinate is a row of the world-to-image map.
+    struct ImagePaint {
+        float4 u;           // a, c, tx of the map's first row
+        float4 v;           // b, d, ty of its second row
+        float4 info;        // opacity
+    };
+
+    fragment float4 image_cover_fragment(FillOut in [[stage_in]],
+                                         texture2d<float> image [[texture(0)]],
+                                         sampler imageSampler [[sampler(0)]],
+                                         constant ImagePaint &paint [[buffer(0)]]) {
+        float2 uv = float2(dot(paint.u.xy, in.world) + paint.u.z, dot(paint.v.xy, in.world) + paint.v.z);
+        return image.sample(imageSampler, uv) * saturate(paint.info.x); // premultiplied texels
+    }
+
     struct ImageVertex {
         packed_float2 world;
         packed_float2 uv;
