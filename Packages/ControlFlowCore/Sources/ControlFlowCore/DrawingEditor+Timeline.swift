@@ -30,10 +30,12 @@ extension DrawingEditor {
     public mutating func selectKeyframe(_ id: Int?) {
         guard id != currentKeyframe, id == nil || timeline.presentation.chainIndex(of: id) != nil else { return }
         cancelGesture()
+        endPreview()
         syncTimeline()
         penPath = nil
         currentKeyframe = id
         drawing = timeline.state(at: currentChainIndex)
+        updateOnionSkin()
         validateSelection()
     }
 
@@ -166,15 +168,130 @@ extension DrawingEditor {
         currentKeyframe.map { timeline.changedObjects(inKeyframe: $0) } ?? []
     }
 
-    /// The scene `elapsed` seconds into the transition into keyframe `id`, for scrubbing.
+    /// The scene `elapsed` seconds into the transition into keyframe `id`.
     public mutating func scrub(into id: Int, elapsed: Double) -> Drawing {
         guard let index = timeline.presentation.chainIndex(of: id) else { return drawing }
         return timeline.transition(into: index, elapsed: elapsed)
     }
 
+    /// What the timeline strip shows.
+    public var timelineStrip: TimelineStrip { TimelineStrip(presentation: timeline.presentation, currentKeyframe: currentKeyframe) }
+
+    /// The scene at keyframe `id` (nil: the opening state), for its chip's thumbnail.
+    public mutating func state(atKeyframe id: Int?) -> Drawing {
+        if id == currentKeyframe { return drawing }
+        return timeline.state(atKeyframe: id)
+    }
+
+    // MARK: Previews
+
+    /// The scene the canvas shows: the preview while there is one, else `drawing`.
+    public var shownDrawing: Drawing { preview ?? drawing }
+
+    /// Scrubbing: shows the scene `fraction` (0...1, of its duration) of the way through
+    /// the transition into keyframe `id`, view-only, until `endPreview()`. A cut shows
+    /// the keyframe before it until the end.
+    public mutating func scrubPreview(into id: Int, fraction: Double) {
+        guard let index = timeline.presentation.chainIndex(of: id), index > 0,
+              let keyframe = timeline.presentation.keyframe(atChainIndex: index) else { return }
+        cancelGesture()
+        syncTimeline()
+        let fraction = min(max(fraction.isFinite ? fraction : 0, 0), 1)
+        let duration = keyframe.transition.duration
+        preview = duration > 0 ? timeline.transition(into: index, elapsed: fraction * duration)
+            : timeline.state(at: fraction < 1 ? index - 1 : index)
+    }
+
+    /// Back to showing the current keyframe.
+    public mutating func endPreview() {
+        if preview != nil { preview = nil }
+    }
+
+    /// The keyframes Play Sequence plays (chain indices): the current keyframe's sequence,
+    /// or the first one from the opening state. Nil when there are no keyframes.
+    public var currentSequenceRange: ClosedRange<Int>? {
+        let presentation = timeline.presentation
+        let sequence = currentKeyframe.flatMap { presentation.location(ofKeyframe: $0)?.sequence } ?? 0
+        return presentation.chainRange(ofSequence: sequence)
+    }
+
+    /// The keyframes sequence `id` plays (chain indices).
+    public func chainRange(ofSequence id: Int) -> ClosedRange<Int>? {
+        timeline.presentation.sequences.firstIndex { $0.id == id }.flatMap { timeline.presentation.chainRange(ofSequence: $0) }
+    }
+
+    /// The chain index of keyframe `id`, for previewing the transition into it alone.
+    public func chainIndex(ofKeyframe id: Int) -> Int? {
+        timeline.presentation.chainIndex(of: id).flatMap { $0 > 0 ? $0 : nil }
+    }
+
+    /// Playing: shows the scene `time` seconds into playing the keyframes in `range` (chain
+    /// indices) from the state before the first, view-only. Returns true once it has
+    /// reached the end, when it shows the current keyframe again.
+    @discardableResult
+    public mutating func playPreview(_ range: ClosedRange<Int>, at time: Double) -> Bool {
+        if preview == nil {
+            cancelGesture()
+            syncTimeline()
+        }
+        guard let (scene, finished) = timeline.playing(range, at: time), !finished else {
+            endPreview()
+            return true
+        }
+        preview = scene
+        return false
+    }
+
+    /// Shows the keyframe before the current one in `onionSkin`, when that is on.
+    mutating func updateOnionSkin() {
+        let index = currentChainIndex
+        let ghost: Drawing? = showsOnionSkin && index > 0 ? timeline.state(at: index - 1) : nil
+        if ghost != onionSkin { onionSkin = ghost }
+    }
+
+    // MARK: Changed indicators
+
+    /// What the current keyframe keys on the selection: the property keys it sets on the
+    /// selected layers or shapes (dotted, as in the file, such as `transform.position` or
+    /// `fill`), `points` when it changes their vertices, and `created` when it creates
+    /// them. Empty at the opening state.
+    public mutating func keyedProperties() -> Set<String> {
+        guard let id = currentKeyframe, let keyframe = timeline.presentation.keyframe(id) else { return [] }
+        var selected = Set<Int>()
+        switch selection {
+        case .layer(let id): selected = [id]
+        case .layers(let ids): selected = ids
+        case .shape, .shapes: selected = Set(drawing.shapeRefs(in: selection).map(\.shape))
+        case .none, .reference: return []
+        }
+        guard !selected.isEmpty else { return [] }
+        // Vertices of the selected shapes, as they are now or were before.
+        var vertices = Set<Int>()
+        for layer in drawing.layers + timeline.state(at: currentChainIndex - 1).layers {
+            for shape in layer.shapes where selected.contains(shape.id) { vertices.formUnion(shape.path.points.map(\.id)) }
+        }
+        var keys = Set<String>()
+        for change in keyframe.changes {
+            switch change {
+            case .set(let target, let props):
+                if selected.contains(target) { keys.formUnion(props.map(\.key)) } else if vertices.contains(target) { keys.insert("points") }
+            case .create(let object, let parent, _, _, _):
+                if selected.contains(object.id) { keys.insert("created") } else if let parent, selected.contains(parent), case .vertex = object {
+                    keys.insert("points")
+                }
+            case .delete(let target, _):
+                if vertices.contains(target) { keys.insert("points") }
+            case .order(let parent, _):
+                if let parent, selected.contains(parent) { keys.insert(drawing.layer(parent) != nil ? "order" : "points") }
+            }
+        }
+        return keys
+    }
+
     /// Runs a timeline command as one undo step, then shows the current keyframe.
     private mutating func timelineCommand(key: String? = nil, _ body: (inout DrawingEditor) -> Void) {
         cancelGesture()
+        endPreview()
         syncTimeline()
         let before = snapshot
         body(&self)
@@ -184,6 +301,7 @@ extension DrawingEditor {
         if before.keyframe != currentKeyframe { penPath = nil }
         let state = timeline.state(at: currentChainIndex)
         if state != drawing { drawing = state }
+        updateOnionSkin()
         validateSelection()
     }
 }

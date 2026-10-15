@@ -90,6 +90,16 @@ struct EditorCommands: Commands {
             Button("Zoom to Fit") { store?.zoomToFit() }
                 .keyboardShortcut("0")
         }
+        CommandMenu("Timeline") {
+            Button("Set Keyframe") { store?.setKeyframe() }
+                .keyboardShortcut("k", modifiers: [])
+            Button("New Sequence") { store?.newSequence() }
+                .keyboardShortcut("k", modifiers: [.command, .shift])
+            Button("Play Sequence") { if let store { if store.isPlaying { store.stopPlaying() } else { store.playSequence() } } }
+            Button("Onion Skin") { if let store { store.setOnionSkin(!store.ui.showsOnionSkin) } }
+                .keyboardShortcut("o", modifiers: [.command, .option])
+            Button("Revert to Previous") { store?.revertSelectionToPrevious() }
+        }
         CommandMenu("Tools") {
             tool(.select, "Select", key: "v")
             tool(.directSelect, "Direct Select", key: "a")

@@ -28,7 +28,12 @@ struct ContentView: View {
                     .padding(.trailing, 16)
             }
             .overlay(alignment: .bottom) {
-                StyleBar(store: store, ui: store.ui)
+                VStack(spacing: 10) {
+                    TimelineBar(store: store, ui: store.ui)
+                        // Clear of the tool strip and the modifier strip.
+                        .padding(.horizontal, 84)
+                    StyleBar(store: store, ui: store.ui)
+                }
             }
             .overlay { ToastView(ui: store.ui) }
             .overlay { PencilPalette(store: store, ui: store.ui) }
@@ -205,6 +210,9 @@ private struct ViewMenu: View {
             Toggle(isOn: Binding(get: { ui.ghostsUnselected }, set: { store.setGhostsUnselected($0) })) {
                 Label("Ghost Unselected", systemImage: "circle.lefthalf.filled")
             }
+            Toggle(isOn: Binding(get: { ui.showsOnionSkin }, set: { store.setOnionSkin($0) })) {
+                Label("Onion Skin", systemImage: "square.2.layers.3d")
+            }
             Divider()
             Button("Viewport", systemImage: "rectangle.dashed") { showingViewport = true }
             Divider()
@@ -291,6 +299,11 @@ private struct EditMenu: View {
             if ui.hasLockedArt {
                 Button("Unlock All", systemImage: "lock.open") { store.unlockAll() }
             }
+
+            Divider()
+            // Takes the selection's changes out of the current keyframe.
+            Button("Revert to Previous", systemImage: "arrow.uturn.backward.circle") { store.revertSelectionToPrevious() }
+                .disabled(ui.keyedProperties.isEmpty)
 
             Divider()
             if ui.isolatedLayer != nil {
