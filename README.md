@@ -40,7 +40,7 @@ From [the plan](docs/plans/animation-app.md#11-milestones):
 2. **Identity and transforms** (done; see the notes below): vertex ids, layer, group and shape transforms, Apply Transform, and Part renamed to Layer.
 3. **Keyframe core** (done; see the notes below): sequences, deltas, interpolation and format 1.0, in the core with no UI yet.
 4. **Timeline UI** (done; see the notes below): the timeline strip, Set Keyframe, transitions and their curve editor, scrubbing, Play Sequence, onion skin and changed indicators.
-5. Presenting.
+5. **Presenting** (done; see the notes below): presentation mode, its keys, taps and pinch, and the external display with the presenter view.
 6. HTML export (later).
 
 ## Milestone 1 notes (strip and rename)
@@ -113,6 +113,21 @@ From [the plan](docs/plans/animation-app.md#11-milestones):
 - **Playback** runs on the canvas's display link: each frame `CanvasStore.playbackFrame(at:)` asks for the scene at the frame's display time.
 - **Onion skin:** `DrawingEditor.onionSkin` is the previous keyframe's state while `showsOnionSkin` is on; the renderer builds it with its own `ArtBuilder`, every shape at the ghost view's opacity, and draws it under the art.
 - **Strip model:** `TimelineStrip` (chips, blocks, titles, durations), `Transition.durationLabel`, and `TimingCurve.moving(controlPoint:to:)`, `normalized` and `samples(count:)` for the curve editor and glyphs. `keyedProperties()` gives what the current keyframe keys on the selection, and `TimelineStrip.propertyNames` names it for the Inspector. Thumbnails are drawn off the main thread with `ThumbnailRenderer` once edits go quiet, only for keyframes whose scene changed. Tests are in `TimelineUITests.swift`.
+
+## Milestone 5 notes (presenting)
+
+**Using it**
+
+- **Present** (the play button at the right of the top bar, or Option-Cmd-P) fills the screen with the viewport, letterboxed in black, at the opening state. It presents the document as it is when you start; the editor is untouched underneath.
+- **Advance** plays the next sequence, keyframe after keyframe, and stops on its last keyframe. Advancing while a sequence plays jumps to its end rather than queueing. **Back** jumps, with no animation, to the end of the sequence before (while a sequence plays, to where it started), or to the opening state.
+- **Inputs:** tap the right half to advance and the left half to go back, or use a keyboard or clicker: Space, →, ↓, Page Down and Return advance; ←, ↑ and Page Up go back. **Escape** or a two-finger pinch-in exits. The editor's own shortcuts are off while presenting.
+- **External display:** with a display connected by cable or AirPlay (Stage Manager off, so the iPad would otherwise mirror), the presentation goes there full-screen and letterboxed, and the iPad shows the **presenter view**: the current state, the next sequence's end state with its name, a counter ("Sequence 3 of 12"), large Back and Advance targets and End Presentation. The keys work there too. While nothing is being presented the external display is black. With Stage Manager on, iPadOS gives the display to Stage Manager instead, so the iPad presents full-screen and the display shows what Stage Manager puts there.
+- What shows is the art in the viewport on the viewport's background: no reference images, onion skin, selection or hidden layers.
+
+**How it works**
+
+- **Presenter** (ControlFlowCore, `Presenter.swift`): the state machine. `advance()`, `back()` and `perform(_:)` move between sequence ends; `scene(at:)` gives the scene at a display time, starting a sequence's clock on its first frame and stopping it on its last keyframe. A sequence with no keyframes has nothing to play and is passed in one Advance. `counter`, `nextSequenceTitle`, `nextEndState()` feed the presenter view, `revision` changes only when the scene jumps, and `Presenter.camera(fitting:in:)` letterboxes the viewport. `PresentationKey` maps the keys to `PresentationAction`s, and `PresentationTouches` turns touches into taps on the halves and the pinch-in. Tests are in `PresenterTests.swift`; `PerformanceTests.testPlaybackFrames` times interpolating and tessellating 50 animating shapes per frame.
+- **App** (`ControlFlow/Presenting/`): `PresentationController` wraps the `Presenter` for the views, and `PresentationHub` holds the presentation being given and whether an external display is connected. `PresentationCanvasView` is a Metal view with a `CanvasSession` of its own that shows each frame's scene with `DrawingEditor.showScene(_:)`; it renders through `CanvasRenderer.render(..., presenting: true)` (art and an opaque black veil only) on its own screen's display link, every refresh while a sequence plays and otherwise only when the scene jumps. With input on, it takes the keys as `UIKeyCommand`s ahead of the system's and turns touches into actions. The external display gets its own scene (`ExternalDisplaySceneDelegate`, given by `AppDelegate` for the non-interactive external display role), which shows `ExternalDisplayView`. The next state's picture is drawn off the main thread with `ThumbnailRenderer`.
 
 ## Character Studio foundations
 

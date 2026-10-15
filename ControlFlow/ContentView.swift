@@ -9,6 +9,10 @@ struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
     /// The canvas width, which bounds the context bar in the navigation bar.
     @State private var canvasWidth: CGFloat = 0
+    /// The presentation being given, full-screen over the editor.
+    @State private var presenting: PresentationController?
+    /// The presentation this document last gave, to end on the external display.
+    @State private var presented: ObjectIdentifier?
 
     init(document: Binding<PresentationDocument>) {
         _document = document
@@ -37,8 +41,12 @@ struct ContentView: View {
             }
             .overlay { ToastView(ui: store.ui) }
             .overlay { PencilPalette(store: store, ui: store.ui) }
-            // Keyboard shortcuts (EditorCommands) act on the focused document's canvas.
-            .focusedSceneValue(\.canvasStore, store)
+            // Keyboard shortcuts (EditorCommands) act on the focused document's canvas,
+            // and are off while presenting, where the arrows and Escape mean other things.
+            .focusedSceneValue(\.canvasStore, presenting == nil ? store : nil)
+            .fullScreenCover(item: $presenting, onDismiss: endPresenting) { controller in
+                PresentingView(controller: controller)
+            }
             .onDrop(of: [.image], isTargeted: nil) { providers in
                 let store = store
                 for provider in providers {
@@ -65,10 +73,14 @@ struct ContentView: View {
                 }
                     // The context bar draws its own capsule, like the tool and style bars.
                     .sharedBackgroundVisibility(.hidden)
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Present", systemImage: "play.rectangle.fill") { startPresenting() }
+                }
             }
             .onAppear {
                 let document = $document
                 store.onDocumentChange = { document.wrappedValue.package = $0 }
+                store.onPresent = { startPresenting() }
             }
             .onChange(of: document.package) { _, package in
                 store.documentChanged(package)
@@ -78,6 +90,25 @@ struct ContentView: View {
                 if phase != .active { store.flushDocument() }
             }
             .onDisappear { store.flushDocument() }
+    }
+
+    /// Present: the document as it is now, from its opening state.
+    private func startPresenting() {
+        guard presenting == nil else { return }
+        store.stopPlaying()
+        let controller = PresentationController(presentation: store.session.editor.presentation)
+        controller.onExit = { presenting = nil }
+        PresentationHub.shared.active = controller
+        presented = ObjectIdentifier(controller)
+        presenting = controller
+    }
+
+    /// The external display goes back to black.
+    private func endPresenting() {
+        if let active = PresentationHub.shared.active, ObjectIdentifier(active) == presented {
+            PresentationHub.shared.active = nil
+        }
+        presented = nil
     }
 }
 

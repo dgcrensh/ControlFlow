@@ -276,7 +276,13 @@ Design choices now that keep this cheap later:
    - The onion skin draws the previous keyframe's art with every shape at the ghost view's opacity (0.25), under the current art. It is not shown during a preview.
    - The Inspector's keyed fields: it lists the property groups the current keyframe sets on the selection and puts a dot on the position and size fields (transform or points keyed) and the fill and outline fields.
    - Chip thumbnails are the viewport drawn with `ThumbnailRenderer`, redrawn off the main thread once edits go quiet.
-5. **Presenting:** presentation mode, the inputs, and the external display with the presenter view.
+5. **Presenting** (shipped): presentation mode, the inputs, and the external display with the presenter view.
+   - `Presenter` (ControlFlowCore) is the state machine: the sequence ends, the scene at a display time, the counter and the next end state. A sequence's clock starts on its first frame. `PresentationKey` and `PresentationTouches` turn keys and touches into Advance, Back and Exit, so the inputs are tested on Linux.
+   - Back while a sequence plays returns to where it started (the end of the sequence before it). A sequence with no keyframes is passed in one Advance.
+   - Presenting shows the art on the viewport's background only: no references, onion skin or overlay. It presents the document as it is when Present is pressed; Present is in the top bar and on Option-Cmd-P.
+   - The external display is a `windowExternalDisplayNonInteractive` scene, which iPadOS gives the app when it would otherwise mirror (Stage Manager off). With Stage Manager on the iPad presents full-screen. The external display is black while nothing is presented.
+   - The editor's keyboard shortcuts are off while presenting, since the arrows (nudge) and Escape (exit isolation) mean other things there.
+   - `PerformanceTests.testPlaybackFrames` is the interpolation-and-tessellation workload: 50 shapes moving, recoloring and reshaping, one frame per call.
 6. **HTML export** (later): §10.
 
 Following `CLAUDE.md`, this file is the plan of record: update it in the same PR when a plan changes or a milestone ships, and rewrite the README milestone notes as each milestone ships.
