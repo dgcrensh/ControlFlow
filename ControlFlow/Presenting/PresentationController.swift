@@ -42,9 +42,18 @@ final class PresentationController: Identifiable {
     /// The sequence `nextTitle` and `nextImage` show.
     @ObservationIgnored private var nextSequence: Int?
 
-    init(presentation: Presentation) {
+    /// The rotation lock was on when presenting started, so the iPad's own screen turns
+    /// the deck a quarter turn when that fills it better.
+    let rotationLocked: Bool
+    /// The editor's camera rotation when presenting started, in degrees, so a deck
+    /// already turned one way stays that way.
+    let startRotation: Double
+
+    init(presentation: Presentation, rotationLocked: Bool = false, startRotation: Double = 0) {
         let presenter = Presenter(presentation: presentation)
         self.presenter = presenter
+        self.rotationLocked = rotationLocked
+        self.startRotation = startRotation
         counter = presenter.counter
         nextTitle = presenter.nextSequenceTitle
         viewport = presenter.viewport

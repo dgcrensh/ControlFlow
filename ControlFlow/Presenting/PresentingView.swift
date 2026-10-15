@@ -12,7 +12,7 @@ struct PresentingView: View {
             if hub.hasExternalDisplay {
                 PresenterView(controller: controller)
             } else {
-                PresentationCanvas(controller: controller)
+                PresentationCanvas(controller: controller, turnsToFit: true)
                     .ignoresSafeArea()
                     .accessibilityLabel("Presentation, \(controller.counter)")
                     .accessibilityHint("Tap the right half to advance and the left half to go back. Pinch in to exit.")

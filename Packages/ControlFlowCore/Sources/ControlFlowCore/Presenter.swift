@@ -160,11 +160,15 @@ public struct Presenter: Sendable {
     // MARK: Layout
 
     /// The camera that fills a view of `viewSize` points with the viewport, letterboxed
-    /// and centered.
-    public static func camera(fitting viewport: Viewport, in viewSize: Vec2) -> CanvasCamera {
+    /// and centered, turned `rotation` degrees clockwise (0, or the rotation lock's
+    /// quarter turn on the iPad's own screen).
+    public static func camera(fitting viewport: Viewport, in viewSize: Vec2, rotation: Double = 0) -> CanvasCamera {
         guard viewport.width > 0, viewport.height > 0, viewSize.x > 0, viewSize.y > 0 else { return CanvasCamera() }
-        let zoom = min(viewSize.x / viewport.width, viewSize.y / viewport.height)
-        return CanvasCamera(worldToScreen: Affine2D.translation(viewSize / 2) * Affine2D.scale(zoom) *
+        let turn = Affine2D.rotation(degrees: rotation)
+        let width = abs(turn.a) * viewport.width + abs(turn.c) * viewport.height
+        let height = abs(turn.b) * viewport.width + abs(turn.d) * viewport.height
+        let zoom = min(viewSize.x / width, viewSize.y / height)
+        return CanvasCamera(worldToScreen: Affine2D.translation(viewSize / 2) * turn * Affine2D.scale(zoom) *
             Affine2D.translation(-viewport.center))
     }
 }
@@ -218,12 +222,22 @@ public struct PresentationTouches: Sendable {
 
     /// Returns `.advance` or `.back` for a tap on a view `width` points wide.
     public mutating func ended(id: Int, at location: Vec2, time: Double, width: Double) -> PresentationAction? {
+        ended(id: id, at: location, time: time, viewSize: Vec2(width, 0))
+    }
+
+    /// Returns `.advance` or `.back` for a tap on a view of `viewSize` points showing the
+    /// deck turned `rotation` degrees clockwise: the halves are the deck's as you read it,
+    /// so with the deck turned a quarter turn, its right half is the bottom of the screen.
+    public mutating func ended(id: Int, at location: Vec2, time: Double, viewSize: Vec2,
+                               rotation: Double = 0) -> PresentationAction? {
         guard let touch = touches.removeValue(forKey: id) else { return nil }
         defer { if touches.isEmpty { reset() } }
         guard touches.isEmpty, mostDown == 1, !spent,
               (location - touch.start).length <= Self.tapSlop, time - touch.time <= Self.tapDuration
         else { return nil }
-        return location.x >= width / 2 ? .advance : .back
+        let center = viewSize / 2
+        let onDeck = Affine2D.rotation(degrees: -rotation).applyToVector(location - center)
+        return onDeck.x >= 0 ? .advance : .back
     }
 
     public mutating func cancelled(id: Int) {

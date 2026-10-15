@@ -10,12 +10,21 @@ import UIKit
 /// With `takesInput`, it is the presentation's controls: a tap on the right half
 /// advances and on the left half goes back, a two-finger pinch-in exits, and so do the
 /// keys in `PresentationKey`.
+///
+/// With `turnsToFit` (the iPad's own screen) and the rotation lock on, the deck is turned
+/// a quarter turn when its long side would otherwise lie across the screen's short side,
+/// by the same rule as the canvas (`RotationLock`), and taps follow the turn.
 final class PresentationCanvasView: UIView {
     override class var layerClass: AnyClass { CAMetalLayer.self }
     private var metalLayer: CAMetalLayer { layer as! CAMetalLayer }
 
     private let controller: PresentationController
     private let takesInput: Bool
+    private let turnsToFit: Bool
+    /// The deck's turn on screen, in degrees clockwise.
+    private var rotation: Double
+    private var laidOutSize: CGSize = .zero
+    private var laidOutOrientation: DisplayOrientation?
     private let renderer: CanvasRenderer?
     /// A canvas of its own, which shows each frame's scene as a view-only preview.
     private var session = CanvasSession()
@@ -25,9 +34,11 @@ final class PresentationCanvasView: UIView {
     private var touchIDs: [ObjectIdentifier: Int] = [:]
     private var nextTouchID = 1
 
-    init(controller: PresentationController, takesInput: Bool) {
+    init(controller: PresentationController, takesInput: Bool, turnsToFit: Bool = false) {
         self.controller = controller
         self.takesInput = takesInput
+        self.turnsToFit = turnsToFit && controller.rotationLocked
+        rotation = controller.startRotation
         renderer = CanvasRenderer()
         super.init(frame: .zero)
         renderer?.attach(to: metalLayer)
@@ -69,7 +80,20 @@ final class PresentationCanvasView: UIView {
         let scale = contentScaleFactor
         metalLayer.contentsScale = scale
         metalLayer.drawableSize = CGSize(width: bounds.width * scale, height: bounds.height * scale)
-        session.camera = Presenter.camera(fitting: controller.viewport, in: Vec2(bounds.size))
+        let orientation = window?.windowScene.flatMap { DisplayOrientation($0.effectiveGeometry.interfaceOrientation) }
+        if turnsToFit {
+            var turn: Double?
+            if bounds.size != laidOutSize, let old = laidOutOrientation, let orientation {
+                turn = DisplayOrientation.turn(from: old, to: orientation)
+            }
+            rotation = RotationLock.targetRotation(viewport: controller.viewport, viewSize: Vec2(bounds.size),
+                                                   current: rotation, interfaceTurn: turn)
+        } else {
+            rotation = 0
+        }
+        laidOutSize = bounds.size
+        laidOutOrientation = orientation
+        session.camera = Presenter.camera(fitting: controller.viewport, in: Vec2(bounds.size), rotation: rotation)
         setNeedsRender()
     }
 
@@ -148,7 +172,7 @@ final class PresentationCanvasView: UIView {
         for touch in touches {
             guard let id = touchIDs.removeValue(forKey: ObjectIdentifier(touch)),
                   let action = self.touches.ended(id: id, at: Vec2(touch.location(in: self)), time: touch.timestamp,
-                                                  width: Double(bounds.width)) else { continue }
+                                                  viewSize: Vec2(bounds.size), rotation: rotation) else { continue }
             controller.perform(action)
         }
     }
@@ -165,9 +189,11 @@ final class PresentationCanvasView: UIView {
 struct PresentationCanvas: UIViewRepresentable {
     let controller: PresentationController
     var takesInput = true
+    /// Turns the deck to fill the iPad's own screen while the rotation lock is on.
+    var turnsToFit = false
 
     func makeUIView(context: Context) -> PresentationCanvasView {
-        PresentationCanvasView(controller: controller, takesInput: takesInput)
+        PresentationCanvasView(controller: controller, takesInput: takesInput, turnsToFit: turnsToFit)
     }
 
     func updateUIView(_ view: PresentationCanvasView, context: Context) {}

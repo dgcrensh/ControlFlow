@@ -100,6 +100,8 @@ struct EditorCommands: Commands {
                     .keyboardShortcut("y")
                 Button("Ghost Unselected") { if let store { store.setGhostsUnselected(!store.ui.ghostsUnselected) } }
                     .keyboardShortcut("g", modifiers: [.command, .option])
+                Button("Lock Rotation") { if let store { store.setRotationLocked(!store.ui.rotationLocked) } }
+                    .keyboardShortcut("r", modifiers: [.command, .option])
                 Button("Zoom to Fit") { store?.zoomToFit() }
                     .keyboardShortcut("0")
             }
