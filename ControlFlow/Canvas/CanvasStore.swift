@@ -109,6 +109,22 @@ final class EditorUIState {
     var ghostsUnselected = false
     /// The stage the presentation shows.
     var viewport = Viewport()
+
+    // Timeline
+    var timeline = TimelineStrip()
+    /// Chip thumbnails by keyframe id, 0 for the opening state.
+    var thumbnails: [Int: UIImage] = [:]
+    /// A keyframe is current, rather than the opening state.
+    var isAtKeyframe = false
+    var showsOnionSkin = false
+    /// Play Sequence, or a transition's preview, is playing on the canvas.
+    var isPlaying = false
+    /// The keyframe whose transition is being scrubbed.
+    var scrubbing: Int?
+    /// The objects the current keyframe changes, which the layers panel marks.
+    var changedObjects: Set<Int> = []
+    /// What the current keyframe keys on the selection (see `DrawingEditor.keyedProperties`).
+    var keyedProperties: Set<String> = []
 }
 
 /// Owns the canvas session and connects SwiftUI controls to the Metal view.
@@ -145,6 +161,13 @@ final class CanvasStore {
     /// the viewport) were last read at.
     private var refreshedRevision: Int?
     private var toastCount = 0
+    /// Play Sequence or a transition preview: the chain indices playing, and the time it
+    /// started (from its first frame).
+    private var playback: (range: ClosedRange<Int>, start: Double?)?
+    /// Draws the chips' thumbnails once edits go quiet.
+    private var thumbnailTask: Task<Void, Never>?
+    /// The scenes the thumbnails show, by keyframe id (0 for the opening state).
+    private var thumbnailScenes: [Int: Drawing] = [:]
 
     init(package: PresentationPackage = PresentationPackage()) {
         var options = InputOptions()
@@ -243,7 +266,8 @@ final class CanvasStore {
         let interval = Signposts.canvas.beginInterval("Refresh")
         defer { Signposts.canvas.endInterval("Refresh", interval) }
         let editor = session.editor
-        if editor.revision != refreshedRevision {
+        let revisionChanged = editor.revision != refreshedRevision
+        if revisionChanged {
             refreshedRevision = editor.revision
             update(\.palette, editor.drawing.palette)
             update(\.globalColors, editor.drawing.globalColors)
@@ -318,6 +342,16 @@ final class CanvasStore {
         update(\.outlineView, editor.outlineView)
         update(\.ghostsUnselected, editor.ghostsUnselected)
         update(\.selectedLayers, editor.selectedLayers)
+        let strip = editor.timelineStrip
+        let stripChanged = strip != ui.timeline
+        update(\.timeline, strip)
+        if revisionChanged || stripChanged {
+            update(\.changedObjects, session.editor.changedObjects())
+            scheduleThumbnails()
+        }
+        update(\.keyedProperties, session.editor.keyedProperties())
+        update(\.isAtKeyframe, editor.currentKeyframe != nil)
+        update(\.showsOnionSkin, editor.showsOnionSkin)
         update(\.activeLayer, editor.activeLayer)
         update(\.activeLayerName, editor.activeLayer.flatMap { editor.drawing.layer($0)?.name } ?? "")
         update(\.activeLayerIsChosen, editor.activeLayer != nil && editor.activeLayer == editor.targetLayer &&
@@ -359,6 +393,9 @@ final class CanvasStore {
         update(\.recentColors, editor.recentColors)
         update(\.palette, editor.drawing.palette)
         update(\.globalColors, editor.drawing.globalColors)
+        update(\.keyedProperties, session.editor.keyedProperties())
+        // The changed indicators and thumbnails follow once the run goes quiet.
+        scheduleThumbnails()
         if refreshedRevision != nil { refreshedRevision = editor.revision }
         if let notice = editor.notice {
             session.editor.clearNotice()
@@ -379,12 +416,14 @@ final class CanvasStore {
     }
 
     private func edit(_ change: (inout CanvasSession) -> Void) {
+        endPreview()
         Signposts.canvas.withIntervalSignpost("Edit") { change(&session) }
         refresh()
     }
 
     /// `edit` for a change that only restyles the selection or a global color.
     private func restyle(_ change: (inout CanvasSession) -> Void) {
+        endPreview()
         Signposts.canvas.withIntervalSignpost("Edit") { change(&session) }
         refreshStyle()
     }
@@ -507,6 +546,143 @@ final class CanvasStore {
     func zoomToFit() {
         session.zoom(toFit: session.editor.drawing.viewport.bounds, viewSize: Vec2(viewSize))
         onChange?()
+    }
+
+    // MARK: Timeline
+
+    func selectKeyframe(_ id: Int?) { edit { $0.editor.selectKeyframe(id) } }
+    func setKeyframe() { edit { _ = $0.editor.setKeyframe() } }
+    func newSequence() { edit { _ = $0.editor.newSequence() } }
+    func splitSequence(at id: Int) { edit { $0.editor.splitSequence(at: id) } }
+    func mergeSequenceWithNext(_ id: Int) { edit { $0.editor.mergeSequenceWithNext(id) } }
+    func deleteKeyframe(_ id: Int) { edit { $0.editor.deleteKeyframe(id) } }
+    func deleteSequence(_ id: Int) { edit { $0.editor.deleteSequence(id) } }
+    func revertKeyframe(_ id: Int) { edit { $0.editor.revertKeyframe(id) } }
+    func duplicateKeyframe(_ id: Int) { edit { $0.editor.duplicateKeyframe(id) } }
+    func renameKeyframe(_ id: Int, to name: String) { edit { $0.editor.renameKeyframe(id, to: name) } }
+    func renameSequence(_ id: Int, to name: String) { edit { $0.editor.renameSequence(id, to: name) } }
+    func revertSelectionToPrevious() { edit { $0.editor.revertSelectionToPrevious() } }
+    func setOnionSkin(_ on: Bool) { edit { $0.editor.showsOnionSkin = on } }
+
+    /// Moves keyframe `id` in front of keyframe `target` (into its sequence), or to the
+    /// end of sequence `sequence` when there is no target.
+    func moveKeyframe(_ id: Int, before target: Int?, inSequence sequence: Int) {
+        guard id != target else { return }
+        let position = ui.timeline.sequences.first { $0.id == sequence }.map { block in
+            target.flatMap { t in block.chips.firstIndex { $0.id == t } } ?? block.chips.count
+        }
+        guard let position else { return }
+        edit { $0.editor.moveKeyframe(id, toSequence: sequence, at: position) }
+    }
+
+    /// Sets a keyframe's transition. Changes with `continuous` in a row (a slider or a
+    /// curve handle drag) are one undo step.
+    func setTransition(_ transition: ControlFlowCore.Transition, ofKeyframe id: Int, continuous: Bool = false) {
+        edit { $0.editor.setTransition(transition, ofKeyframe: id, continuous: continuous) }
+    }
+
+    var isPlaying: Bool { playback != nil }
+
+    /// Play Sequence: plays sequence `id` (by default the current keyframe's) from the
+    /// end of the one before it, on the canvas, then shows the current keyframe again.
+    func playSequence(_ id: Int? = nil) {
+        guard let range = id.map({ session.editor.chainRange(ofSequence: $0) }) ?? session.editor.currentSequenceRange
+        else { return }
+        startPlaying(range)
+    }
+
+    /// Plays the transition into keyframe `id` once, as the transition popover's preview.
+    func previewTransition(into id: Int) {
+        guard let index = session.editor.chainIndex(ofKeyframe: id) else { return }
+        startPlaying(index...index)
+    }
+
+    private func startPlaying(_ range: ClosedRange<Int>) {
+        endPreview()
+        playback = (range, nil)
+        update(\.isPlaying, true)
+        session.editor.playPreview(range, at: 0)
+        onChange?()
+    }
+
+    /// Shows the frame `time` (display time, in seconds) into the playback. The canvas
+    /// calls this on each display refresh while `isPlaying`.
+    func playbackFrame(at time: Double) {
+        guard var playing = playback else { return }
+        let start = playing.start ?? time
+        playing.start = start
+        playback = playing
+        if session.editor.playPreview(playing.range, at: time - start) { stopPlaying() }
+    }
+
+    func stopPlaying() {
+        guard playback != nil else { return }
+        endPreview()
+    }
+
+    /// Scrubbing: shows the scene `fraction` (0...1) of the way through the transition
+    /// into keyframe `id`. The canvas is view-only until `endScrub()`.
+    func scrub(into id: Int, fraction: Double) {
+        if playback != nil { endPreview() }
+        update(\.scrubbing, id)
+        session.editor.scrubPreview(into: id, fraction: fraction)
+        onChange?()
+    }
+
+    /// Lifting off a transition handle returns to the current keyframe.
+    func endScrub() { endPreview() }
+
+    /// Ends playing or scrubbing and shows the current keyframe.
+    private func endPreview() {
+        guard playback != nil || ui.scrubbing != nil || session.editor.preview != nil else { return }
+        playback = nil
+        update(\.isPlaying, false)
+        update(\.scrubbing, nil)
+        session.editor.endPreview()
+        onChange?()
+    }
+
+    /// Draws the chips' thumbnails again once edits have gone quiet, for the keyframes
+    /// whose scene changed since, and updates the changed indicators.
+    private func scheduleThumbnails() {
+        thumbnailTask?.cancel()
+        thumbnailTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(300))
+            guard !Task.isCancelled else { return }
+            await self?.updateThumbnails()
+        }
+    }
+
+    private func updateThumbnails() async {
+        guard !session.editor.isInGesture else {
+            scheduleThumbnails()
+            return
+        }
+        update(\.changedObjects, session.editor.changedObjects())
+        let ids = [0] + ui.timeline.chips.map(\.id)
+        let live = Set(ids)
+        thumbnailScenes = thumbnailScenes.filter { live.contains($0.key) }
+        if ui.thumbnails.keys.contains(where: { !live.contains($0) }) {
+            ui.thumbnails = ui.thumbnails.filter { live.contains($0.key) }
+        }
+        var pending: [(id: Int, scene: Drawing)] = []
+        for id in ids {
+            let scene = session.editor.state(atKeyframe: id == 0 ? nil : id)
+            if thumbnailScenes[id] != scene { pending.append((id, scene)) }
+        }
+        for (id, scene) in pending {
+            let png = await Task.detached(priority: .utility) { Self.thumbnail(of: scene) }.value
+            guard !Task.isCancelled else { return }
+            thumbnailScenes[id] = scene
+            ui.thumbnails[id] = png.flatMap { UIImage(data: $0) }
+        }
+    }
+
+    /// A chip's picture of the viewport, 160 pixels on its long side (a chip is at most
+    /// 72 points wide).
+    nonisolated private static func thumbnail(of scene: Drawing) -> Data? {
+        let area = scene.viewport.bounds
+        return ThumbnailRenderer.exportPNG(for: scene, area: area, scale: 160 / max(area.width, area.height, 1))
     }
 
     // MARK: Import and export

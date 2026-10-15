@@ -201,6 +201,7 @@ struct LayersPanel: View {
                     Label(group.name, systemImage: "square.on.square.squareshape.controlhandles")
                         .lineLimit(1)
                         .foregroundStyle(group.isHidden ? Color.secondary : Color.primary)
+                    if ui.changedObjects.contains(group.id) { ChangedDot() }
                     if group.isClipped {
                         Image(systemName: "arrow.turn.left.down")
                             .font(.footnote)
@@ -266,6 +267,7 @@ struct LayersPanel: View {
             Text(layer.name)
                 .lineLimit(1)
                 .foregroundStyle(layer.isHidden ? Color.secondary : Color.primary)
+            if ui.changedObjects.contains(layer.id) { ChangedDot() }
             if ui.isolatedLayer == layer.id {
                 Image(systemName: "scope").foregroundStyle(Color.accentColor)
             }
@@ -325,6 +327,16 @@ struct LayersPanel: View {
 
     private func commitName() {
         if name != ui.presentationName { store.renamePresentation(name) }
+    }
+}
+
+/// Marks a layer or group the current keyframe changes.
+struct ChangedDot: View {
+    var body: some View {
+        Circle()
+            .fill(Color.orange)
+            .frame(width: 7, height: 7)
+            .accessibilityLabel("Changed in this keyframe")
     }
 }
 

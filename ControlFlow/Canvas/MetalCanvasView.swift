@@ -105,6 +105,11 @@ final class MetalCanvasView: UIView {
     }
 
     @objc private func displayLinkFired() {
+        // Play Sequence: each frame shows the scene at the time it reaches the screen.
+        if store.isPlaying, let link = displayLink {
+            store.playbackFrame(at: link.targetTimestamp)
+            needsRender = true
+        }
         guard needsRender else {
             // Idle: stop ticking until something changes.
             displayLink?.isPaused = true
@@ -214,6 +219,8 @@ final class MetalCanvasView: UIView {
         // Shift and Option on a hardware keyboard constrain and duplicate.
         if let event { store.setKeyboardModifiers(event.modifierFlags) }
         if store.ui.palettePoint != nil { store.hidePalette() }
+        // Touching the canvas stops Play Sequence, so the Pencil can draw at once.
+        if store.isPlaying { store.stopPlaying() }
         disableAncestorPinches()
         if !isFirstResponder { becomeFirstResponder() }
         for touch in touches {

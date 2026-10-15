@@ -41,7 +41,9 @@ public enum EditorOverlay {
                               cache: inout OverlayCache) -> OverlayLayers {
         var layers = OverlayLayers()
         let px = 1 / max(zoom, 1e-9)
-        let shown = editor.drawing
+        // A preview shows another scene, view-only: no selection, hover or handles.
+        let shown = editor.shownDrawing
+        let previewing = editor.preview != nil
         // The kept layers depend on the zoom only through flattening and dash lengths, so
         // they are built for the zoom bucket and kept while a pinch stays inside it.
         let bucket = zoomBucket(zoom)
@@ -50,7 +52,7 @@ public enum EditorOverlay {
         // ghost focus.
         if editor.outlineView {
             let focus = editor.ghostFocus
-            let key = OverlayCache.WireframeKey(revision: editor.revision, bucket: bucket, isolatedLayer: editor.isolatedLayer,
+            let key = OverlayCache.WireframeKey(revision: editor.displayRevision, bucket: bucket, isolatedLayer: editor.isolatedLayer,
                                                 isolatedGroup: editor.isolatedGroup, ghostFocus: focus, darkMode: darkMode)
             if cache.wireframeKey == key {
                 layers.wireframe = cache.wireframe
@@ -69,6 +71,16 @@ public enum EditorOverlay {
         }
 
         var guides = Builder(editor: editor, drawing: shown, px: px)
+        if previewing {
+            guides.viewportBorder()
+            layers.guides = guides.out
+            if cache.selectionKey != nil || !cache.selection.isEmpty {
+                cache.selectionKey = nil
+                cache.selection = []
+                cache.generation &+= 1
+            }
+            return layers
+        }
         guides.guides(viewRect: viewRect, zoom: zoom)
         layers.guides = guides.out
 
@@ -257,11 +269,15 @@ private struct Builder {
         }
     }
 
-    /// The viewport's border, symmetry, hover feedback and a layer's pivot.
-    mutating func guides(viewRect: Rect?, zoom: Double) {
+    mutating func viewportBorder() {
         let c = drawing.viewport.bounds.corners
         CapsuleTessellator.append(points: c + [c[0]], width: 1, color: Overlay.viewportBorderColor, screenSpace: true,
                                   to: &out)
+    }
+
+    /// The viewport's border, symmetry, hover feedback and a layer's pivot.
+    mutating func guides(viewRect: Rect?, zoom: Double) {
+        viewportBorder()
 
         // The symmetry axis, and what symmetry will add for a shape or pen path in progress.
         if editor.symmetry.isEnabled {

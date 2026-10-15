@@ -117,6 +117,7 @@ public struct DrawingEditor: Sendable {
     public var drawing = Drawing() {
         didSet {
             revision &+= 1
+            displayRevision &+= 1
             // Isolation ends when its layer goes (deleted, erased, merged or undone away).
             if let id = isolatedLayer, drawing.layerIndex(id) == nil { isolatedLayer = nil }
             if let id = isolatedGroup, isolatedLayer.flatMap({ drawing.layer($0)?.group(id) }) == nil { isolatedGroup = nil }
@@ -199,6 +200,26 @@ public struct DrawingEditor: Sendable {
     public internal(set) var timeline = Timeline()
     /// The keyframe being edited (its id), or nil for the opening state.
     public internal(set) var currentKeyframe: Int?
+    /// A scene the canvas shows in place of `drawing` while a transition is scrubbed or a
+    /// sequence plays. The canvas is view-only meanwhile (see `CanvasSession`), and any
+    /// command, undo or change of keyframe ends it.
+    public internal(set) var preview: Drawing? {
+        didSet { displayRevision &+= 1 }
+    }
+    /// Increments whenever what the canvas shows (`shownDrawing`) changes. Unlike
+    /// `revision`, a preview changes it but not the document.
+    public private(set) var displayRevision = 0
+    /// Onion skin: the keyframe before the current one shows as a faint ghost under the art.
+    public var showsOnionSkin = false {
+        didSet { if showsOnionSkin != oldValue { updateOnionSkin() } }
+    }
+    /// The scene the onion skin shows, when it is on and the current keyframe has one
+    /// before it.
+    public internal(set) var onionSkin: Drawing? {
+        didSet { onionRevision &+= 1 }
+    }
+    /// Increments whenever `onionSkin` changes, so renderers know to rebuild it.
+    public private(set) var onionRevision = 0
 
     /// A pivot the user dragged for a selection that is not a layer. Layers keep theirs in `Layer.pivot`.
     public internal(set) var customPivot: Vec2?
@@ -1532,6 +1553,8 @@ public struct DrawingEditor: Sendable {
         syncTimeline(with: before)
         undoStack.record(snapshot, coalescingKey: key)
         timeline.record(drawing, at: currentChainIndex)
+        // Names and hidden or locked art apply at every keyframe, the ghost's included.
+        updateOnionSkin()
     }
 
     /// The document and keyframe, as undo keeps them.
@@ -1547,7 +1570,9 @@ public struct DrawingEditor: Sendable {
         timeline = Timeline(presentation)
         timeline.lastTransition = lastTransition
         currentKeyframe = state.keyframe.flatMap { presentation.chainIndex(of: $0) != nil ? $0 : nil }
+        endPreview()
         drawing = timeline.state(at: currentChainIndex)
+        updateOnionSkin()
         validateSelection()
         if let pen = penPath, drawing.indices(layer: pen.layer, shape: pen.shape) == nil { penPath = nil }
     }

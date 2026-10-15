@@ -39,7 +39,7 @@ From [the plan](docs/plans/animation-app.md#11-milestones):
 1. **Strip and rename** (done; see the notes below): the character rigging is gone, the app is ControlFlow, and the viewport is in.
 2. **Identity and transforms** (done; see the notes below): vertex ids, layer, group and shape transforms, Apply Transform, and Part renamed to Layer.
 3. **Keyframe core** (done; see the notes below): sequences, deltas, interpolation and format 1.0, in the core with no UI yet.
-4. Timeline UI.
+4. **Timeline UI** (done; see the notes below): the timeline strip, Set Keyframe, transitions and their curve editor, scrubbing, Play Sequence, onion skin and changed indicators.
 5. Presenting.
 6. HTML export (later).
 
@@ -83,7 +83,7 @@ From [the plan](docs/plans/animation-app.md#11-milestones):
 **Using it**
 
 - **Files** are now `.controlflow` packages holding `presentation.json` (format 1.0). Character Studio and earlier ControlFlow `.charstudio` files no longer open.
-- There is no timeline yet (milestone 4), so the app edits the opening state as before. Files that hold keyframes open, keep them, and save them back; undo covers the whole presentation.
+- Until milestone 4's timeline the app edited only the opening state. Files that hold keyframes open, keep them, and save them back; undo covers the whole presentation.
 
 **How it works**
 
@@ -93,6 +93,26 @@ From [the plan](docs/plans/animation-app.md#11-milestones):
 - **Interpolation:** `Timeline.transition(into:elapsed:)` and `playing(sequence:at:)` give the scene partway through a transition: numbers, points and sRGB colors lerp, other values snap at the start, created objects appear at the start and deleted ones leave at the end. `VertexMerge` lines up vertices by id so a point born on a segment starts on the old curve and a dying one rides the healed curve. See [Schema/README.md](Schema/README.md#transitions).
 - **Format 1.0:** `PresentationFormat` and `PresentationPackage` replace the Character Studio format. Ids are saved (vertices' included) and checked to be unique, and a change naming an object that isn't there is a load error with its path. The example is now [`Schema/examples/demo.controlflow`](Schema/examples/demo.controlflow), three sequences of the robot; the schema is [`controlflow-1.0.schema.json`](Schema/controlflow-1.0.schema.json).
 - **Test vectors:** [`Schema/vectors`](Schema/vectors) records the scenes expected while the example and a set of morphs play, for checking the planned HTML player against this one (`TestVectorTests`). Tests for the rest are in `KeyframeTests.swift` and `DocumentTests.swift`.
+
+## Milestone 4 notes (timeline UI)
+
+**Using it**
+
+- **Timeline strip:** above the style bar. It starts with the **Opening** chip, then each sequence as a rounded block of keyframe chips; each chip shows a thumbnail of the viewport and the keyframe's number or name. Tap a chip to edit the scene at that keyframe; your edits become that keyframe's changes. The strip scrolls sideways and follows the current chip.
+- **Set Keyframe** (the button at the strip's right end, or **K**) adds a keyframe after the current one that looks the same, with the last transition used, and makes it current. **New Sequence** (Shift-Cmd-K) starts a sequence after the current one.
+- **Keyframe menu** (touch and hold a chip): Rename, Duplicate Keyframe (a hold), Revert Keyframe, Split Sequence Here and Delete Keyframe. Drag a chip onto another to move it in front of that one, or onto a block's empty space to move it to the block's end; every keyframe still looks as it did. **Sequence menu** (the ellipsis on a block): Play Sequence, Rename, Split at Current Keyframe, Merge with Next and Delete Sequence.
+- **Transitions:** the handle before each chip shows the transition's duration ("Cut" for 0) and a tiny curve. Tap it for the popover: the duration (stepper and slider), the CSS presets (Linear, Ease, Ease In, Ease Out, Ease In Out) and a curve editor with two control points to drag; a curve dragged onto a preset's shape becomes that preset, and the control points can leave the square for overshoot and anticipation. Each change plays the transition on the canvas, and **Preview** plays it again. A slider or handle drag is one undo step.
+- **Scrubbing:** drag along a transition handle to scrub through it on the canvas. The canvas is view-only while scrubbing (two fingers still pan and zoom), and lifting returns to the current chip.
+- **Play Sequence** (the play button, or a block's menu) plays the current chip's sequence from the end of the one before it, in the editor with the viewport veil on, then returns to the current chip. Touching the canvas or pressing Stop ends it.
+- **Onion skin** (the strip's layers button, View menu, or Option-Cmd-O) shows the keyframe before the current one as a faint ghost under the art.
+- **Changed indicators:** layers and groups the current keyframe changes get an orange dot in the Layers panel. At a keyframe the Inspector lists what it keys on the selection (Transform, Points, Fill, Outline and so on), marks the fields it keys with a dot, and offers **Revert to Previous**, which is also in the Edit menu: the selection goes back to how it was at the keyframe before, so this keyframe no longer changes it.
+
+**How it works**
+
+- **Previews** (ControlFlowCore): `DrawingEditor.preview` is a scene the canvas shows in place of `drawing`, set by `scrubPreview(into:fraction:)` and `playPreview(_:at:)` and cleared by `endPreview()`, any timeline command, undo and changing keyframe. It never touches the document or undo. `displayRevision` changes with what the canvas shows, so the renderer and the overlay rebuild for a preview without the document being handed off for saving. While there is a preview `CanvasSession` ignores the Pencil, hover and tap undo, and the overlay draws only the viewport border (and the outline view's wireframe of the preview). `Timeline.playing(_:at:)` plays any run of keyframes.
+- **Playback** runs on the canvas's display link: each frame `CanvasStore.playbackFrame(at:)` asks for the scene at the frame's display time.
+- **Onion skin:** `DrawingEditor.onionSkin` is the previous keyframe's state while `showsOnionSkin` is on; the renderer builds it with its own `ArtBuilder`, every shape at the ghost view's opacity, and draws it under the art.
+- **Strip model:** `TimelineStrip` (chips, blocks, titles, durations), `Transition.durationLabel`, and `TimingCurve.moving(controlPoint:to:)`, `normalized` and `samples(count:)` for the curve editor and glyphs. `keyedProperties()` gives what the current keyframe keys on the selection, and `TimelineStrip.propertyNames` names it for the Inspector. Thumbnails are drawn off the main thread with `ThumbnailRenderer` once edits go quiet, only for keyframes whose scene changed. Tests are in `TimelineUITests.swift`.
 
 ## Character Studio foundations
 

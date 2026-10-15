@@ -269,7 +269,13 @@ Design choices now that keep this cheap later:
    - `after`/`before`/`t` on vertex changes are hints for playback only; the states come from the ids and positions. Dash lists and gradient stops that change length snap. Scale overshoot is clamped to the sign both ends share rather than to ≥ 0, so flips still animate.
    - The example is `Schema/examples/demo.controlflow`, the robot in three sequences; `.charstudio` files no longer open. Test vectors are `Schema/vectors/demo.json` and `morph.json`, documented in `Schema/README.md`.
    - The app opens and saves `.controlflow` (UTI `com.dgcrensh.controlflow.presentation`) and still edits only the opening state until the timeline UI.
-4. **Timeline UI:** the strip, Set Keyframe, the transition popover and curve editor, scrubbing, Play Sequence, onion skin and changed indicators.
+4. **Timeline UI** (shipped): the strip, Set Keyframe, the transition popover and curve editor, scrubbing, Play Sequence, onion skin and changed indicators.
+   - Previews (scrubbing, Play Sequence and the popover's transition preview) are a view-only scene on `DrawingEditor.preview`, separate from the document and undo; any command, undo or change of keyframe ends them, and touching the canvas stops playback. Play Sequence returns to the current chip when it ends.
+   - Keyboard: **K** is Set Keyframe and Shift-Cmd-K New Sequence. Option-Cmd-O toggles the onion skin.
+   - Chips are reordered by dragging one onto another (it moves in front) or onto a block's empty space (to its end). Split is on the chip's menu (Split Sequence Here) and on the block's menu (at the current keyframe).
+   - The onion skin draws the previous keyframe's art with every shape at the ghost view's opacity (0.25), under the current art. It is not shown during a preview.
+   - The Inspector's keyed fields: it lists the property groups the current keyframe sets on the selection and puts a dot on the position and size fields (transform or points keyed) and the fill and outline fields.
+   - Chip thumbnails are the viewport drawn with `ThumbnailRenderer`, redrawn off the main thread once edits go quiet.
 5. **Presenting:** presentation mode, the inputs, and the external display with the presenter view.
 6. **HTML export** (later): §10.
 

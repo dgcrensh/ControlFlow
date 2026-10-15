@@ -143,7 +143,7 @@ public struct CanvasSession: Sendable {
     /// The Pencil hovering above the screen at `location`, or `nil` when it leaves. The
     /// pen tool draws its rubber band to it.
     public mutating func pencilHovered(at location: Vec2?) {
-        guard drawingTouch == nil else { return }
+        guard drawingTouch == nil, editor.preview == nil else { return }
         editor.pencilHovered(at: location.map { camera.toWorld($0) }, zoom: camera.zoom)
     }
 
@@ -178,7 +178,8 @@ public struct CanvasSession: Sendable {
                                     pressure: Double? = nil) {
         switch kind {
         case .pencil:
-            guard drawingTouch == nil || isFingerDrawing else {
+            // A preview (scrubbing or playing) is view-only.
+            guard (drawingTouch == nil || isFingerDrawing) && editor.preview == nil else {
                 ignored.insert(id)
                 return
             }
@@ -198,7 +199,7 @@ public struct CanvasSession: Sendable {
                 return
             }
             trackTap(id, at: location, time: time)
-            if options.fingerDraws, drawingTouch == nil, fingerOrder.isEmpty {
+            if options.fingerDraws, drawingTouch == nil, fingerOrder.isEmpty, editor.preview == nil {
                 // Simulator only: a lone finger draws. It is still tracked as a finger
                 // so a second finger can turn the touch into navigation.
                 trackFinger(id, at: location)
@@ -395,6 +396,8 @@ public struct CanvasSession: Sendable {
         camera = t.startCamera
         navigation = nil
         if isFingerDrawing { cancelPencil() }
+        // A preview is view-only.
+        guard editor.preview == nil else { return }
         switch command {
         case .undo: undo()
         case .redo: redo()

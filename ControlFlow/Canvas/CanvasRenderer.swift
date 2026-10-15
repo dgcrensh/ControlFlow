@@ -127,6 +127,18 @@ final class CanvasRenderer {
     /// The drawing the art was last built from, which a refine merges against.
     private var artDrawing = Drawing()
 
+    // Onion skin: the keyframe before the current one, every shape at the ghost opacity.
+    // Built in the frame from its own cache, at the art's tolerance.
+    private var onionBuilder: ArtBuilder = {
+        var builder = ArtBuilder()
+        builder.concatenatesVertices = false
+        return builder
+    }()
+    private var onionKey: (revision: Int, tolerance: Double)?
+    private var onionSteps: [ArtStep] = []
+    private var onionSegments: [ArtSegment] = []
+    private var onionBuffers: [Int: any MTLBuffer] = [:]
+
     // Background refinement at a new zoom bucket.
     private var refineJob: Task<Void, Never>?
     /// The tolerance the running job flattens at.
@@ -277,7 +289,9 @@ final class CanvasRenderer {
             updateArt(editor: editor, zoom: session.camera.zoom, navigating: session.isNavigating,
                       viewRect: Rect(points: screen))
         }
-        loadMissingTextures(for: editor.drawing.references, commandBuffer: commandBuffer)
+        // A preview (scrubbing or playing) shows its scene in place of the drawing.
+        let shown = editor.shownDrawing
+        loadMissingTextures(for: shown.references, commandBuffer: commandBuffer)
 
         var uniforms = makeUniforms(camera: session.camera, viewSize: viewSize, scale: scale, darkMode: darkMode)
 
@@ -299,14 +313,25 @@ final class CanvasRenderer {
         encoder.setFragmentBytes(&uniforms, length: MemoryLayout<CanvasUniforms>.stride, index: 0)
         encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
 
-        let viewport = editor.drawing.viewport
+        let viewport = shown.viewport
         let stage = viewport.bounds.corners
         drawSolid([stage[0], stage[1], stage[2], stage[0], stage[2], stage[3]],
                   color: PaintUniforms.vector(viewport.background), encoder: encoder, uniforms: &uniforms)
-        drawReferences(of: editor.drawing, encoder: encoder, uniforms: &uniforms)
+        drawReferences(of: shown, encoder: encoder, uniforms: &uniforms)
         if !editor.outlineView {
+            if editor.preview == nil, let onion = editor.onionSkin {
+                updateOnion(onion, revision: editor.onionRevision)
+                Signposts.canvas.withIntervalSignpost("Onion draw") {
+                    drawArt(onionSteps, segments: onionSegments, buffers: onionBuffers, encoder: encoder, uniforms: &uniforms,
+                            viewRect: Rect(points: screen))
+                }
+            } else if editor.onionSkin == nil, onionKey != nil {
+                // Turned off; during a preview it is only hidden.
+                releaseOnion()
+            }
             Signposts.canvas.withIntervalSignpost("Art draw") {
-                drawArt(encoder: encoder, uniforms: &uniforms, viewRect: Rect(points: screen))
+                drawArt(artSteps, segments: artSegments, buffers: artBuffers, encoder: encoder, uniforms: &uniforms,
+                        viewRect: Rect(points: screen))
             }
         }
         // Everything outside the viewport is dimmed toward the canvas background.
@@ -393,7 +418,7 @@ final class CanvasRenderer {
         let bucket = pow(2, ceil(log2(max(zoom, 1.0 / 64))))
         let wanted = 0.2 / bucket
         let live = editor.liveTransform.flatMap { $0.movesTessellation ? $0 : nil }
-        let drawing = live?.base ?? editor.drawing
+        let drawing = live?.base ?? editor.shownDrawing
         // A live drag just ended: carry the moved shapes' triangles to where they landed
         // rather than flattening them again. Enlarged ones are coarse until a refine.
         if live == nil, let ended = lastLive {
@@ -417,14 +442,14 @@ final class CanvasRenderer {
 
         let ghost = editor.ghostFocus
         liveTransform = live?.transform ?? .identity
-        let current = live.map { artLive == $0.id } ?? (artLive == nil && editor.revision == artRevision)
+        let current = live.map { artLive == $0.id } ?? (artLive == nil && editor.displayRevision == artRevision)
         guard !current || artRefined ||
             editor.isolatedLayer != artIsolation || editor.isolatedGroup != artGroupIsolation || ghost != artGhost
         else { return }
         // Why, for the signpost.
         let reason = artCold ? "open" : !current ? (live != nil ? "drag" : "edit") : artRefined ? "refine" : "focus"
         // A live build stands for no revision, so the drawing is rebuilt when the drag ends.
-        artRevision = live == nil ? editor.revision : -1
+        artRevision = live == nil ? editor.displayRevision : -1
         artLive = live?.id
         artIsolation = editor.isolatedLayer
         artGroupIsolation = editor.isolatedGroup
@@ -444,20 +469,49 @@ final class CanvasRenderer {
 
     /// Keeps the buffers of layers that didn't change and makes one for each layer that did.
     private func uploadArt(_ batch: ArtBatch) {
+        artSteps = batch.steps
+        artSegments = batch.segments
+        artBuffers = upload(batch, keeping: artBuffers)
+    }
+
+    /// The buffers for `batch`'s layers: those in `buffers` it still uses, and a new one
+    /// for each layer that changed.
+    private func upload(_ batch: ArtBatch, keeping buffers: [Int: any MTLBuffer]) -> [Int: any MTLBuffer] {
         let interval = Signposts.canvas.beginInterval("Art upload")
         var floats = 0
         defer { Signposts.canvas.endInterval("Art upload", interval, "\(floats) floats") }
-        artSteps = batch.steps
-        artSegments = batch.segments
         var kept: [Int: any MTLBuffer] = [:]
-        for id in batch.residentIDs { kept[id] = artBuffers[id] }
+        for id in batch.residentIDs { kept[id] = buffers[id] }
         for segment in batch.segmentsToUpload(resident: Set(kept.keys)) {
             floats += segment.floats.count
             kept[segment.id] = segment.floats.withUnsafeBytes { bytes in
                 bytes.baseAddress.flatMap { device.makeBuffer(bytes: $0, length: bytes.count, options: .storageModeShared) }
             }
         }
-        artBuffers = kept
+        return kept
+    }
+
+    /// Builds the onion skin when it or the art's tolerance changed: every shape faded to
+    /// the ghost opacity, as the ghost view draws shapes outside its focus.
+    private func updateOnion(_ onion: Drawing, revision: Int) {
+        guard onionKey?.revision != revision || onionKey?.tolerance != artTolerance, artTolerance > 0 else { return }
+        onionKey = (revision, artTolerance)
+        let batch = Signposts.canvas.withIntervalSignpost("Onion rebuild") {
+            onionBuilder.build(onion, isolatedLayer: nil, tolerance: artTolerance, ghostFocus: [])
+        }
+        onionSteps = batch.steps
+        onionSegments = batch.segments
+        onionBuffers = upload(batch, keeping: onionBuffers)
+    }
+
+    /// Drops the onion skin's art and its cache once it is turned off.
+    private func releaseOnion() {
+        onionKey = nil
+        onionSteps = []
+        onionSegments = []
+        onionBuffers = [:]
+        onionBuilder = ArtBuilder()
+        onionBuilder.concatenatesVertices = false
     }
 
     /// Moves the art toward `wanted`, the zoom bucket's tolerance, without stalling a frame.
@@ -532,8 +586,9 @@ final class CanvasRenderer {
         onNeedsRender?()
     }
 
-    private func drawArt(encoder: any MTLRenderCommandEncoder, uniforms: inout CanvasUniforms, viewRect: Rect) {
-        guard !artSteps.isEmpty else { return }
+    private func drawArt(_ steps: [ArtStep], segments: [ArtSegment], buffers: [Int: any MTLBuffer],
+                         encoder: any MTLRenderCommandEncoder, uniforms: inout CanvasUniforms, viewRect: Rect) {
+        guard !steps.isEmpty else { return }
         var view: [Float] = []
         let corners = viewRect.corners
         for i in [0, 1, 2, 0, 2, 3] {
@@ -559,11 +614,11 @@ final class CanvasRenderer {
             bound = kind
         }
 
-        for segment in artSegments {
+        for segment in segments {
             // Each layer's ranges count from the start of its own buffer.
-            layerBuffer = artBuffers[segment.id]
+            layerBuffer = buffers[segment.id]
             bound = .none
-            for step in artSteps[segment.steps] {
+            for step in steps[segment.steps] {
                 switch step {
                 case .stencil(let range, let state, let reference):
                     bind(stencilPipeline, as: .stencil)

@@ -368,14 +368,29 @@ public struct Timeline: Sendable {
     /// The scene `time` seconds into playing sequence `index` from the end of the one
     /// before it, keyframe after keyframe, and whether it has reached its last keyframe.
     public mutating func playing(sequence index: Int, at time: Double) -> (scene: Drawing, finished: Bool) {
-        guard let range = presentation.chainRange(ofSequence: index) else { return (state(at: 0), true) }
-        var remaining = max(time, 0)
+        guard let range = presentation.chainRange(ofSequence: index), let playing = playing(range, at: time) else {
+            return (state(at: 0), true)
+        }
+        return playing
+    }
+
+    /// The scene `time` seconds into playing the keyframes at chain indices `range`, from
+    /// the state before the first, and whether it has reached the last. Nil when the
+    /// range is not in the chain.
+    public mutating func playing(_ range: ClosedRange<Int>, at time: Double) -> (scene: Drawing, finished: Bool)? {
+        guard range.lowerBound > 0, range.upperBound < states.count else { return nil }
+        var remaining = max(time.isFinite ? time : 0, 0)
         for chain in range {
             let duration = presentation.keyframe(atChainIndex: chain)!.transition.duration
             if remaining < duration { return (transition(into: chain, elapsed: remaining), false) }
             remaining -= duration
         }
         return (state(at: range.upperBound), true)
+    }
+
+    /// The seconds the keyframes at chain indices `range` take to play.
+    public func duration(of range: ClosedRange<Int>) -> Double {
+        range.reduce(0) { $0 + (presentation.keyframe(atChainIndex: $1)?.transition.duration ?? 0) }
     }
 
     /// The `t` recorded for each vertex the keyframe adds or removes on a segment.
