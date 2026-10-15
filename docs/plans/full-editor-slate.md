@@ -56,7 +56,7 @@ step, and the example and schema update together (per CLAUDE.md).
     (`w` on each point) rather than outlining the stroke into a filled shape. *Rig:* a width profile on the
     centerline keeps the line weight correct when a bone bends the path; an outlined shape would smear.
     This is the single most "drawn by hand" upgrade for character line art.
-    **Decision (Dallas):** pressure-to-width is an optional toggle, off by default; uniform width stays the
+    **Decision:** pressure-to-width is an optional toggle, off by default; uniform width stays the
     default stroke.
 11. **Clipping inside a part (M).** Mark a shape as a clip; shapes above it in the same part draw only inside
     it. *Rig:* this is how cutout characters do shading and highlights: paint a shadow loosely over the arm

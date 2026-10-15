@@ -27,7 +27,7 @@ why Draw Behind Owner exists for the hat.
 
 ## Options
 
-### 1. Character-wide z-index (Dallas's first idea)
+### 1. Character-wide z-index (the first idea)
 
 Every part gets a number; draw order is the sort. **Against:** the flat stack is already a total order and drag to
 reorder is a nicer way to edit it than typing numbers. A number re-encodes the same thing with gaps, ties to
