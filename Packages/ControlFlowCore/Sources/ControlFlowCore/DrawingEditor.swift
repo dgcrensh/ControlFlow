@@ -97,6 +97,8 @@ public enum EditorMetrics {
     public static let doubleTapDistance = 20.0
     /// How close a drag must come to an anchor or grid line to snap, in screen points.
     public static let snapRadius = 8.0
+    /// How close a dragged box's edge or middle must come to a smart guide to snap, in screen points.
+    public static let guideRadius = 6.0
 }
 
 /// The open path the Pen tool is extending. The active end is the last point, except
@@ -250,7 +252,11 @@ public struct DrawingEditor: Sendable {
 
     private var gesture: Gesture? {
         didSet {
-            if case .transform = gesture {} else if liveTransform != nil { liveTransform = nil }
+            if case .transform = gesture {} else {
+                if liveTransform != nil { liveTransform = nil }
+                if guideTargets != nil { guideTargets = nil }
+                if !guideLines.isEmpty { guideLines = [] }
+            }
             if case .anchors = gesture {} else if closingEdge != nil { closingEdge = nil }
         }
     }
@@ -261,6 +267,10 @@ public struct DrawingEditor: Sendable {
     public private(set) var liveTransform: LiveTransform?
     /// Numbers the drags' live transforms.
     var liveTransformCount = 0
+    /// The smart guides the transform drag in progress lines up with, for the overlay.
+    public private(set) var guideLines: [GuideLine] = []
+    /// What the transform drag in progress can line up with, collected on its first step.
+    private var guideTargets: GuideTargets?
     var gestureZoom = 1.0
     /// The last tap with a time, for spotting a double tap.
     private var lastTap: (point: Vec2, time: Double)?
@@ -328,6 +338,8 @@ public struct DrawingEditor: Sendable {
 
     /// Screen-space snap radius in world points at the current gesture's zoom.
     var snapRadius: Double { EditorMetrics.snapRadius / gestureZoom }
+    /// Screen-space smart-guide radius in world points at the current gesture's zoom.
+    var guideRadius: Double { EditorMetrics.guideRadius / gestureZoom }
 
     // MARK: Gestures
 
@@ -386,6 +398,7 @@ public struct DrawingEditor: Sendable {
     public mutating func pencilBegan(at p: Vec2, zoom: Double) {
         gestureZoom = max(zoom, 1e-9)
         hoverPoint = nil
+        guideTargets = nil
         if tool.usesShapeIndex { refreshShapeIndex() }
         let px = 1 / gestureZoom
         switch tool {
@@ -461,7 +474,13 @@ public struct DrawingEditor: Sendable {
 
         case .transform(let kind, let target, let before, let start):
             let nextID = drawing.nextID
-            let t = transform(kind, from: start, to: p, target: target, before: before)
+            if snap.smartGuides, guideTargets == nil {
+                if case .rotate = kind {} else { guideTargets = makeGuideTargets(in: before, excluding: target) }
+            }
+            let step = transform(kind, from: start, to: p, target: target, before: before,
+                                 guides: snap.smartGuides ? guideTargets : nil)
+            let t = step.matrix
+            if guideLines != step.guides { guideLines = step.guides }
             // Shapes and groups take the turn's center (or the frame's) as their pivot.
             var center = before.frame(of: target)?.center
             if case .rotate(let c) = kind { center = c }
@@ -1179,37 +1198,154 @@ public struct DrawingEditor: Sendable {
         }
     }
 
-    private func transform(_ kind: TransformKind, from start: Vec2, to p: Vec2, target: Selection, before: Drawing) -> Affine2D {
+    /// One step of a transform drag: its matrix, and the smart guides it lined up with.
+    private struct TransformStep {
+        var matrix: Affine2D
+        var guides: [GuideLine] = []
+    }
+
+    private func transform(_ kind: TransformKind, from start: Vec2, to p: Vec2, target: Selection, before: Drawing,
+                           guides: GuideTargets?) -> TransformStep {
         let moving = Set(before.shapeRefs(in: target))
         switch kind {
         case .move:
             var delta = p - start
-            // Constrained moves follow the axis the drag leans to.
-            if modifiers.contains(.constrain) { delta = abs(delta.x) >= abs(delta.y) ? Vec2(delta.x, 0) : Vec2(0, delta.y) }
-            if snap.isEnabled, let frame = before.frame(of: target) {
-                delta = Snapper.snapTranslation(delta, of: frame.corners + [frame.center], settings: snap,
-                                                anchors: snapAnchors(excluding: moving, moving: nil), radius: snapRadius)
+            var freeX = true, freeY = true
+            // Constrained moves follow the axis the drag leans to, and only snap along it.
+            if modifiers.contains(.constrain) {
+                if abs(delta.x) >= abs(delta.y) { delta = Vec2(delta.x, 0); freeY = false } else { delta = Vec2(0, delta.y); freeX = false }
             }
-            return .translation(delta)
+            var guide: GuideSnap?
+            let box = guides == nil ? nil : before.geometryBounds(of: target)
+            if let guides, let box {
+                let g = SmartGuides.snapMove(box: box, delta: delta, targets: guides, radius: guideRadius, snapX: freeX, snapY: freeY)
+                if g.x != nil || g.y != nil { guide = g }
+            }
+            if snap.isEnabled, let frame = before.frame(of: target) {
+                let points = frame.corners + [frame.center]
+                let anchors = snapAnchors(excluding: moving, moving: nil)
+                guard var g = guide else {
+                    return TransformStep(matrix: .translation(Snapper.snapTranslation(delta, of: points, settings: snap,
+                                                                                       anchors: anchors, radius: snapRadius)))
+                }
+                // An anchor hit beats the guides; the grid takes an axis when it is nearer.
+                var anchorsOnly = snap
+                anchorsOnly.toGrid = false
+                let hit = Snapper.translation(delta, of: points, settings: anchorsOnly, anchors: anchors, radius: snapRadius)
+                if hit.snappedX || hit.snappedY { return TransformStep(matrix: .translation(hit.point)) }
+                var gridOnly = snap
+                gridOnly.toAnchors = false
+                let grid = Snapper.translation(delta, of: points, settings: gridOnly, anchors: [], radius: snapRadius)
+                if grid.snappedX, g.x == nil || abs(grid.point.x - delta.x) < abs(g.delta.x - delta.x) {
+                    g.delta.x = grid.point.x
+                    g.x = nil
+                }
+                if grid.snappedY, g.y == nil || abs(grid.point.y - delta.y) < abs(g.delta.y - delta.y) {
+                    g.delta.y = grid.point.y
+                    g.y = nil
+                }
+                guide = g
+            }
+            guard let guide, let guides, let box else { return TransformStep(matrix: .translation(delta)) }
+            let moved = Rect(minPoint: box.minPoint + guide.delta, maxPoint: box.maxPoint + guide.delta)
+            return TransformStep(matrix: .translation(guide.delta),
+                                 guides: SmartGuides.lines(box: moved, x: guide.x, y: guide.y, targets: guides))
         case .scale(let anchor):
-            let v0 = start - anchor, v1 = snapped(p, excluding: moving) - anchor
-            guard v0.lengthSquared > 1e-12 else { return .identity }
-            let k = max(v1.dot(v0) / v0.lengthSquared, 0.02)
-            return Affine2D.translation(anchor) * Affine2D.scale(k) * Affine2D.translation(-anchor)
+            let hit = snappedPoint(p, excluding: moving)
+            let v0 = start - anchor, v1 = hit.point - anchor
+            guard v0.lengthSquared > 1e-12 else { return TransformStep(matrix: .identity) }
+            var k = max(v1.dot(v0) / v0.lengthSquared, 0.02)
+            var lines: [GuideLine] = []
+            // The dragged corner lines up with a guide on whichever axis is nearer one.
+            if !hit.isAnchor, let guides, let box = guideBox(of: target, in: before) {
+                let corner = box.corners.max { $0.distance(to: anchor) < $1.distance(to: anchor) }!
+                let span = corner - anchor
+                let at = anchor + span * k
+                let (x, y) = SmartGuides.snapPoint(at, targets: guides, radius: guideRadius,
+                                                   snapX: abs(span.x) > 1e-9, snapY: abs(span.y) > 1e-9)
+                var best: (k: Double, distance: Double)?
+                if let x { best = ((x - anchor.x) / span.x, abs(x - at.x)) }
+                if let y, best == nil || abs(y - at.y) < best!.distance { best = ((y - anchor.y) / span.y, abs(y - at.y)) }
+                if let best, best.k >= 0.02 {
+                    k = best.k
+                    let end = anchor + span * k
+                    lines = SmartGuides.lines(box: Rect(from: anchor + (box.minPoint - anchor) * k, to: anchor + (box.maxPoint - anchor) * k),
+                                              x: end.x, y: end.y, targets: guides)
+                }
+            }
+            return TransformStep(matrix: Affine2D.translation(anchor) * Affine2D.scale(k) * Affine2D.translation(-anchor),
+                                 guides: lines)
         case .stretch(let anchor, let horizontal):
-            let q = snapped(p, excluding: moving)
+            let hit = snappedPoint(p, excluding: moving)
+            let q = hit.point
             let span = horizontal ? start.x - anchor.x : start.y - anchor.y
-            guard abs(span) > 1e-9 else { return .identity }
-            let k = max((horizontal ? q.x - anchor.x : q.y - anchor.y) / span, 0.02)
+            guard abs(span) > 1e-9 else { return TransformStep(matrix: .identity) }
+            var k = max((horizontal ? q.x - anchor.x : q.y - anchor.y) / span, 0.02)
+            var lines: [GuideLine] = []
+            // The moving side lines up with a guide.
+            if !hit.isAnchor, let guides, let box = guideBox(of: target, in: before) {
+                let a = horizontal ? anchor.x : anchor.y
+                let sides = horizontal ? (box.minPoint.x, box.maxPoint.x) : (box.minPoint.y, box.maxPoint.y)
+                let side = abs(sides.1 - a) >= abs(sides.0 - a) ? sides.1 : sides.0
+                if abs(side - a) > 1e-9 {
+                    let at = a + (side - a) * k
+                    let (x, y) = SmartGuides.snapPoint(horizontal ? Vec2(at, 0) : Vec2(0, at), targets: guides,
+                                                       radius: guideRadius, snapX: horizontal, snapY: !horizontal)
+                    if let c = horizontal ? x : y, (c - a) / (side - a) >= 0.02 {
+                        k = (c - a) / (side - a)
+                        let scaled = horizontal
+                            ? Rect(from: Vec2(a + (box.minPoint.x - a) * k, box.minPoint.y), to: Vec2(a + (box.maxPoint.x - a) * k, box.maxPoint.y))
+                            : Rect(from: Vec2(box.minPoint.x, a + (box.minPoint.y - a) * k), to: Vec2(box.maxPoint.x, a + (box.maxPoint.y - a) * k))
+                        lines = SmartGuides.lines(box: scaled, x: horizontal ? c : nil, y: horizontal ? nil : c, targets: guides)
+                    }
+                }
+            }
             let scale = horizontal ? Affine2D.scale(x: k, y: 1) : Affine2D.scale(x: 1, y: k)
-            return Affine2D.translation(anchor) * scale * Affine2D.translation(-anchor)
+            return TransformStep(matrix: Affine2D.translation(anchor) * scale * Affine2D.translation(-anchor), guides: lines)
         case .rotate(let center):
             let v0 = start - center, v1 = p - center
-            guard v0.lengthSquared > 1e-12, v1.lengthSquared > 1e-12 else { return .identity }
+            guard v0.lengthSquared > 1e-12, v1.lengthSquared > 1e-12 else { return TransformStep(matrix: .identity) }
             var angle = atan2(v1.y, v1.x) - atan2(v0.y, v0.x)
             if modifiers.contains(.constrain) { angle = ShapePrimitives.snapAngle(angle, step: .pi / 12) }
-            return Affine2D.translation(center) * Affine2D.rotation(angle) * Affine2D.translation(-center)
+            return TransformStep(matrix: Affine2D.translation(center) * Affine2D.rotation(angle) * Affine2D.translation(-center))
         }
+    }
+
+    // MARK: Smart guides
+
+    /// What a transform drag of `target` can line up with: the viewport, and the
+    /// outline-free world box of every shown shape and every group, leaving out what
+    /// moves (and any group with a moving shape in it). Locked art counts.
+    func makeGuideTargets(in drawing: Drawing, excluding target: Selection) -> GuideTargets {
+        let moving = Set(drawing.shapeRefs(in: target))
+        var boxes: [Rect] = []
+        for layer in drawing.layers where !layer.isHidden {
+            var groups: [Int: Rect] = [:]
+            var movingGroups: Set<Int> = []
+            for (index, shape) in layer.shapes.enumerated() {
+                if moving.contains(ShapeRef(layer: layer.id, shape: shape.id)) {
+                    if let g = shape.group { movingGroups.insert(g) }
+                    continue
+                }
+                guard layer.isShown(index) else { continue }
+                let box = layer.worldShape(index).geometryBounds
+                guard !box.isNull else { continue }
+                boxes.append(box)
+                if let g = shape.group { groups[g] = (groups[g] ?? .null).union(box) }
+            }
+            for (id, box) in groups where !movingGroups.contains(id) { boxes.append(box) }
+        }
+        return GuideTargets(boxes: boxes, viewport: drawing.viewport.bounds)
+    }
+
+    /// The box a resize lines up by, when the selection's frame is square to the world
+    /// (a turned frame's sides aren't straight up and across, so guides don't apply).
+    private func guideBox(of target: Selection, in drawing: Drawing) -> Rect? {
+        guard let frame = drawing.frame(of: target) else { return nil }
+        let c = frame.corners
+        let level = abs(c[0].y - c[1].y) < 1e-6 && abs(c[0].x - c[3].x) < 1e-6
+        guard level else { return nil }
+        return drawing.geometryBounds(of: target)
     }
 
     // MARK: Snapping
@@ -1230,6 +1366,19 @@ public struct DrawingEditor: Sendable {
             }
         }
         return out
+    }
+
+    /// `p` snapped to anchors and the grid when snapping is on, and whether it landed on an anchor.
+    private func snappedPoint(_ p: Vec2, excluding: Set<ShapeRef>) -> (point: Vec2, isAnchor: Bool) {
+        guard snap.isEnabled else { return (p, false) }
+        let anchors = snapAnchors(excluding: excluding, moving: nil)
+        if snap.toAnchors {
+            var anchorsOnly = snap
+            anchorsOnly.toGrid = false
+            let hit = Snapper.snap(p, settings: anchorsOnly, anchors: anchors, radius: snapRadius)
+            if hit.snappedX { return (hit.point, true) }
+        }
+        return (Snapper.snap(p, settings: snap, anchors: [], radius: snapRadius).point, false)
     }
 
     /// `p` snapped to anchors and the grid when snapping is on.

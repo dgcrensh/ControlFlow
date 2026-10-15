@@ -195,6 +195,7 @@ final class CanvasStore {
         #endif
         session = CanvasSession(options: options, presentation: package.presentation)
         session.editor.pressureWidth = UserDefaults.standard.bool(forKey: Self.pressureWidthKey)
+        session.editor.snap.smartGuides = UserDefaults.standard.object(forKey: Self.smartGuidesKey) as? Bool ?? true
         session.setRotationLocked(Self.storedRotationLock, viewSize: .zero, animated: false)
         referenceData = package.referenceImages
         document = package
@@ -529,7 +530,17 @@ final class CanvasStore {
     func penDone() { edit { $0.editor.penFinish() } }
     func setAddToSelection(_ on: Bool) { edit { $0.editor.addToSelection = on } }
     func setAutoJoin(_ on: Bool) { edit { $0.editor.autoJoinSelectedLayer = on } }
-    func setSnap(_ snap: SnapSettings) { edit { $0.editor.snap = snap } }
+    /// Smart Guides are remembered on this iPad (on until turned off); the rest of Snap isn't.
+    func setSnap(_ snap: SnapSettings) {
+        UserDefaults.standard.set(snap.smartGuides, forKey: Self.smartGuidesKey)
+        edit { $0.editor.snap = snap }
+    }
+    func setSmartGuides(_ on: Bool) {
+        var snap = ui.snap
+        snap.smartGuides = on
+        setSnap(snap)
+    }
+    private static let smartGuidesKey = "smartGuides"
     func flip(horizontal: Bool) { edit { $0.editor.flipSelection(horizontal: horizontal) } }
     func applyTransform() { edit { $0.editor.applyTransform() } }
     func nudge(_ dx: Double, _ dy: Double) { edit { $0.editor.nudge(by: Vec2(dx, dy)) } }

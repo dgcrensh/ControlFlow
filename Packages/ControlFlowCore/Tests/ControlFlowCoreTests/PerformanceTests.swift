@@ -117,6 +117,17 @@ final class PerformanceTests: XCTestCase {
         }
     }
 
+    /// What a smart-guide drag of one shape collects on its first step: the box of every
+    /// other shape and group.
+    func testSmartGuideTargets() {
+        let editor = DrawingEditor(drawing: drawing)
+        let first = drawing.layers[0]
+        let one = Selection.shape(layer: first.id, shape: first.shapes[0].id)
+        measure {
+            for _ in 0..<10 { withExtendedLifetime(editor.makeGuideTargets(in: drawing, excluding: one)) {} }
+        }
+    }
+
     // MARK: Refresh
 
     /// The editor queries `CanvasStore.refresh()` reads after every edit, with

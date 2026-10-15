@@ -16,6 +16,8 @@ private func editor() -> DrawingEditor {
     add("Arm", [shape(arm)], pivot: arm.center)
     var e = DrawingEditor(drawing: d)
     e.tool = .select
+    // The drags' exact transforms are the point here, not lining up.
+    e.snap.smartGuides = false
     return e
 }
 
