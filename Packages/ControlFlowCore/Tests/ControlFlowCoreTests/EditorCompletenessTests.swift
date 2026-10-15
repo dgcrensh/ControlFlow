@@ -17,13 +17,13 @@ private func assertClose(_ a: Vec2, _ b: Vec2, tolerance: Double = 1e-6, _ messa
     XCTAssertTrue(a.isApproximately(b, tolerance: tolerance), "\(a) is not \(b) \(message)", file: file, line: line)
 }
 
-/// An editor with one filled square part per rectangle, back to front.
+/// An editor with one filled square layer per rectangle, back to front.
 private func editor(_ rects: [Rect]) -> DrawingEditor {
     var d = Drawing()
     for (i, r) in rects.enumerated() {
         let shape = VectorShape(id: d.makeID(), path: ShapePrimitives.rectangle(r), fill: .ink,
                                 stroke: StrokeStyle(color: .ink, width: 2))
-        d.parts.append(Part(id: d.makeID(), name: "Part \(i + 1)", shapes: [shape], pivot: r.center))
+        d.layers.append(Layer(id: d.makeID(), name: "Layer \(i + 1)", shapes: [shape], pivot: r.center))
     }
     return DrawingEditor(drawing: d)
 }
@@ -32,11 +32,11 @@ private func square(_ x: Double, _ y: Double, _ size: Double = 100) -> Rect {
     Rect(minPoint: Vec2(x, y), maxPoint: Vec2(x + size, y + size))
 }
 
-/// Adds a filled square shape to part `index`.
-private func addSquare(_ e: inout DrawingEditor, part index: Int, _ r: Rect) -> ShapeRef {
+/// Adds a filled square shape to layer `index`.
+private func addSquare(_ e: inout DrawingEditor, layer index: Int, _ r: Rect) -> ShapeRef {
     let id = e.drawing.makeID()
-    e.drawing.parts[index].shapes.append(VectorShape(id: id, path: ShapePrimitives.rectangle(r), fill: .ink))
-    return ShapeRef(part: e.drawing.parts[index].id, shape: id)
+    e.drawing.layers[index].shapes.append(VectorShape(id: id, path: ShapePrimitives.rectangle(r), fill: .ink))
+    return ShapeRef(layer: e.drawing.layers[index].id, shape: id)
 }
 
 /// Points around a circle, as a hand might draw it.
@@ -120,7 +120,7 @@ final class ShapePrimitiveTests: XCTestCase {
 }
 
 final class ShapeToolTests: XCTestCase {
-    func testDraggingMakesOneShapeInANewPartAsOneUndoStep() {
+    func testDraggingMakesOneShapeInANewLayerAsOneUndoStep() {
         var e = DrawingEditor()
         e.tool = .shape
         e.shapeKind = .ellipse
@@ -128,14 +128,14 @@ final class ShapeToolTests: XCTestCase {
         e.pencilMoved(to: Vec2(50, 50))
         e.pencilMoved(to: Vec2(100, 60))
         e.pencilEnded(at: Vec2(100, 60))
-        XCTAssertEqual(e.drawing.parts.count, 1)
-        let shape = e.drawing.parts[0].shapes[0]
+        XCTAssertEqual(e.drawing.layers.count, 1)
+        let shape = e.drawing.layers[0].shapes[0]
         XCTAssertEqual(shape.path.points.count, 4)
         XCTAssertNotNil(shape.fill)
-        assertClose(e.drawing.parts[0].pivot, Vec2(50, 30), tolerance: 0.05)
-        XCTAssertEqual(e.selection, .shape(part: e.drawing.parts[0].id, shape: shape.id))
+        assertClose(e.drawing.layers[0].pivot, Vec2(50, 30), tolerance: 0.05)
+        XCTAssertEqual(e.selection, .shape(layer: e.drawing.layers[0].id, shape: shape.id))
         e.undo()
-        XCTAssertTrue(e.drawing.parts.isEmpty)
+        XCTAssertTrue(e.drawing.layers.isEmpty)
         XCTAssertFalse(e.canUndo)
     }
 
@@ -143,10 +143,10 @@ final class ShapeToolTests: XCTestCase {
         var e = DrawingEditor()
         e.tool = .shape
         tap(&e, Vec2(10, 10))
-        XCTAssertTrue(e.drawing.parts.isEmpty)
+        XCTAssertTrue(e.drawing.layers.isEmpty)
         e.shapeKind = .line
         drag(&e, Vec2(0, 0), Vec2(100, 0))
-        let line = e.drawing.parts[0].shapes[0]
+        let line = e.drawing.layers[0].shapes[0]
         XCTAssertFalse(line.path.closed)
         XCTAssertNotNil(line.stroke)
     }
@@ -158,7 +158,7 @@ final class ShapeToolTests: XCTestCase {
         e.pencilMoved(to: Vec2(50, 50))
         let used = e.drawing.nextID
         e.pencilCancelled()
-        XCTAssertTrue(e.drawing.parts.isEmpty)
+        XCTAssertTrue(e.drawing.layers.isEmpty)
         XCTAssertGreaterThanOrEqual(e.drawing.nextID, used)
     }
 }
@@ -237,12 +237,12 @@ final class QuickShapeTests: XCTestCase {
         XCTAssertTrue(s.checkQuickShape(time: 1.4))
         XCTAssertNotNil(s.quickShape)
         s.touchEnded(id: 1, location: pts.last!, time: 1.5)
-        let shape = s.editor.drawing.parts[0].shapes[0]
+        let shape = s.editor.drawing.layers[0].shapes[0]
         XCTAssertEqual(shape.path.points.count, 4)
         XCTAssertTrue(shape.path.closed)
         XCTAssertNil(s.quickShape)
         s.undo()
-        XCTAssertTrue(s.editor.drawing.parts.isEmpty)
+        XCTAssertTrue(s.editor.drawing.layers.isEmpty)
     }
 
     func testASnappedLineFollowsThePencil() {
@@ -253,7 +253,7 @@ final class QuickShapeTests: XCTestCase {
         XCTAssertTrue(s.checkQuickShape(time: 1))
         s.touchMoved(id: 1, samples: [Vec2(300, 200)], time: 1.1)
         s.touchEnded(id: 1, location: Vec2(300, 200), time: 1.2)
-        let end = s.editor.drawing.parts[0].shapes[0].path.points[1].position
+        let end = s.editor.drawing.layers[0].shapes[0].path.points[1].position
         assertClose(s.camera.toScreen(end), Vec2(300, 200), tolerance: 1e-6)
     }
 }
@@ -266,32 +266,32 @@ final class EraserAndScissorsTests: XCTestCase {
         e.pencilMoved(to: Vec2(150, 50))
         e.pencilMoved(to: Vec2(250, 50))
         e.pencilEnded(at: Vec2(250, 50))
-        XCTAssertEqual(e.drawing.parts.count, 1, "the first two squares are gone")
+        XCTAssertEqual(e.drawing.layers.count, 1, "the first two squares are gone")
         e.undo()
-        XCTAssertEqual(e.drawing.parts.count, 3)
+        XCTAssertEqual(e.drawing.layers.count, 3)
     }
 
     func testEraserSkipsLockedAndHiddenArt() {
         var e = editor([square(0, 0), square(200, 0)])
-        e.setPartLocked(e.drawing.parts[0].id, true)
-        e.setPartHidden(e.drawing.parts[1].id, true)
+        e.setLayerLocked(e.drawing.layers[0].id, true)
+        e.setLayerHidden(e.drawing.layers[1].id, true)
         e.tool = .eraser
         drag(&e, Vec2(-20, 50), Vec2(320, 50))
-        XCTAssertEqual(e.drawing.parts.count, 2)
+        XCTAssertEqual(e.drawing.layers.count, 2)
     }
 
     func testScissorsOpenAClosedShape() throws {
         var e = editor([square(0, 0)])
         e.tool = .scissors
         tap(&e, Vec2(50, 0))
-        let shapes = e.drawing.parts[0].shapes
+        let shapes = e.drawing.layers[0].shapes
         XCTAssertEqual(shapes.count, 1)
         XCTAssertFalse(shapes[0].path.closed)
         assertClose(shapes[0].path.points.first!.position, Vec2(50, 0))
         assertClose(shapes[0].path.points.last!.position, Vec2(50, 0))
         XCTAssertNotNil(shapes[0].stroke)
         e.undo()
-        XCTAssertTrue(e.drawing.parts[0].shapes[0].path.closed)
+        XCTAssertTrue(e.drawing.layers[0].shapes[0].path.closed)
     }
 
     func testScissorsSplitAnOpenPath() {
@@ -304,30 +304,30 @@ final class EraserAndScissorsTests: XCTestCase {
         e.pencilHovered(at: Vec2(40, 3), zoom: 1)
         assertClose(e.scissorsPreview ?? .zero, Vec2(40, 0), tolerance: 1e-3)
         tap(&e, Vec2(40, 3))
-        let shapes = e.drawing.parts[0].shapes
+        let shapes = e.drawing.layers[0].shapes
         XCTAssertEqual(shapes.count, 2)
         assertClose(shapes[0].path.points.last!.position, Vec2(40, 0), tolerance: 1e-3)
         assertClose(shapes[1].path.points.first!.position, Vec2(40, 0), tolerance: 1e-3)
         XCTAssertEqual(Set(e.drawing.shapeRefs(in: e.selection)).count, 2)
         // Cutting at an open path's end does nothing.
         tap(&e, Vec2(100, 0))
-        XCTAssertEqual(e.drawing.parts[0].shapes.count, 2)
+        XCTAssertEqual(e.drawing.layers[0].shapes.count, 2)
     }
 }
 
 final class HideLockIsolateTests: XCTestCase {
     func testHiddenAndLockedArtCannotBeHitOrSelected() {
         var e = editor([square(0, 0), square(0, 0)])
-        let back = e.drawing.parts[0].id, front = e.drawing.parts[1].id
+        let back = e.drawing.layers[0].id, front = e.drawing.layers[1].id
         e.tool = .select
         tap(&e, Vec2(50, 50))
         XCTAssertEqual(e.selection, .layer(front))
         e.lockSelection()
         XCTAssertEqual(e.selection, Selection.none)
         tap(&e, Vec2(50, 50))
-        XCTAssertEqual(e.selection, .layer(back), "taps go through the locked part")
-        e.selectPart(front)
-        XCTAssertEqual(e.selection, .layer(back), "a locked part can't be picked from the layers")
+        XCTAssertEqual(e.selection, .layer(back), "taps go through the locked layer")
+        e.selectLayer(front)
+        XCTAssertEqual(e.selection, .layer(back), "a locked layer can't be picked from the layers")
         e.hideSelection()
         tap(&e, Vec2(50, 50))
         XCTAssertEqual(e.selection, Selection.none)
@@ -342,49 +342,49 @@ final class HideLockIsolateTests: XCTestCase {
 
     func testHidingSingleShapes() {
         var e = editor([square(0, 0)])
-        let ref = addSquare(&e, part: 0, square(200, 0))
-        e.selection = .shape(part: ref.part, shape: ref.shape)
+        let ref = addSquare(&e, layer: 0, square(200, 0))
+        e.selection = .shape(layer: ref.layer, shape: ref.shape)
         e.hideSelection()
         XCTAssertTrue(e.drawing.shape(ref)!.isHidden)
-        XCTAssertFalse(e.drawing.parts[0].isHidden)
+        XCTAssertFalse(e.drawing.layers[0].isHidden)
         XCTAssertNil(e.drawing.hitTest(Vec2(250, 50), tolerance: 1))
-        XCTAssertTrue(LayerTree(drawing: e.drawing).parts.last!.hasHiddenOrLockedShapes)
+        XCTAssertTrue(LayerTree(drawing: e.drawing).layers.last!.hasHiddenOrLockedShapes)
     }
 
     func testHideAndLockRoundTripThroughTheFile() throws {
         var e = editor([square(0, 0), square(200, 0)])
-        let ref = addSquare(&e, part: 0, square(0, 200))
-        e.drawing.parts[1].isHidden = true
-        e.drawing.parts[1].isLocked = true
-        e.selection = .shape(part: ref.part, shape: ref.shape)
+        let ref = addSquare(&e, layer: 0, square(0, 200))
+        e.drawing.layers[1].isHidden = true
+        e.drawing.layers[1].isLocked = true
+        e.selection = .shape(layer: ref.layer, shape: ref.shape)
         e.lockSelection()
         let text = CharacterFormat.encode(e.drawing).formatted()
         XCTAssertTrue(text.contains("\"locked\": true"))
         let back = try CharacterFormat.decode(JSONValue(parsing: text)).drawing
-        XCTAssertTrue(back.parts[1].isHidden && back.parts[1].isLocked)
-        XCTAssertTrue(back.parts[0].shapes[1].isLocked)
-        XCTAssertFalse(back.parts[0].shapes[0].isLocked || back.parts[0].isHidden)
+        XCTAssertTrue(back.layers[1].isHidden && back.layers[1].isLocked)
+        XCTAssertTrue(back.layers[0].shapes[1].isLocked)
+        XCTAssertFalse(back.layers[0].shapes[0].isLocked || back.layers[0].isHidden)
     }
 
-    func testDoubleTapIsolatesAPartAndNewArtJoinsIt() {
+    func testDoubleTapIsolatesALayerAndNewArtJoinsIt() {
         var e = editor([square(0, 0), square(200, 0)])
-        let first = e.drawing.parts[0].id
+        let first = e.drawing.layers[0].id
         e.tool = .select
         tap(&e, Vec2(50, 50), time: 1)
         tap(&e, Vec2(52, 50), time: 1.2)
-        XCTAssertEqual(e.isolatedPart, first)
-        // The other part can't be touched now.
+        XCTAssertEqual(e.isolatedLayer, first)
+        // The other layer can't be touched now.
         tap(&e, Vec2(250, 50), time: 5)
         XCTAssertEqual(e.selection, Selection.none)
         e.tool = .pencil
         e.addStroke([Vec2(300, 300), Vec2(320, 310), Vec2(340, 300)], zoom: 1)
-        XCTAssertEqual(e.drawing.parts.count, 2)
-        XCTAssertEqual(e.drawing.parts[0].shapes.count, 2)
+        XCTAssertEqual(e.drawing.layers.count, 2)
+        XCTAssertEqual(e.drawing.layers[0].shapes.count, 2)
         // Double-tapping empty canvas leaves isolation.
         e.tool = .select
         tap(&e, Vec2(600, 600), time: 10)
         tap(&e, Vec2(600, 600), time: 10.1)
-        XCTAssertNil(e.isolatedPart)
+        XCTAssertNil(e.isolatedLayer)
     }
 
     func testSlowTapsAreNotADoubleTap() {
@@ -392,32 +392,32 @@ final class HideLockIsolateTests: XCTestCase {
         e.tool = .select
         tap(&e, Vec2(50, 50), time: 1)
         tap(&e, Vec2(50, 50), time: 2)
-        XCTAssertNil(e.isolatedPart)
+        XCTAssertNil(e.isolatedLayer)
     }
 
-    func testIsolationEndsWhenItsPartGoes() {
+    func testIsolationEndsWhenItsLayerGoes() {
         var e = editor([square(0, 0), square(200, 0)])
-        let first = e.drawing.parts[0].id
-        e.isolate(part: first)
-        e.setPartHidden(first, true)
-        XCTAssertNil(e.isolatedPart)
-        e.isolate(part: first)
-        e.deletePart(first)
-        XCTAssertNil(e.isolatedPart)
-        e.isolate(part: e.drawing.parts[0].id)
-        e.selectPart(e.drawing.parts[0].id)
-        XCTAssertNotNil(e.isolatedPart)
+        let first = e.drawing.layers[0].id
+        e.isolate(layer: first)
+        e.setLayerHidden(first, true)
+        XCTAssertNil(e.isolatedLayer)
+        e.isolate(layer: first)
+        e.deleteLayer(first)
+        XCTAssertNil(e.isolatedLayer)
+        e.isolate(layer: e.drawing.layers[0].id)
+        e.selectLayer(e.drawing.layers[0].id)
+        XCTAssertNotNil(e.isolatedLayer)
     }
 }
 
 final class ArrangeTests: XCTestCase {
-    func testArrangingShapesWithinAPart() {
+    func testArrangingShapesWithinALayer() {
         var e = editor([square(0, 0)])
-        let a = ShapeRef(part: e.drawing.parts[0].id, shape: e.drawing.parts[0].shapes[0].id)
-        let b = addSquare(&e, part: 0, square(10, 0))
-        let c = addSquare(&e, part: 0, square(20, 0))
-        func order() -> [Int] { e.drawing.parts[0].shapes.map(\.id) }
-        e.selection = .shape(part: a.part, shape: a.shape)
+        let a = ShapeRef(layer: e.drawing.layers[0].id, shape: e.drawing.layers[0].shapes[0].id)
+        let b = addSquare(&e, layer: 0, square(10, 0))
+        let c = addSquare(&e, layer: 0, square(20, 0))
+        func order() -> [Int] { e.drawing.layers[0].shapes.map(\.id) }
+        e.selection = .shape(layer: a.layer, shape: a.shape)
         e.arrange(.bringForward)
         XCTAssertEqual(order(), [b.shape, a.shape, c.shape])
         e.arrange(.bringToFront)
@@ -433,77 +433,77 @@ final class ArrangeTests: XCTestCase {
         XCTAssertEqual(order(), [a.shape, b.shape, c.shape])
     }
 
-    func testArrangingAndReorderingParts() {
+    func testArrangingAndReorderingLayers() {
         var e = editor([square(0, 0), square(10, 0), square(20, 0)])
-        let ids = e.drawing.parts.map(\.id)
+        let ids = e.drawing.layers.map(\.id)
         e.selection = .layer(ids[0])
         e.arrange(.bringToFront)
-        XCTAssertEqual(e.drawing.parts.map(\.id), [ids[1], ids[2], ids[0]])
-        e.setPartOrder(frontToBack: [ids[2], ids[1], ids[0]])
-        XCTAssertEqual(e.drawing.parts.map(\.id), [ids[0], ids[1], ids[2]])
-        e.setPartOrder(frontToBack: [ids[2]])
-        XCTAssertEqual(e.drawing.parts.count, 3, "an incomplete order is ignored")
+        XCTAssertEqual(e.drawing.layers.map(\.id), [ids[1], ids[2], ids[0]])
+        e.setLayerOrder(frontToBack: [ids[2], ids[1], ids[0]])
+        XCTAssertEqual(e.drawing.layers.map(\.id), [ids[0], ids[1], ids[2]])
+        e.setLayerOrder(frontToBack: [ids[2]])
+        XCTAssertEqual(e.drawing.layers.count, 3, "an incomplete order is ignored")
     }
 
-    func testMergeDownAndMoveToNewPart() {
+    func testMergeDownAndMoveToNewLayer() {
         var e = editor([square(0, 0), square(200, 0)])
-        let lower = e.drawing.parts[0].id, upper = e.drawing.parts[1].id
-        XCTAssertFalse(e.canMergePartDown(lower))
-        e.mergePartDown(upper)
-        XCTAssertEqual(e.drawing.parts.count, 1)
-        XCTAssertEqual(e.drawing.parts[0].shapes.count, 2)
+        let lower = e.drawing.layers[0].id, upper = e.drawing.layers[1].id
+        XCTAssertFalse(e.canMergeLayerDown(lower))
+        e.mergeLayerDown(upper)
+        XCTAssertEqual(e.drawing.layers.count, 1)
+        XCTAssertEqual(e.drawing.layers[0].shapes.count, 2)
         XCTAssertEqual(e.selection, .layer(lower))
 
-        let moved = e.drawing.parts[0].shapes[1].id
-        e.selection = .shape(part: lower, shape: moved)
-        e.moveSelectionToNewPart()
-        XCTAssertEqual(e.drawing.parts.count, 2)
-        XCTAssertEqual(e.drawing.parts[1].shapes.map(\.id), [moved])
-        assertClose(e.drawing.parts[1].pivot, Vec2(250, 50), tolerance: 0.5)
+        let moved = e.drawing.layers[0].shapes[1].id
+        e.selection = .shape(layer: lower, shape: moved)
+        e.moveSelectionToNewLayer()
+        XCTAssertEqual(e.drawing.layers.count, 2)
+        XCTAssertEqual(e.drawing.layers[1].shapes.map(\.id), [moved])
+        assertClose(e.drawing.layers[1].pivot, Vec2(250, 50), tolerance: 0.5)
     }
 
-    func testMovingShapesToAnotherPart() {
+    func testMovingShapesToAnotherLayer() {
         var e = editor([square(0, 0), square(200, 0), square(400, 0)])
-        let ids = e.drawing.parts.map(\.id)
-        let shape = e.drawing.parts[2].shapes[0].id
-        e.selection = .shape(part: ids[2], shape: shape)
-        e.moveSelection(toPart: ids[0])
-        XCTAssertEqual(e.drawing.parts.map(\.id), [ids[0], ids[1]], "the emptied part goes")
-        XCTAssertEqual(e.drawing.parts[0].shapes.last?.id, shape)
-        XCTAssertEqual(e.selection, .shape(part: ids[0], shape: shape))
+        let ids = e.drawing.layers.map(\.id)
+        let shape = e.drawing.layers[2].shapes[0].id
+        e.selection = .shape(layer: ids[2], shape: shape)
+        e.moveSelection(toLayer: ids[0])
+        XCTAssertEqual(e.drawing.layers.map(\.id), [ids[0], ids[1]], "the emptied layer goes")
+        XCTAssertEqual(e.drawing.layers[0].shapes.last?.id, shape)
+        XCTAssertEqual(e.selection, .shape(layer: ids[0], shape: shape))
         e.selection = .layer(ids[1])
-        e.moveSelection(toPart: ids[0])
-        XCTAssertEqual(e.drawing.parts.count, 1)
-        XCTAssertEqual(e.drawing.parts[0].shapes.count, 3)
+        e.moveSelection(toLayer: ids[0])
+        XCTAssertEqual(e.drawing.layers.count, 1)
+        XCTAssertEqual(e.drawing.layers[0].shapes.count, 3)
     }
 }
 
 final class DuplicateAndClipboardTests: XCTestCase {
-    func testDuplicatingAPart() {
+    func testDuplicatingALayer() {
         var e = editor([square(0, 0), square(200, 0)])
-        e.selection = .layer(e.drawing.parts[0].id)
+        e.selection = .layer(e.drawing.layers[0].id)
         e.duplicateSelection()
-        XCTAssertEqual(e.drawing.parts.count, 3)
-        let copy = e.drawing.parts[1]
-        XCTAssertEqual(copy.name, "Part 1 2")
+        XCTAssertEqual(e.drawing.layers.count, 3)
+        let copy = e.drawing.layers[1]
+        XCTAssertEqual(copy.name, "Layer 1 2")
         XCTAssertEqual(e.selection, .layer(copy.id))
         assertClose(copy.shapes[0].path.points[0].position, Vec2(10, 10))
         assertClose(copy.pivot, Vec2(60, 60))
         e.undo()
-        XCTAssertEqual(e.drawing.parts.count, 2)
+        XCTAssertEqual(e.drawing.layers.count, 2)
     }
 
     func testDuplicatingShapesKeepsThemAboveTheOriginals() {
         var e = editor([square(0, 0)])
-        let a = ShapeRef(part: e.drawing.parts[0].id, shape: e.drawing.parts[0].shapes[0].id)
-        let b = addSquare(&e, part: 0, square(200, 0))
-        e.selection = .shape(part: a.part, shape: a.shape)
+        let a = ShapeRef(layer: e.drawing.layers[0].id, shape: e.drawing.layers[0].shapes[0].id)
+        let b = addSquare(&e, layer: 0, square(200, 0))
+        e.selection = .shape(layer: a.layer, shape: a.shape)
         e.duplicateSelection(offset: .zero)
-        let ids = e.drawing.parts[0].shapes.map(\.id)
+        let ids = e.drawing.layers[0].shapes.map(\.id)
         XCTAssertEqual(ids.count, 3)
         XCTAssertEqual(ids[0], a.shape)
         XCTAssertEqual(ids[2], b.shape)
-        XCTAssertEqual(e.selection, .shape(part: a.part, shape: ids[1]))
+        XCTAssertEqual(e.selection, .shape(layer: a.layer, shape: ids[1]))
     }
 
     func testOptionDragMovesACopy() {
@@ -511,11 +511,11 @@ final class DuplicateAndClipboardTests: XCTestCase {
         e.tool = .select
         e.modifiers = .alternate
         drag(&e, Vec2(50, 50), Vec2(250, 50))
-        XCTAssertEqual(e.drawing.parts.count, 2)
-        assertClose(e.drawing.parts[0].shapes[0].path.points[0].position, Vec2(0, 0))
-        assertClose(e.drawing.parts[1].shapes[0].path.points[0].position, Vec2(200, 0))
+        XCTAssertEqual(e.drawing.layers.count, 2)
+        assertClose(e.drawing.layers[0].worldShape(0).path.points[0].position, Vec2(0, 0))
+        assertClose(e.drawing.layers[1].worldShape(0).path.points[0].position, Vec2(200, 0))
         e.undo()
-        XCTAssertEqual(e.drawing.parts.count, 1, "copy and move are one step")
+        XCTAssertEqual(e.drawing.layers.count, 1, "copy and move are one step")
     }
 
     func testShiftDragMovesAlongOneAxis() {
@@ -523,42 +523,42 @@ final class DuplicateAndClipboardTests: XCTestCase {
         e.tool = .select
         e.modifiers = .constrain
         drag(&e, Vec2(50, 50), Vec2(150, 70))
-        assertClose(e.drawing.parts[0].shapes[0].path.points[0].position, Vec2(100, 0))
+        assertClose(e.drawing.layers[0].worldShape(0).path.points[0].position, Vec2(100, 0))
     }
 
-    func testCopyAndPasteParts() throws {
+    func testCopyAndPasteLayers() throws {
         var e = editor([square(0, 0)])
-        e.drawing.parts[0].name = "Hand.L"
-        e.selection = .layer(e.drawing.parts[0].id)
+        e.drawing.layers[0].name = "Hand.L"
+        e.selection = .layer(e.drawing.layers[0].id)
         let text = try XCTUnwrap(e.copySelection())
-        XCTAssertTrue(text.contains("\"clipboard\": \"parts\""))
+        XCTAssertTrue(text.contains("\"clipboard\": \"layers\""))
         XCTAssertTrue(e.paste(text))
-        XCTAssertEqual(e.drawing.parts.count, 2)
-        XCTAssertEqual(e.drawing.parts[1].name, "Hand.L 2")
-        assertClose(e.drawing.parts[1].shapes[0].path.points[0].position, Vec2(10, 10), tolerance: 1e-3)
-        XCTAssertEqual(e.selection, .layer(e.drawing.parts[1].id))
+        XCTAssertEqual(e.drawing.layers.count, 2)
+        XCTAssertEqual(e.drawing.layers[1].name, "Hand.L 2")
+        assertClose(e.drawing.layers[1].shapes[0].path.points[0].position, Vec2(10, 10), tolerance: 1e-3)
+        XCTAssertEqual(e.selection, .layer(e.drawing.layers[1].id))
 
         // Into another character, in place.
         var other = DrawingEditor()
         XCTAssertTrue(other.paste(text))
-        assertClose(other.drawing.parts[0].shapes[0].path.points[0].position, Vec2(0, 0), tolerance: 1e-3)
+        assertClose(other.drawing.layers[0].shapes[0].path.points[0].position, Vec2(0, 0), tolerance: 1e-3)
         XCTAssertFalse(other.paste("not json"))
         XCTAssertFalse(other.paste("{\"formatVersion\": \"0.1.0\"}"))
     }
 
-    func testCopiedShapesPasteIntoTheSelectedPart() throws {
+    func testCopiedShapesPasteIntoTheSelectedLayer() throws {
         var e = editor([square(0, 0), square(200, 0)])
-        let source = e.drawing.parts[0]
-        e.selection = .shape(part: source.id, shape: source.shapes[0].id)
+        let source = e.drawing.layers[0]
+        e.selection = .shape(layer: source.id, shape: source.shapes[0].id)
         let text = try XCTUnwrap(e.copySelection())
-        e.selection = .layer(e.drawing.parts[1].id)
+        e.selection = .layer(e.drawing.layers[1].id)
         XCTAssertTrue(e.paste(text))
-        XCTAssertEqual(e.drawing.parts.count, 2)
-        XCTAssertEqual(e.drawing.parts[1].shapes.count, 2)
+        XCTAssertEqual(e.drawing.layers.count, 2)
+        XCTAssertEqual(e.drawing.layers[1].shapes.count, 2)
         // Cut removes the original.
-        e.selection = .layer(e.drawing.parts[0].id)
+        e.selection = .layer(e.drawing.layers[0].id)
         XCTAssertNotNil(e.cutSelection())
-        XCTAssertEqual(e.drawing.parts.count, 1)
+        XCTAssertEqual(e.drawing.layers.count, 1)
     }
 }
 
@@ -579,7 +579,7 @@ final class PencilControlTests: XCTestCase {
         var e = editor([square(0, 0)])
         e.tool = .select
         e.pencilHovered(at: Vec2(50, 50), zoom: 1)
-        XCTAssertEqual(e.hoverTarget?.part, e.drawing.parts[0].id)
+        XCTAssertEqual(e.hoverTarget?.layer, e.drawing.layers[0].id)
         let overlay = EditorOverlay.vertices(for: e, zoom: 1)
         XCTAssertFalse(overlay.isEmpty)
         e.pencilHovered(at: Vec2(500, 500), zoom: 1)

@@ -5,13 +5,13 @@ private func rect(_ x: Double, _ y: Double, _ w: Double, _ h: Double) -> Rect {
     Rect(minPoint: Vec2(x, y), maxPoint: Vec2(x + w, y + h))
 }
 
-/// Adds a part holding one rectangle and returns the part's id.
+/// Adds a layer holding one rectangle and returns the layer's id.
 @discardableResult
 private func addRect(_ d: inout Drawing, _ name: String, _ r: Rect, fill: RGBAColor? = .ink,
                      stroke: StrokeStyle? = nil) -> Int {
     let shape = VectorShape(id: d.makeID(), path: ShapePrimitives.rectangle(r), fill: fill, stroke: stroke)
     let id = d.makeID()
-    d.parts.append(Part(id: id, name: name, shapes: [shape], pivot: r.center))
+    d.layers.append(Layer(id: id, name: name, shapes: [shape], pivot: r.center))
     return id
 }
 
@@ -45,7 +45,7 @@ final class ViewportTests: XCTestCase {
         var e = DrawingEditor(drawing: d)
         e.setViewportAspect(Viewport.Aspect.square.ratio)
         XCTAssertEqual(e.drawing.viewport.height, 1920)
-        XCTAssertEqual(e.drawing.parts[0].bounds, rect(0, 0, 100, 200), "no art moves")
+        XCTAssertEqual(e.drawing.layers[0].bounds, rect(0, 0, 100, 200), "no art moves")
         e.undo()
         XCTAssertEqual(e.drawing.viewport.height, 1080)
 
@@ -110,10 +110,10 @@ final class ViewOptionTests: XCTestCase {
         e.ghostsUnselected = true
         XCTAssertNil(e.ghostFocus, "Nothing selected: nothing fades")
         e.selection = .layer(a)
-        XCTAssertEqual(e.ghostFocus, [e.drawing.parts[0].shapes[0].id])
+        XCTAssertEqual(e.ghostFocus, [e.drawing.layers[0].shapes[0].id])
 
         var builder = ArtBuilder()
-        let batch = builder.build(e.drawing, isolatedPart: nil, tolerance: 0.5, ghostFocus: e.ghostFocus)
+        let batch = builder.build(e.drawing, isolatedLayer: nil, tolerance: 0.5, ghostFocus: e.ghostFocus)
         let opacities: [Double] = batch.steps.compactMap { step in
             if case .cover(_, let paint, _, _) = step { return paint.opacity }
             return nil
@@ -130,7 +130,7 @@ final class ViewOptionTests: XCTestCase {
         let plain = EditorOverlay.vertices(for: e, zoom: 1)
         e.outlineView = true
         XCTAssertGreaterThan(EditorOverlay.vertices(for: e, zoom: 1).count, plain.count)
-        e.setPartHidden(id, true)
+        e.setLayerHidden(id, true)
         XCTAssertEqual(EditorOverlay.vertices(for: e, zoom: 1).count, plain.count)
     }
 
@@ -151,13 +151,13 @@ final class ViewOptionTests: XCTestCase {
 }
 
 final class SVGExportTests: XCTestCase {
-    func testWritesPartsAsNamedGroupsWithStyles() throws {
+    func testWritesLayersAsNamedGroupsWithStyles() throws {
         var d = Drawing()
         d.name = "Robo & Co"
         addRect(&d, "Arm L", rect(0, 0, 10, 20), fill: RGBAColor(hex: "#FF0000")!,
                 stroke: StrokeStyle(color: .black, width: 2))
         addRect(&d, "Ghost", rect(0, 0, 5, 5))
-        d.parts[1].isHidden = true
+        d.layers[1].isHidden = true
         let svg = try XCTUnwrap(SVGWriter.document(for: d))
         XCTAssertTrue(svg.hasPrefix("<?xml"))
         XCTAssertTrue(svg.contains("<title>Robo &amp; Co</title>"))
@@ -185,10 +185,10 @@ final class SVGExportTests: XCTestCase {
         shade.isClipped = true
         shade.gradient = ShapeGradient(kind: .linear, start: Vec2(50, 0), end: Vec2(150, 0),
                                        stops: [GradientStop(offset: 0, color: .black), GradientStop(offset: 1, color: .white)])
-        d.parts[0].shapes.append(shade)
+        d.layers[0].shapes.append(shade)
         var line = ShapePrimitives.line(Vec2(0, 120), Vec2(100, 120))
         line.points[1].width = 2
-        d.parts.append(Part(id: d.makeID(), name: "Line", shapes: [VectorShape(id: d.makeID(), path: line,
+        d.layers.append(Layer(id: d.makeID(), name: "Line", shapes: [VectorShape(id: d.makeID(), path: line,
                                                                                stroke: StrokeStyle(color: .black, width: 2))]))
         let svg = try XCTUnwrap(SVGWriter.document(for: d))
         // The inside outline is doubled and clipped to the path.
@@ -210,13 +210,13 @@ final class SVGExportTests: XCTestCase {
         var d = Drawing()
         let head = VectorShape(id: d.makeID(), path: ShapePrimitives.ellipse(rect(0, 0, 100, 80)),
                                fill: RGBAColor(hex: "#F2A65A")!, stroke: StrokeStyle(color: .ink, width: 3))
-        d.parts.append(Part(id: d.makeID(), name: "Head", shapes: [head], pivot: Vec2(50, 40)))
+        d.layers.append(Layer(id: d.makeID(), name: "Head", shapes: [head], pivot: Vec2(50, 40)))
         addRect(&d, "Body", rect(10, 80, 80, 120), fill: RGBAColor(hex: "#5A8DEE")!)
         let svg = try XCTUnwrap(SVGWriter.document(for: d))
         let result = try SVGImporter.parse(svg, name: "robot")
-        XCTAssertEqual(result.parts.map(\.name), ["Head", "Body"])
-        XCTAssertEqual(result.parts.map(\.shapes.count), [1, 1])
-        let shape = result.parts[0].shapes[0]
+        XCTAssertEqual(result.layers.map(\.name), ["Head", "Body"])
+        XCTAssertEqual(result.layers.map(\.shapes.count), [1, 1])
+        let shape = result.layers[0].shapes[0]
         XCTAssertTrue(shape.path.closed)
         XCTAssertEqual(shape.fill, head.fill)
         XCTAssertEqual(shape.stroke?.color, RGBAColor.ink)
@@ -230,7 +230,7 @@ final class SVGExportTests: XCTestCase {
             assertClose(a.outHandle, b.outHandle, tolerance: 1e-3)
             XCTAssertEqual(a.mode, .symmetric)
         }
-        let body = result.parts[1].shapes[0]
+        let body = result.layers[1].shapes[0]
         XCTAssertEqual(body.path.points.map(\.position), [Vec2(10, 80), Vec2(90, 80), Vec2(90, 200), Vec2(10, 200)])
         XCTAssertTrue(body.path.points.allSatisfy { $0.mode == .corner })
         XCTAssertNil(body.stroke)
@@ -333,8 +333,8 @@ final class SVGImportTests: XCTestCase {
           <circle cx="5" cy="30" r="5" fill="currentColor" color="#123456" opacity="0.5" stroke="black"/>
         </svg>
         """, name: "test")
-        XCTAssertEqual(result.parts.map(\.name), ["test"])
-        let shapes = result.parts[0].shapes
+        XCTAssertEqual(result.layers.map(\.name), ["test"])
+        let shapes = result.layers[0].shapes
         XCTAssertEqual(shapes.map(\.fill), [RGBAColor(hex: "#FF0000"), RGBAColor(hex: "#0000FF"),
                                            RGBAColor(r: 0, g: 1, b: 0, a: 0.5), RGBAColor(hex: "#12345680")
                                                .map { RGBAColor(r: $0.r, g: $0.g, b: $0.b, a: 0.5) }])
@@ -355,9 +355,9 @@ final class SVGImportTests: XCTestCase {
           </g>
         </svg>
         """, name: "lines")
-        // The lone group is unwrapped, so its line lands in a part named after the file.
-        XCTAssertEqual(result.parts.map(\.name), ["lines"])
-        let shapes = result.parts[0].shapes
+        // The lone group is unwrapped, so its line lands in a layer named after the file.
+        XCTAssertEqual(result.layers.map(\.name), ["lines"])
+        let shapes = result.layers[0].shapes
         XCTAssertEqual(shapes.count, 1)
         XCTAssertNil(shapes[0].fill)
         XCTAssertFalse(shapes[0].path.closed)
@@ -373,7 +373,7 @@ final class SVGImportTests: XCTestCase {
           <path d="M0 0H100V100H0Z M25 25H75V75H25Z" fill="#000" stroke="#F00" stroke-width="2"/>
         </svg>
         """)
-        let shapes = result.parts[0].shapes
+        let shapes = result.layers[0].shapes
         // The fill (bridged into one ring), then each ring's outline.
         XCTAssertEqual(shapes.count, 3)
         XCTAssertNil(shapes[0].stroke)
@@ -385,7 +385,7 @@ final class SVGImportTests: XCTestCase {
         XCTAssertTrue(shapes[2].path.closed)
     }
 
-    func testGroupsBecomePartsAndUnsupportedElementsAreCounted() throws {
+    func testGroupsBecomeLayersAndUnsupportedElementsAreCounted() throws {
         let result = try SVGImporter.parse("""
         <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
           <defs><circle id="dot" r="5" fill="#123456"/></defs>
@@ -394,12 +394,12 @@ final class SVGImportTests: XCTestCase {
           <g data-name="Mouth Shape" id="Mouth_Shape"><text>hi</text><rect x="0" y="40" width="20" height="4"/></g>
         </svg>
         """)
-        XCTAssertEqual(result.parts.map(\.name), ["Eyes", "Mouth Shape"])
-        XCTAssertEqual(result.parts[0].shapes.count, 2)
-        assertClose(result.parts[0].shapes[0].path.bounds().center, Vec2(10, 10))
-        assertClose(result.parts[0].shapes[1].path.bounds().center, Vec2(30, 10))
-        XCTAssertEqual(result.parts[0].shapes[0].fill, RGBAColor(hex: "#123456"))
-        assertClose(result.parts[0].pivot, Vec2(20, 10))
+        XCTAssertEqual(result.layers.map(\.name), ["Eyes", "Mouth Shape"])
+        XCTAssertEqual(result.layers[0].shapes.count, 2)
+        assertClose(result.layers[0].shapes[0].path.bounds().center, Vec2(10, 10))
+        assertClose(result.layers[0].shapes[1].path.bounds().center, Vec2(30, 10))
+        XCTAssertEqual(result.layers[0].shapes[0].fill, RGBAColor(hex: "#123456"))
+        assertClose(result.layers[0].pivot, Vec2(20, 10))
         XCTAssertEqual(result.skipped["text"], 1)
         XCTAssertEqual(result.shapeCount, 3)
     }
@@ -410,7 +410,7 @@ final class SVGImportTests: XCTestCase {
           <g id="Layer_1"><g id="Head"><circle r="10"/></g><g id="Body"><rect width="10" height="10"/></g></g>
         </svg>
         """)
-        XCTAssertEqual(result.parts.map(\.name), ["Head", "Body"])
+        XCTAssertEqual(result.layers.map(\.name), ["Head", "Body"])
     }
 
     func testGradientFills() throws {
@@ -423,7 +423,7 @@ final class SVGImportTests: XCTestCase {
           <rect x="0" y="0" width="100" height="50" fill="url(#g)"/>
         </svg>
         """)
-        let shape = result.parts[0].shapes[0]
+        let shape = result.layers[0].shapes[0]
         XCTAssertEqual(shape.fill, RGBAColor(hex: "#FF0000"))
         let gradient = try XCTUnwrap(shape.gradient)
         XCTAssertEqual(gradient.kind, .linear)
@@ -445,7 +445,7 @@ final class SVGImportTests: XCTestCase {
         }
     }
 
-    func testImportedPartsArriveOnTopWithFreshIdsAndOneUndo() throws {
+    func testImportedLayersArriveOnTopWithFreshIdsAndOneUndo() throws {
         var d = Drawing()
         addRect(&d, "Head", rect(0, 0, 10, 10))
         var e = DrawingEditor(drawing: d)
@@ -456,13 +456,13 @@ final class SVGImportTests: XCTestCase {
           <g id="Arm"><rect x="10" width="5" height="5"/></g>
         </svg>
         """)
-        XCTAssertTrue(e.importParts(result.parts))
-        XCTAssertEqual(e.drawing.parts.map(\.name), ["Head", "Head 2", "Arm"])
-        let added = e.drawing.parts.dropFirst()
+        XCTAssertTrue(e.importLayers(result.layers))
+        XCTAssertEqual(e.drawing.layers.map(\.name), ["Head", "Head 2", "Arm"])
+        let added = e.drawing.layers.dropFirst()
         XCTAssertTrue(added.allSatisfy { $0.id >= firstNew && $0.shapes.allSatisfy { $0.id >= firstNew } })
-        XCTAssertEqual(Set(e.drawing.shapeRefs(in: e.selection).map(\.part)), Set(added.map(\.id)))
+        XCTAssertEqual(Set(e.drawing.shapeRefs(in: e.selection).map(\.layer)), Set(added.map(\.id)))
         e.undo()
-        XCTAssertEqual(e.drawing.parts.map(\.name), ["Head"])
-        XCTAssertFalse(e.importParts([]))
+        XCTAssertEqual(e.drawing.layers.map(\.name), ["Head"])
+        XCTAssertFalse(e.importLayers([]))
     }
 }

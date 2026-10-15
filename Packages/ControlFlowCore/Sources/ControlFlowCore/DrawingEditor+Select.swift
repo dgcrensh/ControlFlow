@@ -4,10 +4,10 @@ import Foundation
 /// first. Tapping a crumb that isn't the current level selects that level.
 public struct SelectionCrumb: Hashable, Sendable {
     public enum Level: Hashable, Sendable {
-        /// A whole part.
+        /// A whole layer.
         case layer(Int)
         /// A whole group of a layer.
-        case group(Int, inPart: Int)
+        case group(Int, inLayer: Int)
         /// Some shapes, less than a whole group or layer.
         case shapes
     }
@@ -45,29 +45,29 @@ extension DrawingEditor {
             current = .layer(id)
         case .shape, .shapes:
             let refs = drawing.shapeRefs(in: selection)
-            guard let first = refs.first, refs.allSatisfy({ $0.part == first.part }) else { return [] }
-            layer = first.part
+            guard let first = refs.first, refs.allSatisfy({ $0.layer == first.layer }) else { return [] }
+            layer = first.layer
             shapeCount = refs.count
             let groups = Set(refs.map { drawing.shape($0)?.group })
             if groups.count == 1, let g = groups.first ?? nil { group = g }
             if let whole = drawing.selectedGroup(selection) {
                 group = whole.group.id
-                current = .group(whole.group.id, inPart: layer)
+                current = .group(whole.group.id, inLayer: layer)
             } else {
                 current = .shapes
             }
         case .none:
-            guard let isolated = isolatedPart else { return [] }
+            guard let isolated = isolatedLayer else { return [] }
             layer = isolated
             group = isolatedGroup
         case .layers, .reference:
             return []
         }
-        guard let part = drawing.part(layer) else { return [] }
+        guard let found = drawing.layer(layer) else { return [] }
         var crumbs: [SelectionCrumb] = []
-        crumbs.append(SelectionCrumb(level: .layer(layer), title: part.name, isCurrent: current == .layer(layer)))
-        if let group, let info = part.group(group) {
-            let level = SelectionCrumb.Level.group(group, inPart: layer)
+        crumbs.append(SelectionCrumb(level: .layer(layer), title: found.name, isCurrent: current == .layer(layer)))
+        if let group, let info = found.group(group) {
+            let level = SelectionCrumb.Level.group(group, inLayer: layer)
             crumbs.append(SelectionCrumb(level: level, title: info.name, isCurrent: current == level))
         }
         if current == .shapes {
@@ -83,9 +83,9 @@ extension DrawingEditor {
     public mutating func selectCrumb(_ level: SelectionCrumb.Level) {
         switch level {
         case .layer(let id):
-            selectPart(id)
-        case .group(let id, let part):
-            selectGroup(id, inPart: part)
+            selectLayer(id)
+        case .group(let id, let layer):
+            selectGroup(id, inLayer: layer)
             if isolatedGroup == id, selection != .none { isolatedGroup = nil }
         case .shapes:
             break
@@ -117,9 +117,9 @@ extension DrawingEditor {
     /// The layer Select All in Layer and Invert Selection work in: the isolated layer, else
     /// the one layer the selection is in, else the active layer chosen in the panel.
     public var selectionScopeLayer: Int? {
-        if let isolatedPart { return isolatedPart }
+        if let isolatedLayer { return isolatedLayer }
         let refs = drawing.shapeRefs(in: selection)
-        if let first = refs.first, refs.allSatisfy({ $0.part == first.part }) { return first.part }
+        if let first = refs.first, refs.allSatisfy({ $0.layer == first.layer }) { return first.layer }
         if case .layer(let id) = selection { return id }
         return usableTargetLayer
     }
@@ -127,7 +127,7 @@ extension DrawingEditor {
     /// The editable shapes of the scope layer, or of the isolated group inside it.
     private var scopeShapeRefs: [ShapeRef]? {
         guard let layer = selectionScopeLayer else { return nil }
-        return drawing.editableShapeRefs(within: layer, group: isolatedPart == layer ? isolatedGroup : nil)
+        return drawing.editableShapeRefs(within: layer, group: isolatedLayer == layer ? isolatedGroup : nil)
     }
 
     /// True when Select All in Layer has shapes to select.
@@ -182,7 +182,7 @@ extension DrawingEditor {
         let wanted = Set(drawing.shapeRefs(in: selection).compactMap { drawing.shape($0).map(key) })
         guard !wanted.isEmpty else { return }
         cancelGesture()
-        let refs = drawing.editableShapeRefs(within: isolatedPart, group: isolatedGroup).filter { ref in
+        let refs = drawing.editableShapeRefs(within: isolatedLayer, group: isolatedGroup).filter { ref in
             drawing.shape(ref).map { wanted.contains(key($0)) } ?? false
         }
         selection = .covering(Set(refs))

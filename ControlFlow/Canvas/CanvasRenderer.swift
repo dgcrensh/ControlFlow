@@ -59,8 +59,8 @@ private struct PaintUniforms {
 
 /// Draws the canvas: dot grid, the viewport's background, reference images, the art,
 /// the veil that dims everything outside the viewport, the live stroke, then the
-/// editing overlay. Hidden shapes are skipped. In isolation the other parts are drawn
-/// first under a veil of the background color, then the isolated part on top. Ghosting
+/// editing overlay. Hidden shapes are skipped. In isolation the other layers are drawn
+/// first under a veil of the background color, then the isolated layer on top. Ghosting
 /// fades the shapes outside the selection; the outline view skips the art and the
 /// overlay draws every shape as a wireframe instead.
 ///
@@ -99,7 +99,7 @@ final class CanvasRenderer {
     private var stencilTexture: (any MTLTexture)?
 
     // Art cache.
-    /// Hands over each part's vertices separately (see `uploadArt`), so it doesn't
+    /// Hands over each layer's vertices separately (see `uploadArt`), so it doesn't
     /// concatenate them.
     private var artBuilder: ArtBuilder = {
         var builder = ArtBuilder()
@@ -118,8 +118,8 @@ final class CanvasRenderer {
     /// The live drag drawn on the last frame, whose triangles move with the shapes when it ends.
     private var lastLive: LiveTransform?
     private var artSteps: [ArtStep] = []
-    /// One per part. Each part's vertices live in their own buffer, keyed by segment id,
-    /// so an edit uploads only the parts it changed. A buffer is never written after it
+    /// One per layer. Each layer's vertices live in their own buffer, keyed by segment id,
+    /// so an edit uploads only the layers it changed. A buffer is never written after it
     /// is made, so a frame still in flight keeps reading the one it was given (the
     /// command buffer retains it).
     private var artSegments: [ArtSegment] = []
@@ -139,7 +139,7 @@ final class CanvasRenderer {
     /// A refine merged: rebuild the art from the cache on the next frame.
     private var artRefined = false
     /// From the first frame until a refine's last result merges: the drawing is being
-    /// tessellated in the background for the first time, so builds leave out the parts
+    /// tessellated in the background for the first time, so builds leave out the layers
     /// that aren't ready instead of flattening them in the frame.
     private var artCold = false
 
@@ -407,7 +407,7 @@ final class CanvasRenderer {
         }
         lastLive = live
         // The first frame shows the references and an empty canvas at once: a refine job
-        // flattens the drawing, the parts in view first, and each part shows as it merges.
+        // flattens the drawing, the layers in view first, and each layer shows as it merges.
         if artTolerance == 0 {
             artTolerance = wanted
             artCold = true
@@ -419,14 +419,14 @@ final class CanvasRenderer {
         liveTransform = live?.transform ?? .identity
         let current = live.map { artLive == $0.id } ?? (artLive == nil && editor.revision == artRevision)
         guard !current || artRefined ||
-            editor.isolatedPart != artIsolation || editor.isolatedGroup != artGroupIsolation || ghost != artGhost
+            editor.isolatedLayer != artIsolation || editor.isolatedGroup != artGroupIsolation || ghost != artGhost
         else { return }
         // Why, for the signpost.
         let reason = artCold ? "open" : !current ? (live != nil ? "drag" : "edit") : artRefined ? "refine" : "focus"
         // A live build stands for no revision, so the drawing is rebuilt when the drag ends.
         artRevision = live == nil ? editor.revision : -1
         artLive = live?.id
-        artIsolation = editor.isolatedPart
+        artIsolation = editor.isolatedLayer
         artGroupIsolation = editor.isolatedGroup
         artGhost = ghost
         artRefined = false
@@ -435,14 +435,14 @@ final class CanvasRenderer {
         defer { Signposts.canvas.endInterval("Art rebuild", interval, "\(reason, privacy: .public)") }
         // While a refine is under way, unchanged shapes keep whatever tessellation they
         // have; only new and edited ones are tessellated, at the art's tolerance. Until
-        // the first refine is done, parts with a shape not yet tessellated wait for it.
-        let batch = artBuilder.build(drawing, isolatedPart: editor.isolatedPart, isolatedGroup: editor.isolatedGroup,
+        // the first refine is done, layers with a shape not yet tessellated wait for it.
+        let batch = artBuilder.build(drawing, isolatedLayer: editor.isolatedLayer, isolatedGroup: editor.isolatedGroup,
                                      tolerance: artTolerance, ghostFocus: ghost, moving: live?.shapes ?? [],
                                      reusingOtherTolerances: refineJob != nil || artMixed, leavingOutUncached: artCold)
         uploadArt(batch)
     }
 
-    /// Keeps the buffers of parts that didn't change and makes one for each part that did.
+    /// Keeps the buffers of layers that didn't change and makes one for each layer that did.
     private func uploadArt(_ batch: ArtBatch) {
         let interval = Signposts.canvas.beginInterval("Art upload")
         var floats = 0
@@ -470,7 +470,7 @@ final class CanvasRenderer {
     ///   either tier are skipped, so returning to the last bucket costs one warm build.
     /// - A newer bucket cancels the running job.
     /// - The first job, after opening, flattens every shape. Its first result is every
-    ///   part with a shape in view, whole, and a zoom-out mid-gesture doesn't drop it.
+    ///   layer with a shape in view, whole, and a zoom-out mid-gesture doesn't drop it.
     private func scheduleRefine(to wanted: Double, drawing: Drawing, navigating: Bool, viewRect: Rect) {
         // Where the art is headed: the running job's tolerance, or the art's own once
         // every shape is at it.
@@ -486,12 +486,12 @@ final class CanvasRenderer {
         refineGeneration += 1
         let generation = refineGeneration
         let cache = artBuilder.tessellations
-        let wholeParts = artCold
+        let wholeLayers = artCold
         refineJob = Task.detached(priority: .userInitiated) { [weak self] in
             let interval = Signposts.canvas.beginInterval("Art refine")
             var made = 0
             defer { Signposts.canvas.endInterval("Art refine", interval, "\(made) shapes") }
-            let plan = cache.refinePlan(for: drawing, tolerance: wanted, viewRect: viewRect, wholeParts: wholeParts)
+            let plan = cache.refinePlan(for: drawing, tolerance: wanted, viewRect: viewRect, wholeLayers: wholeLayers)
             // An empty first result has nothing to show early.
             if !plan.visible.isEmpty {
                 guard let visible = TessellationCache.tessellate(plan.visible, tolerance: wanted,
@@ -546,7 +546,7 @@ final class CanvasRenderer {
         var moving = false
         enum Bound { case none, stencil, cover }
         var bound = Bound.none
-        var partBuffer: (any MTLBuffer)?
+        var layerBuffer: (any MTLBuffer)?
         func bind(_ pipeline: any MTLRenderPipelineState, as kind: Bound) {
             guard bound != kind else { return }
             encoder.setRenderPipelineState(pipeline)
@@ -555,13 +555,13 @@ final class CanvasRenderer {
             } else {
                 encoder.setVertexBytes(&uniforms, length: MemoryLayout<CanvasUniforms>.stride, index: 1)
             }
-            if let partBuffer { encoder.setVertexBuffer(partBuffer, offset: 0, index: 0) }
+            if let layerBuffer { encoder.setVertexBuffer(layerBuffer, offset: 0, index: 0) }
             bound = kind
         }
 
         for segment in artSegments {
-            // Each part's ranges count from the start of its own buffer.
-            partBuffer = artBuffers[segment.id]
+            // Each layer's ranges count from the start of its own buffer.
+            layerBuffer = artBuffers[segment.id]
             bound = .none
             for step in artSteps[segment.steps] {
                 switch step {

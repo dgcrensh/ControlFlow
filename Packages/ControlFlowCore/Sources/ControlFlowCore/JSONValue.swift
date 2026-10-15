@@ -96,16 +96,16 @@ extension JSONValue {
             guard items.allSatisfy(\.isScalarArray) else { return nil }
             return "[" + items.map { $0.inlineText! }.joined(separator: ", ") + "]"
         case .object(let members):
-            var parts: [String] = []
+            var layers: [String] = []
             for member in members {
                 switch member.value {
                 case .object: return nil
                 case .array(let items) where !items.allSatisfy(\.isScalar) && !items.allSatisfy(\.isScalarArray):
                     return nil
-                default: parts.append(Self.quoted(member.key) + ": " + member.value.inlineText!)
+                default: layers.append(Self.quoted(member.key) + ": " + member.value.inlineText!)
                 }
             }
-            return "{ " + parts.joined(separator: ", ") + " }"
+            return "{ " + layers.joined(separator: ", ") + " }"
         }
     }
 

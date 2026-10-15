@@ -50,7 +50,7 @@ public enum EditorOverlay {
         // ghost focus.
         if editor.outlineView {
             let focus = editor.ghostFocus
-            let key = OverlayCache.WireframeKey(revision: editor.revision, bucket: bucket, isolatedPart: editor.isolatedPart,
+            let key = OverlayCache.WireframeKey(revision: editor.revision, bucket: bucket, isolatedLayer: editor.isolatedLayer,
                                                 isolatedGroup: editor.isolatedGroup, ghostFocus: focus, darkMode: darkMode)
             if cache.wireframeKey == key {
                 layers.wireframe = cache.wireframe
@@ -104,7 +104,7 @@ public enum EditorOverlay {
 public struct OverlayLayers: Sendable {
     /// The outline view's wireframe of every shown shape. Kept between frames.
     public var wireframe: [Float] = []
-    /// The viewport's border, symmetry axis, hover feedback and a part's pivot.
+    /// The viewport's border, symmetry axis, hover feedback and a layer's pivot.
     public var guides: [Float] = []
     /// The selection's outlines, and in direct select its anchors and handles. Kept
     /// between frames.
@@ -124,7 +124,7 @@ public struct OverlayCache: Sendable {
     struct WireframeKey: Equatable, Sendable {
         var revision: Int
         var bucket: Double
-        var isolatedPart: Int?
+        var isolatedLayer: Int?
         var isolatedGroup: Int?
         var ghostFocus: Set<Int>?
         var darkMode: Bool
@@ -176,7 +176,7 @@ private struct Builder {
     // Draws one shape's outline, handles and anchors (the anchor state comes from the editor).
     // `active` is the one shape whose anchors can be selected.
     mutating func drawAnchors(of ref: ShapeRef, showHandles: Bool, active: ShapeRef?) {
-        guard let shape = drawing.shape(ref) else { return }
+        guard let shape = drawing.worldShape(ref) else { return }
         let path = shape.path
         // Highlight the path itself, with edges that have no outline dashed.
         if path.hasUnstrokedSegments {
@@ -216,7 +216,7 @@ private struct Builder {
 
     // Hover: what a touch would hit, the brush size, the eraser's reach, the cut point.
     mutating func outline(of ref: ShapeRef, color: RGBAColor) {
-        guard let path = drawing.shape(ref)?.path else { return }
+        guard let path = drawing.worldShape(ref)?.path else { return }
         let poly = path.flattened(tolerance: 0.5 * px)
         CapsuleTessellator.append(points: path.closed && poly.count > 2 ? poly + [poly[0]] : poly,
                                   width: 2, color: color, screenSpace: true, to: &out)
@@ -243,9 +243,9 @@ private struct Builder {
     /// The outline view's wireframe of `art`.
     mutating func wireframe(of art: Drawing, focus: Set<Int>?, darkMode: Bool) {
         let colors = Overlay.wireColors(darkMode: darkMode)
-        for part in art.parts {
-            let away = editor.isolatedPart.map { $0 != part.id } ?? false
-            for (i, shape) in part.shapes.enumerated() where part.isShown(i) {
+        for layer in art.world.layers {
+            let away = editor.isolatedLayer.map { $0 != layer.id } ?? false
+            for (i, shape) in layer.shapes.enumerated() where layer.isShown(i) {
                 let outsideGroup = !away && editor.isolatedGroup.map { $0 != shape.group } ?? false
                 let dimmed = away || outsideGroup || (focus.map { !$0.contains(shape.id) } ?? false)
                 let poly = shape.path.flattened(tolerance: 0.5 * px)
@@ -257,7 +257,7 @@ private struct Builder {
         }
     }
 
-    /// The viewport's border, symmetry, hover feedback and a part's pivot.
+    /// The viewport's border, symmetry, hover feedback and a layer's pivot.
     mutating func guides(viewRect: Rect?, zoom: Double) {
         let c = drawing.viewport.bounds.corners
         CapsuleTessellator.append(points: c + [c[0]], width: 1, color: Overlay.viewportBorderColor, screenSpace: true,
@@ -266,7 +266,7 @@ private struct Builder {
         // The symmetry axis, and what symmetry will add for a shape or pen path in progress.
         if editor.symmetry.isEnabled {
             let axis = editor.symmetry.axis
-            let view = viewRect ?? Rect(points: drawing.parts.map(\.bounds).flatMap { $0.isNull ? [] : $0.corners })
+            let view = viewRect ?? Rect(points: drawing.layers.map(\.bounds).flatMap { $0.isNull ? [] : $0.corners })
             let pad = 40 * px
             let top = (view.isNull ? -1000 : view.minPoint.y) - pad, bottom = (view.isNull ? 1000 : view.maxPoint.y) + pad
             // Dashed, so it reads as a guide rather than art.
@@ -304,11 +304,12 @@ private struct Builder {
             }
         }
 
-        // A selected part's pivot shows in every tool (the select tool draws its own, draggable).
-        if editor.tool != .select, case .layer(let id) = editor.selection, let part = drawing.part(id), !part.shapes.isEmpty {
-            line(part.pivot - Vec2(8 * px, 0), part.pivot + Vec2(8 * px, 0), width: 1.5)
-            line(part.pivot - Vec2(0, 8 * px), part.pivot + Vec2(0, 8 * px), width: 1.5)
-            ringDot(part.pivot, radius: 3.5)
+        // A selected layer's pivot shows in every tool (the select tool draws its own, draggable).
+        if editor.tool != .select, case .layer(let id) = editor.selection, let layer = drawing.layer(id), !layer.shapes.isEmpty {
+            let pivot = layer.worldPivot
+            line(pivot - Vec2(8 * px, 0), pivot + Vec2(8 * px, 0), width: 1.5)
+            line(pivot - Vec2(0, 8 * px), pivot + Vec2(0, 8 * px), width: 1.5)
+            ringDot(pivot, radius: 3.5)
         }
     }
 
@@ -331,9 +332,9 @@ private struct Builder {
         switch editor.tool {
         case .pen:
             if let pen = editor.penPath {
-                let ref = ShapeRef(part: pen.part, shape: pen.shape)
+                let ref = ShapeRef(layer: pen.layer, shape: pen.shape)
                 drawAnchors(of: ref, showHandles: false, active: editor.activeShape)
-                if let path = drawing.shape(ref)?.path, let last = pen.fromStart ? path.points.first : path.points.last {
+                if let path = drawing.worldShape(ref)?.path, let last = pen.fromStart ? path.points.first : path.points.last {
                     // Handles of the point just placed, so the pull is visible.
                     if last.inHandle != .zero { line(last.position, last.inControl, width: 1); dot(last.inControl, radius: 4, color: accent) }
                     if last.outHandle != .zero { line(last.position, last.outControl, width: 1); dot(last.outControl, radius: 4, color: accent) }

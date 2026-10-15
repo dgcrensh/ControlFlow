@@ -132,8 +132,8 @@ public struct TessellationCache: Sendable {
     /// The shapes a refine to `tolerance` has to tessellate, in two batches: those whose
     /// `hitBounds` meet `viewRect` grown by a quarter of its larger side, then the rest.
     /// Shapes this cache already holds at `tolerance` (in either tier) and hidden shapes
-    /// are left out. With no `viewRect`, every shape is in `rest`. With `wholeParts`, a
-    /// part with any shape in view puts all of its shapes in `visible`, so a build
+    /// are left out. With no `viewRect`, every shape is in `rest`. With `wholeLayers`, a
+    /// layer with any shape in view puts all of its shapes in `visible`, so a build
     /// `leavingOutUncached` can show it once the first batch is merged.
     public struct RefinePlan: Sendable {
         public var visible: [VectorShape] = []
@@ -142,13 +142,13 @@ public struct TessellationCache: Sendable {
     }
 
     public func refinePlan(for drawing: Drawing, tolerance: Double, viewRect: Rect?,
-                           wholeParts: Bool = false) -> RefinePlan {
+                           wholeLayers: Bool = false) -> RefinePlan {
         var plan = RefinePlan()
         let view = viewRect.map { $0.outset(by: max($0.width, $0.height) / 4) }
-        for part in drawing.parts {
+        for layer in drawing.world.layers {
             let start = (visible: plan.visible.count, rest: plan.rest.count)
-            for index in part.shapes.indices where part.isShown(index) {
-                let shape = part.shapes[index]
+            for index in layer.shapes.indices where layer.isShown(index) {
+                let shape = layer.shapes[index]
                 guard tessellation(of: shape, tolerance: tolerance) == nil else { continue }
                 if let view, shape.hitBounds.intersects(view) {
                     plan.visible.append(shape)
@@ -156,7 +156,7 @@ public struct TessellationCache: Sendable {
                     plan.rest.append(shape)
                 }
             }
-            if wholeParts, plan.visible.count > start.visible, plan.rest.count > start.rest {
+            if wholeLayers, plan.visible.count > start.visible, plan.rest.count > start.rest {
                 plan.visible.append(contentsOf: plan.rest[start.rest...])
                 plan.rest.removeSubrange(start.rest...)
             }
@@ -187,8 +187,8 @@ public struct TessellationCache: Sendable {
         made.reserveCapacity(refinement.tessellations.count)
         for t in refinement.tessellations { made[t.shape.id] = t }
         var kept = 0
-        for part in drawing.parts {
-            for shape in part.shapes {
+        for layer in drawing.world.layers {
+            for shape in layer.shapes {
                 guard let t = made[shape.id], t.shape == shape else { continue }
                 store(t)
                 kept += 1

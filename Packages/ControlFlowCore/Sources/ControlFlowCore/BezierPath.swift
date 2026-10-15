@@ -136,6 +136,10 @@ public enum HandleMode: Hashable, Sendable, Codable {
 /// An anchor on a path. Handles are offsets from the anchor, matching the file
 /// format's `in` and `out`. `mode` says how the handles follow each other.
 public struct PathPoint: Hashable, Sendable, Codable {
+    /// The vertex's id, unique in the drawing and never reused in a session. 0 means
+    /// none yet: `Drawing.assignVertexIDs` numbers new points when an edit is committed.
+    /// Operations that keep a point keep its id; operations that make points leave 0.
+    public var id = 0
     public var position: Vec2
     public var inHandle: Vec2
     public var outHandle: Vec2
@@ -197,6 +201,11 @@ public struct BezierPath: Hashable, Sendable, Codable {
     public init(points: [PathPoint] = [], closed: Bool = false) {
         self.points = points
         self.closed = closed
+    }
+
+    /// Clears every point's id, so a copy of the path gets fresh ones.
+    public mutating func clearVertexIDs() {
+        for i in points.indices { points[i].id = 0 }
     }
 
     public var segmentCount: Int {

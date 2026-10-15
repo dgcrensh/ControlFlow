@@ -254,7 +254,13 @@ Design choices now that keep this cheap later:
    - The wiggle preview and joint caps were dropped with the rig. Symmetry, Duplicate Mirrored and pivot snapping stay.
    - Not done here: `Part` → `Layer` (it comes with milestone 2's transforms, which rework the layer model anyway) and `CharacterFormat`/`CharacterPackage` (milestone 3).
    - The viewport background is not written into SVG exports (an SVG importer would read it back as a shape); PNG exports fill it.
-2. **Identity and transforms:** vertex ids everywhere, with tests that each editing operation keeps or assigns ids as §4 says. Add layer, group and shape transforms, make Select edit transforms, and add Apply Transform.
+2. **Identity and transforms** (shipped): vertex ids everywhere, with tests that each editing operation keeps or assigns ids as §4 says. Add layer, group and shape transforms, make Select edit transforms, and add Apply Transform.
+   - `Part` is now `Layer` throughout the code and the UI.
+   - Vertex ids are assigned by `Drawing.assignVertexIDs()` after every commit and on open: a point with no id, or one repeating an earlier point's id in draw order, gets a fresh one. They are not saved until format 1.0, so a reopened file numbers its vertices afresh.
+   - Points are stored in their shape's space and everything that draws, hit-tests or exports reads the world shapes (`Layer.worldShape`, `Drawing.world`).
+   - Select composes its edit into each selected layer's or shape's transform, or a wholly selected group's. When the result would skew (a world-axis stretch across a turned object), it changes the points instead. The selection frame is oriented to a single transformed object.
+   - Apply Transform bakes a layer's whole tree, a group into its shapes, or shapes' own transforms, without moving anything.
+   - The interim format writes an optional `transform` object on attachments, groups and shapes, only when it isn't the default; the attachment's `pivot` stays the layer pivot.
 3. **Keyframe core:** sequences, deltas, the resolver with lazy snapshots, edit-to-delta, the timeline commands (§5.3), interpolation (§6, including born and dying vertices) and format 1.0 with its schema and example. Everything is in CharacterCore with Linux tests and the shared test vectors.
 4. **Timeline UI:** the strip, Set Keyframe, the transition popover and curve editor, scrubbing, Play Sequence, onion skin and changed indicators.
 5. **Presenting:** presentation mode, the inputs, and the external display with the presenter view.

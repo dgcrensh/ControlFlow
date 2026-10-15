@@ -8,34 +8,34 @@ import XCTest
 final class ShapeIndexTests: XCTestCase {
     /// The stress drawing with every case the filters and the draw order care about.
     static let drawing: Drawing = {
-        var d = StressDrawing.make(parts: 12, shapesPerPart: 15)
-        for p in d.parts.indices {
-            for s in d.parts[p].shapes.indices {
+        var d = StressDrawing.make(layers: 12, shapesPerLayer: 15)
+        for p in d.layers.indices {
+            for s in d.layers[p].shapes.indices {
                 let n = p * 15 + s
-                if n % 7 == 3 { d.parts[p].shapes[s].isHidden = true }
-                if n % 11 == 5 { d.parts[p].shapes[s].isLocked = true }
+                if n % 7 == 3 { d.layers[p].shapes[s].isHidden = true }
+                if n % 11 == 5 { d.layers[p].shapes[s].isLocked = true }
                 // Variable-width outlines, so the outline reach differs from half the width.
-                if n % 5 == 1 { d.parts[p].shapes[s].path.points[0].width = 0.4 }
-                if n % 9 == 2 { d.parts[p].shapes[s].stroke?.alignment = .outside }
+                if n % 5 == 1 { d.layers[p].shapes[s].path.points[0].width = 0.4 }
+                if n % 9 == 2 { d.layers[p].shapes[s].stroke?.alignment = .outside }
             }
         }
-        d.parts[2].isLocked = true
-        d.parts[3].isHidden = true
-        // Part 4's group clips to the shape below it; part 8's group clips to a hidden shape.
-        d.parts[4].groups[0].isClipped = true
-        d.parts[8].groups[0].isClipped = true
-        d.parts[8].shapes[d.parts[8].shapes.count - 4].isHidden = true
-        // An open, unfilled path and an exact copy of a shape in another part (a tie).
-        var open = d.parts[5].shapes[0]
+        d.layers[2].isLocked = true
+        d.layers[3].isHidden = true
+        // Layer 4's group clips to the shape below it; layer 8's group clips to a hidden shape.
+        d.layers[4].groups[0].isClipped = true
+        d.layers[8].groups[0].isClipped = true
+        d.layers[8].shapes[d.layers[8].shapes.count - 4].isHidden = true
+        // An open, unfilled path and an exact copy of a shape in another layer (a tie).
+        var open = d.layers[5].shapes[0]
         open.id = d.makeID()
         open.path.closed = false
         open.fill = nil
-        d.parts[5].shapes.append(open)
-        var twin = d.parts[6].shapes[1]
+        d.layers[5].shapes.append(open)
+        var twin = d.layers[6].shapes[1]
         twin.id = d.makeID()
         twin.isHidden = false
         twin.isLocked = false
-        d.parts[7].shapes.append(twin)
+        d.layers[7].shapes.append(twin)
         return d
     }()
 
@@ -43,8 +43,8 @@ final class ShapeIndexTests: XCTestCase {
     static func points(count: Int, seed: UInt64) -> [Vec2] {
         var random = SeededRandom(seed: seed)
         let d = drawing
-        let bounds = d.parts.reduce(Rect.null) { $0.union($1.bounds) }.outset(by: 30)
-        let shapes = d.parts.flatMap(\.shapes)
+        let bounds = d.layers.reduce(Rect.null) { $0.union($1.bounds) }.outset(by: 30)
+        let shapes = d.layers.flatMap(\.shapes)
         return (0..<count).map { i in
             if i % 2 == 0 {
                 return Vec2(bounds.minPoint.x + random.next() * bounds.width, bounds.minPoint.y + random.next() * bounds.height)
@@ -55,11 +55,11 @@ final class ShapeIndexTests: XCTestCase {
         }
     }
 
-    /// The isolations to try: none, two parts, and groups.
-    static var isolations: [(part: Int?, group: Int?)] {
+    /// The isolations to try: none, two layers, and groups.
+    static var isolations: [(layer: Int?, group: Int?)] {
         let d = drawing
-        return [(nil, nil), (d.parts[5].id, nil), (d.parts[1].id, nil), (d.parts[4].id, d.parts[4].groups[0].id),
-                (d.parts[8].id, d.parts[8].groups[0].id)]
+        return [(nil, nil), (d.layers[5].id, nil), (d.layers[1].id, nil), (d.layers[4].id, d.layers[4].groups[0].id),
+                (d.layers[8].id, d.layers[8].groups[0].id)]
     }
 
     func testDrawingCoversTheCases() {
@@ -74,9 +74,9 @@ final class ShapeIndexTests: XCTestCase {
         for iso in Self.isolations {
             for (i, p) in Self.points(count: 600, seed: 1).enumerated() {
                 let tolerance = [0, 1, 4, 16][i % 4]
-                let scan = d.hitTest(p, tolerance: Double(tolerance), within: iso.part, group: iso.group)
-                    .map { ShapeRef(part: $0.part, shape: $0.shape) }
-                XCTAssertEqual(index.hitTest(p, tolerance: Double(tolerance), within: iso.part, group: iso.group), scan,
+                let scan = d.hitTest(p, tolerance: Double(tolerance), within: iso.layer, group: iso.group)
+                    .map { ShapeRef(layer: $0.layer, shape: $0.shape) }
+                XCTAssertEqual(index.hitTest(p, tolerance: Double(tolerance), within: iso.layer, group: iso.group), scan,
                                "at \(p), tolerance \(tolerance), isolation \(iso)")
                 if scan != nil { hits += 1 }
             }
@@ -87,7 +87,7 @@ final class ShapeIndexTests: XCTestCase {
     /// The scissors' search as it was before the index and the segment skip.
     static func scanCutTarget(_ e: DrawingEditor, at p: Vec2, zoom: Double) -> (ref: ShapeRef, segment: Int, t: Double)? {
         var best: (ref: ShapeRef, segment: Int, t: Double, distance: Double)?
-        for ref in e.drawing.editableShapeRefs(within: e.isolatedPart, group: e.isolatedGroup) {
+        for ref in e.drawing.editableShapeRefs(within: e.isolatedLayer, group: e.isolatedGroup) {
             guard let shape = e.drawing.shape(ref) else { continue }
             let reach = EditorMetrics.curveHit / zoom + (shape.stroke?.width ?? 0) / 2
             guard shape.path.controlBounds.outset(by: reach).contains(p),
@@ -98,12 +98,12 @@ final class ShapeIndexTests: XCTestCase {
         return best.map { (ref: $0.ref, segment: $0.segment, t: $0.t) }
     }
 
-    static func editor(isolation iso: (part: Int?, group: Int?)) -> DrawingEditor {
+    static func editor(isolation iso: (layer: Int?, group: Int?)) -> DrawingEditor {
         var e = DrawingEditor(drawing: drawing)
-        if let group = iso.group, let part = iso.part {
-            e.isolate(group: group, inPart: part)
-        } else if let part = iso.part {
-            e.isolate(part: part)
+        if let group = iso.group, let layer = iso.layer {
+            e.isolate(group: group, inLayer: layer)
+        } else if let layer = iso.layer {
+            e.isolate(layer: layer)
         }
         return e
     }
@@ -131,17 +131,17 @@ final class ShapeIndexTests: XCTestCase {
         XCTAssertGreaterThan(cuts, 150)
     }
 
-    /// The twin shape in part 7 ties with its original in part 6: the first in `parts` order wins.
+    /// The twin shape in layer 7 ties with its original in layer 6: the first in `layers` order wins.
     func testCutTargetTiesGoToTheFirstShape() {
         let d = Self.drawing
         var e = DrawingEditor(drawing: d)
         e.refreshShapeIndex()
-        let p = d.parts[6].shapes[1].path.segment(3).point(at: 0.5)
-        XCTAssertEqual(e.cutTarget(at: p, zoom: 1)?.ref, ShapeRef(part: d.parts[6].id, shape: d.parts[6].shapes[1].id))
+        let p = d.layers[6].shapes[1].path.segment(3).point(at: 0.5)
+        XCTAssertEqual(e.cutTarget(at: p, zoom: 1)?.ref, ShapeRef(layer: d.layers[6].id, shape: d.layers[6].shapes[1].id))
     }
 
     func testSegmentSkipKeepsTheNearestSegment() {
-        let shapes = Self.drawing.parts.flatMap(\.shapes)
+        let shapes = Self.drawing.layers.flatMap(\.shapes)
         for (i, p) in Self.points(count: 400, seed: 3).enumerated() {
             let path = shapes[i % shapes.count].path
             let full = path.nearestSegment(to: p)
@@ -164,7 +164,7 @@ final class ShapeIndexTests: XCTestCase {
 
     /// The shapes a sweep of the eraser, or a marquee, would test, as the scans found them.
     static func scanRefs(_ e: DrawingEditor, _ test: (VectorShape) -> Bool) -> [ShapeRef] {
-        e.drawing.editableShapeRefs(within: e.isolatedPart, group: e.isolatedGroup).filter { test(e.drawing.shape($0)!) }
+        e.drawing.editableShapeRefs(within: e.isolatedLayer, group: e.isolatedGroup).filter { test(e.drawing.shape($0)!) }
     }
 
     func testEraserAndMarqueeHitSetsMatchTheScan() {
@@ -200,7 +200,7 @@ final class ShapeIndexTests: XCTestCase {
             var e = Self.editor(isolation: iso)
             e.tool = .eraser
             var reference = Self.editor(isolation: iso)
-            let center = iso.part.flatMap { Self.drawing.part($0)?.pivot } ?? Self.drawing.parts[5].pivot
+            let center = iso.layer.flatMap { Self.drawing.layer($0)?.pivot } ?? Self.drawing.layers[5].pivot
             let start = center + Vec2(-200, -30)
             let stroke = (0...40).map { start + Vec2(Double($0) * 12, sin(Double($0) / 3) * 40) }
             e.pencilBegan(at: stroke[0], zoom: 1)
@@ -228,21 +228,21 @@ final class ShapeIndexTests: XCTestCase {
         let d = Self.drawing
         var e = DrawingEditor(drawing: d)
         e.tool = .select
-        // A point on the topmost shape of part 0.
-        let top = d.parts[0].shapes.indices.last { d.parts[0].isEditable($0) }!
-        let p = d.parts[0].shapes[top].path.segment(0).point(at: 0.5)
+        // A point on the topmost shape of layer 0.
+        let top = d.layers[0].shapes.indices.last { d.layers[0].isEditable($0) }!
+        let p = d.layers[0].shapes[top].path.segment(0).point(at: 0.5)
         e.pencilHovered(at: p, zoom: 1)
         XCTAssertNotNil(e.freshShapeIndex)
         let before = e.hoverTarget
         XCTAssertNotNil(before)
-        let expectedBefore = d.hitTest(p, tolerance: EditorMetrics.shapeHit).map { ShapeRef(part: $0.part, shape: $0.shape) }
+        let expectedBefore = d.hitTest(p, tolerance: EditorMetrics.shapeHit).map { ShapeRef(layer: $0.layer, shape: $0.shape) }
         XCTAssertEqual(before, expectedBefore)
 
         // Delete the hovered shape: a stale index would still return it.
-        e.selection = .shape(part: before!.part, shape: before!.shape)
+        e.selection = .shape(layer: before!.layer, shape: before!.shape)
         e.deleteSelection()
         XCTAssertNil(e.freshShapeIndex)
-        let afterDelete = e.drawing.hitTest(p, tolerance: EditorMetrics.shapeHit).map { ShapeRef(part: $0.part, shape: $0.shape) }
+        let afterDelete = e.drawing.hitTest(p, tolerance: EditorMetrics.shapeHit).map { ShapeRef(layer: $0.layer, shape: $0.shape) }
         XCTAssertNotEqual(afterDelete, before)
         XCTAssertEqual(e.hoverTarget, afterDelete)
         e.pencilHovered(at: p, zoom: 1)
@@ -271,12 +271,12 @@ final class ShapeIndexTests: XCTestCase {
     func testErasingKeepsTheIndexForGeometryOnly() {
         var e = DrawingEditor(drawing: Self.drawing)
         e.tool = .eraser
-        let p = Self.drawing.parts[5].pivot
+        let p = Self.drawing.layers[5].pivot
         e.pencilBegan(at: p, zoom: 1)
         XCTAssertLessThan(e.drawing.shapeCount, Self.drawing.shapeCount)
         XCTAssertEqual(e.freshShapeIndex?.supportsHitTest, false)
         XCTAssertEqual(e.hitShape(at: p + Vec2(30, 0), tolerance: 4),
-                       e.drawing.hitTest(p + Vec2(30, 0), tolerance: 4).map { ShapeRef(part: $0.part, shape: $0.shape) })
+                       e.drawing.hitTest(p + Vec2(30, 0), tolerance: 4).map { ShapeRef(layer: $0.layer, shape: $0.shape) })
         e.pencilEnded(at: p)
         e.pencilHovered(at: p, zoom: 1)
         XCTAssertEqual(e.freshShapeIndex?.supportsHitTest, true)

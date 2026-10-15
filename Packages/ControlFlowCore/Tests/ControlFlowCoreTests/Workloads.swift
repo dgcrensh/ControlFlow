@@ -17,13 +17,13 @@ struct Workload: @unchecked Sendable {
     /// fill changed (alternately between two drawings, so every call has one change).
     static let artRebuildAfterOneEdit = Workload(name: "Art rebuild after one edit") { drawing in
         var edited = drawing
-        edited.parts[0].shapes[0].fill = RGBAColor(r: 1, g: 0, b: 0)
+        edited.layers[0].shapes[0].fill = RGBAColor(r: 1, g: 0, b: 0)
         var builder = ArtBuilder()
-        _ = builder.build(drawing, isolatedPart: nil, tolerance: 0.5)
+        _ = builder.build(drawing, isolatedLayer: nil, tolerance: 0.5)
         var flip = false
         return {
             flip.toggle()
-            _ = builder.build(flip ? edited : drawing, isolatedPart: nil, tolerance: 0.5)
+            _ = builder.build(flip ? edited : drawing, isolatedLayer: nil, tolerance: 0.5)
         }
     }
 
@@ -31,14 +31,14 @@ struct Workload: @unchecked Sendable {
     /// comparisons, clip plans and steps). The difference from the row above is the appends.
     static let artRebuildAfterOneEditWalkOnly = Workload(name: "Art rebuild after one edit, no vertices") { drawing in
         var edited = drawing
-        edited.parts[0].shapes[0].fill = RGBAColor(r: 1, g: 0, b: 0)
+        edited.layers[0].shapes[0].fill = RGBAColor(r: 1, g: 0, b: 0)
         var builder = ArtBuilder()
         builder.skipsVertices = true
-        _ = builder.build(drawing, isolatedPart: nil, tolerance: 0.5)
+        _ = builder.build(drawing, isolatedLayer: nil, tolerance: 0.5)
         var flip = false
         return {
             flip.toggle()
-            _ = builder.build(flip ? edited : drawing, isolatedPart: nil, tolerance: 0.5)
+            _ = builder.build(flip ? edited : drawing, isolatedLayer: nil, tolerance: 0.5)
         }
     }
 
@@ -47,16 +47,16 @@ struct Workload: @unchecked Sendable {
     /// them into new GPU buffers (here into a buffer allocated once).
     static let artRebuildAfterOneEditAndUpload = Workload(name: "Art rebuild after one edit, with upload") { drawing in
         var edited = drawing
-        edited.parts[0].shapes[0].fill = RGBAColor(r: 1, g: 0, b: 0)
+        edited.layers[0].shapes[0].fill = RGBAColor(r: 1, g: 0, b: 0)
         var builder = ArtBuilder()
         builder.concatenatesVertices = false
-        let first = builder.build(drawing, isolatedPart: nil, tolerance: 0.5)
+        let first = builder.build(drawing, isolatedLayer: nil, tolerance: 0.5)
         var resident = first.residentIDs
         var gpu = [Float](repeating: 0, count: first.segments.reduce(0) { $0 + $1.floats.count })
         var flip = false
         return {
             flip.toggle()
-            let batch = builder.build(flip ? edited : drawing, isolatedPart: nil, tolerance: 0.5)
+            let batch = builder.build(flip ? edited : drawing, isolatedLayer: nil, tolerance: 0.5)
             gpu.withUnsafeMutableBytes { target in
                 for segment in batch.segmentsToUpload(resident: resident) {
                     segment.floats.withUnsafeBytes { target.baseAddress!.copyMemory(from: $0.baseAddress!, byteCount: $0.count) }
@@ -74,11 +74,11 @@ struct Workload: @unchecked Sendable {
     static let artRebuildAtNewZoomBucket = Workload(name: "Art rebuild, new zoom bucket") { drawing in
         var builder = ArtBuilder()
         builder.tessellations.secondTierLimit = 0
-        _ = builder.build(drawing, isolatedPart: nil, tolerance: 0.2)
+        _ = builder.build(drawing, isolatedLayer: nil, tolerance: 0.2)
         var flip = false
         return {
             flip.toggle()
-            _ = builder.build(drawing, isolatedPart: nil, tolerance: flip ? 0.1 : 0.2)
+            _ = builder.build(drawing, isolatedLayer: nil, tolerance: flip ? 0.1 : 0.2)
         }
     }
 
@@ -89,9 +89,9 @@ struct Workload: @unchecked Sendable {
     /// The renderer keeps drawing meanwhile; this is how long the coarse art shows.
     static let zoomInRefineVisible = Workload(name: "Zoom-in refine, visible shapes") { drawing in
         var builder = ArtBuilder()
-        _ = builder.build(drawing, isolatedPart: nil, tolerance: 0.2)
+        _ = builder.build(drawing, isolatedLayer: nil, tolerance: 0.2)
         let cache = builder.tessellations
-        let center = StressDrawing.busyPoint(parts: drawing.parts.count)
+        let center = StressDrawing.busyPoint(layers: drawing.layers.count)
         let half = Vec2(1180, 820) / 8
         let view = Rect(minPoint: center - half, maxPoint: center + half)
         return {
@@ -101,15 +101,15 @@ struct Workload: @unchecked Sendable {
         }
     }
 
-    /// One frame's overlay while the Pencil hovers in the select tool with a part
+    /// One frame's overlay while the Pencil hovers in the select tool with a layer
     /// selected: the hover hit test plus the overlay build, from a warm cache.
     static let hoverFrame = Workload(name: "Hover frame (select tool)") { drawing in
         var editor = DrawingEditor(drawing: drawing)
         editor.tool = .select
-        editor.selection = .layer(drawing.parts[0].id)
+        editor.selection = .layer(drawing.layers[0].id)
         var cache = OverlayCache()
         _ = EditorOverlay.layers(for: editor, zoom: 1, cache: &cache)
-        let start = StressDrawing.busyPoint(parts: drawing.parts.count)
+        let start = StressDrawing.busyPoint(layers: drawing.layers.count)
         var i = 0
         return {
             i += 1
@@ -123,7 +123,7 @@ struct Workload: @unchecked Sendable {
     static let selectHoverHitTest = Workload(name: "Select hover, hit test only") { drawing in
         var editor = DrawingEditor(drawing: drawing)
         editor.tool = .select
-        let start = StressDrawing.busyPoint(parts: drawing.parts.count)
+        let start = StressDrawing.busyPoint(layers: drawing.layers.count)
         var i = 0
         return {
             i += 1
@@ -166,7 +166,7 @@ struct Workload: @unchecked Sendable {
     static let scissorsHover = Workload(name: "Scissors hover") { drawing in
         var editor = DrawingEditor(drawing: drawing)
         editor.tool = .scissors
-        let start = StressDrawing.busyPoint(parts: drawing.parts.count)
+        let start = StressDrawing.busyPoint(layers: drawing.layers.count)
         var i = 0
         return {
             i += 1
@@ -183,7 +183,7 @@ struct Workload: @unchecked Sendable {
     static let pencilStroke = Workload(name: "Pencil stroke, 240 samples and lift") { drawing in
         var start = CanvasSession(drawing: drawing)
         start.editor.tool = .pencil
-        let origin = StressDrawing.busyPoint(parts: drawing.parts.count)
+        let origin = StressDrawing.busyPoint(layers: drawing.layers.count)
         let points = (0...240).map { i in origin + Vec2(Double(i), sin(Double(i) / 20) * 40) }
         return {
             var session = start
@@ -219,7 +219,7 @@ struct Workload: @unchecked Sendable {
     static let eraserSample = Workload(name: "Eraser sample") { drawing in
         var start = DrawingEditor(drawing: drawing)
         start.tool = .eraser
-        let point = StressDrawing.busyPoint(parts: drawing.parts.count)
+        let point = StressDrawing.busyPoint(layers: drawing.layers.count)
         start.pencilBegan(at: point - Vec2(20, 0), zoom: 1)
         return {
             var editor = start
@@ -243,10 +243,10 @@ struct Workload: @unchecked Sendable {
         }
     }
 
-    /// The frame after lifting the Pencil from a live drag that moved part 0 and its
+    /// The frame after lifting the Pencil from a live drag that moved layer 0 and its
     /// accessories: the renderer carries their triangles and rebuilds the moved drawing.
-    static let dragEndOnePart = Workload(name: "Drag end, one part moved") { drawing in
-        dragEnd(drawing, selection: .layer(drawing.parts[0].id))
+    static let dragEndOneLayer = Workload(name: "Drag end, one layer moved") { drawing in
+        dragEnd(drawing, selection: .layer(drawing.layers[0].id))
     }
 
     /// The same after dragging everything.
@@ -262,41 +262,41 @@ struct Workload: @unchecked Sendable {
                                  transform: t)
         let after = drawing.applying(t, to: selection)
         var during = ArtBuilder()
-        _ = during.build(drawing, isolatedPart: nil, tolerance: 0.5)
-        _ = during.build(drawing, isolatedPart: nil, tolerance: 0.5, moving: live.shapes)
+        _ = during.build(drawing, isolatedLayer: nil, tolerance: 0.5)
+        _ = during.build(drawing, isolatedLayer: nil, tolerance: 0.5, moving: live.shapes)
         return {
             var builder = during
             builder.carry(live, to: after)
-            _ = builder.build(after, isolatedPart: nil, tolerance: 0.5)
+            _ = builder.build(after, isolatedLayer: nil, tolerance: 0.5)
         }
     }
 
     /// The art's share of the first frame after opening (recommendation 5 of
-    /// performance-next.md): a build with nothing cached that leaves out every part not
+    /// performance-next.md): a build with nothing cached that leaves out every layer not
     /// yet tessellated. The cold build it replaced is "Art rebuild, new zoom bucket" with
     /// an empty cache, about what `PerformanceTests.testArtBuildCold` times.
     static let openFirstFrame = Workload(name: "Open: first frame's art") { drawing in
         {
             var builder = ArtBuilder()
-            _ = builder.build(drawing, isolatedPart: nil, tolerance: 0.2, reusingOtherTolerances: true,
+            _ = builder.build(drawing, isolatedLayer: nil, tolerance: 0.2, reusingOtherTolerances: true,
                               leavingOutUncached: true)
         }
     }
 
     /// From that first frame to the art in view: the background job's first result
-    /// (planning whole parts against an empty cache and tessellating the parts that meet
+    /// (planning whole layers against an empty cache and tessellating the layers that meet
     /// an iPad-sized view at 1x around the busy point), then merging it and the build
-    /// that shows those parts on the main thread.
+    /// that shows those layers on the main thread.
     static let openFirstArtInView = Workload(name: "Open: first art in view") { drawing in
-        let center = StressDrawing.busyPoint(parts: drawing.parts.count)
+        let center = StressDrawing.busyPoint(layers: drawing.layers.count)
         let half = Vec2(1180, 820) / 2
         let view = Rect(minPoint: center - half, maxPoint: center + half)
         return {
             var builder = ArtBuilder()
-            let plan = builder.tessellations.refinePlan(for: drawing, tolerance: 0.2, viewRect: view, wholeParts: true)
+            let plan = builder.tessellations.refinePlan(for: drawing, tolerance: 0.2, viewRect: view, wholeLayers: true)
             precondition(!plan.visible.isEmpty)
             builder.tessellations.merge(TessellationCache.tessellate(plan.visible, tolerance: 0.2)!, for: drawing)
-            _ = builder.build(drawing, isolatedPart: nil, tolerance: 0.2, reusingOtherTolerances: true,
+            _ = builder.build(drawing, isolatedLayer: nil, tolerance: 0.2, reusingOtherTolerances: true,
                               leavingOutUncached: true)
         }
     }
@@ -304,7 +304,7 @@ struct Workload: @unchecked Sendable {
     /// An undo then a redo of one fill change.
     static let undoRedo = Workload(name: "Undo and redo") { drawing in
         var editor = DrawingEditor(drawing: drawing)
-        editor.selection = .shape(part: drawing.parts[0].id, shape: drawing.parts[0].shapes[0].id)
+        editor.selection = .shape(layer: drawing.layers[0].id, shape: drawing.layers[0].shapes[0].id)
         editor.setFill(RGBAColor(r: 1, g: 0, b: 0))
         return {
             editor.undo()
@@ -379,7 +379,7 @@ struct Workload: @unchecked Sendable {
         return { precondition(editor.svgDocument() != nil) }
     }
 
-    /// Reading back the drawing's own SVG export, as Import SVG does before adding the parts.
+    /// Reading back the drawing's own SVG export, as Import SVG does before adding the layers.
     static let svgImport = Workload(name: "SVG import") { drawing in
         let svg = DrawingEditor(drawing: drawing).svgDocument()!
         return { _ = try! SVGImporter.parse(svg) }
@@ -389,12 +389,12 @@ struct Workload: @unchecked Sendable {
     static var all: [Workload] {
         [artRebuildAfterOneEdit, artRebuildAfterOneEditWalkOnly, artRebuildAfterOneEditAndUpload, artRebuildAtNewZoomBucket,
          zoomInRefineVisible, hoverFrame, selectHoverHitTest, overlayWireframeAtNewZoom, overlayWireframeAcrossZoomBucket,
-         scissorsHover, pencilStroke, quickShapeCheck, eraserSample, dragSampleEverything, dragEndOnePart,
+         scissorsHover, pencilStroke, quickShapeCheck, eraserSample, dragSampleEverything, dragEndOneLayer,
          dragEndEverything, undoRedo, twoFingerNavigation, refreshQueries, layerTree, save, open, openParse,
          openDecode, openFirstFrame, openFirstArtInView, svgExport, svgImport]
     }
 
     static func everything(in drawing: Drawing) -> Selection {
-        .covering(Set(drawing.parts.flatMap { part in part.shapes.map { ShapeRef(part: part.id, shape: $0.id) } }))
+        .covering(Set(drawing.layers.flatMap { layer in layer.shapes.map { ShapeRef(layer: layer.id, shape: $0.id) } }))
     }
 }

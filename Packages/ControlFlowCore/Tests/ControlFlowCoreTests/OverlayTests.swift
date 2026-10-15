@@ -4,10 +4,10 @@ import XCTest
 /// The overlay's kept layers (`OverlayCache`) must always draw what a fresh build draws.
 final class OverlayTests: XCTestCase {
     private func editor() -> DrawingEditor {
-        var editor = DrawingEditor(drawing: StressDrawing.make(parts: 3, shapesPerPart: 4))
+        var editor = DrawingEditor(drawing: StressDrawing.make(layers: 3, shapesPerLayer: 4))
         editor.tool = .directSelect
-        let part = editor.drawing.parts[0]
-        editor.selection = .covering(Set(part.shapes.map { ShapeRef(part: part.id, shape: $0.id) }))
+        let layer = editor.drawing.layers[0]
+        editor.selection = .covering(Set(layer.shapes.map { ShapeRef(layer: layer.id, shape: $0.id) }))
         return editor
     }
 
@@ -23,13 +23,13 @@ final class OverlayTests: XCTestCase {
         var editor = editor()
         var cache = OverlayCache()
         var zoom = 1.0
-        let part = editor.drawing.parts[0]
-        let first = ShapeRef(part: part.id, shape: part.shapes[0].id)
+        let layer = editor.drawing.layers[0]
+        let first = ShapeRef(layer: layer.id, shape: layer.shapes[0].id)
         let steps: [(String, (inout DrawingEditor, inout Double) -> Void)] = [
             ("start", { _, _ in }),
-            ("hover", { e, _ in e.pencilHovered(at: StressDrawing.busyPoint(parts: 3), zoom: 1) }),
+            ("hover", { e, _ in e.pencilHovered(at: StressDrawing.busyPoint(layers: 3), zoom: 1) }),
             ("hover elsewhere", { e, _ in e.pencilHovered(at: .zero, zoom: 1) }),
-            ("one shape", { e, _ in e.selection = .shape(part: first.part, shape: first.shape) }),
+            ("one shape", { e, _ in e.selection = .shape(layer: first.layer, shape: first.shape) }),
             ("an anchor", { e, _ in e.selectedAnchors = [2] }),
             ("two anchors", { e, _ in e.selectedAnchors = [2, 5] }),
             ("zoom inside the bucket", { _, z in z = 0.75 }),
@@ -37,7 +37,7 @@ final class OverlayTests: XCTestCase {
             ("zoom inside the new bucket", { _, z in z = 3.9 }),
             ("edit", { e, _ in e.setFill(.white) }),
             ("scissors", { e, _ in e.tool = .scissors }),
-            ("scissors hover", { e, _ in e.pencilHovered(at: StressDrawing.busyPoint(parts: 3), zoom: 2.5) }),
+            ("scissors hover", { e, _ in e.pencilHovered(at: StressDrawing.busyPoint(layers: 3), zoom: 2.5) }),
             ("outline view", { e, _ in e.outlineView = true }),
             ("pinch inside the bucket", { _, z in z = 2.1 }),
             ("pinch across a bucket", { _, z in z = 4.5 }),

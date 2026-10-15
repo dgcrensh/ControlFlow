@@ -78,10 +78,10 @@ final class EdgeOutlineTests: XCTestCase {
     func testDirectSelectHidesTheOutlineBetweenSelectedAnchors() {
         var d = Drawing()
         let shape = VectorShape(id: d.makeID(), path: square(), fill: red, stroke: StrokeStyle(color: .ink, width: 2))
-        d.parts.append(Part(id: d.makeID(), name: "Body", shapes: [shape]))
+        d.layers.append(Layer(id: d.makeID(), name: "Body", shapes: [shape]))
         var e = DrawingEditor(drawing: d)
         e.tool = .directSelect
-        e.selection = .shape(part: d.parts[0].id, shape: shape.id)
+        e.selection = .shape(layer: d.layers[0].id, shape: shape.id)
         e.selectedAnchors = [0]
         XCTAssertEqual(e.selectedEdges, [])
         XCTAssertNil(e.selectedEdgesStroked)
@@ -92,36 +92,36 @@ final class EdgeOutlineTests: XCTestCase {
         XCTAssertEqual(e.selectedEdges, [3])
         XCTAssertEqual(e.selectedEdgesStroked, true)
         e.toggleSelectedEdgesStroked()
-        XCTAssertEqual(e.drawing.parts[0].shapes[0].path.points.map(\.stroked), [true, true, true, false])
+        XCTAssertEqual(e.drawing.layers[0].shapes[0].path.points.map(\.stroked), [true, true, true, false])
         XCTAssertEqual(e.selectedEdgesStroked, false)
         e.undo()
-        XCTAssertFalse(e.drawing.parts[0].shapes[0].path.hasUnstrokedSegments)
+        XCTAssertFalse(e.drawing.layers[0].shapes[0].path.hasUnstrokedSegments)
         e.redo()
         // With every anchor selected, a mixed set is outlined again in one step.
         e.selectedAnchors = [0, 1, 2, 3]
         XCTAssertEqual(e.selectedEdges, [0, 1, 2, 3])
         XCTAssertEqual(e.selectedEdgesStroked, true)
         e.setSelectedEdgesStroked(false)
-        XCTAssertEqual(e.drawing.parts[0].shapes[0].path.points.map(\.stroked), [false, false, false, false])
+        XCTAssertEqual(e.drawing.layers[0].shapes[0].path.points.map(\.stroked), [false, false, false, false])
         e.toggleSelectedEdgesStroked()
-        XCTAssertFalse(e.drawing.parts[0].shapes[0].path.hasUnstrokedSegments)
+        XCTAssertFalse(e.drawing.layers[0].shapes[0].path.hasUnstrokedSegments)
     }
 
     func testFileKeepsBareEdges() throws {
         var d = Drawing()
-        d.parts.append(Part(id: d.makeID(), name: "Body", shapes: [
+        d.layers.append(Layer(id: d.makeID(), name: "Body", shapes: [
             VectorShape(id: d.makeID(), path: square(bare: [1]), fill: red, stroke: StrokeStyle(color: .ink, width: 2)),
         ]))
         let text = CharacterFormat.encode(d).formatted()
         XCTAssertTrue(text.contains("\"stroked\": false"), text)
         let back = try CharacterFormat.decode(JSONValue(parsing: text)).drawing
-        XCTAssertEqual(back.parts[0].shapes[0].path.points.map(\.stroked), [true, false, true, true])
+        XCTAssertEqual(back.layers[0].shapes[0].path.points.map(\.stroked), [true, false, true, true])
         XCTAssertEqual(CharacterFormat.encode(back).formatted(), text)
     }
 
     func testSVGWritesTheOutlineWithoutBareEdges() throws {
         var d = Drawing()
-        d.parts.append(Part(id: d.makeID(), name: "Body", shapes: [
+        d.layers.append(Layer(id: d.makeID(), name: "Body", shapes: [
             VectorShape(id: d.makeID(), path: square(bare: [0]), fill: red, stroke: StrokeStyle(color: .black, width: 2)),
         ]))
         let svg = try XCTUnwrap(SVGWriter.document(for: d))

@@ -15,9 +15,9 @@ struct AppearancePanel: View {
                     opacityRow(appearance.opacity)
                     Toggle("Clip to Shape Below", isOn: Binding(get: { appearance.isClipped }, set: { store.setClipped($0) }))
                         .disabled(!ui.canClip && !appearance.isClipped)
-                    if let group = ui.selectedGroupID, let part = ui.selectedGroupPart {
+                    if let group = ui.selectedGroupID, let layer = ui.selectedGroupLayer {
                         Toggle("Clip Group to Shape Below", isOn: Binding(get: { ui.selectedGroupClipped },
-                                                                          set: { store.setGroupClipped(group, inPart: part, $0) }))
+                                                                          set: { store.setGroupClipped(group, inLayer: layer, $0) }))
                             .disabled(!ui.canClipSelectedGroup && !ui.selectedGroupClipped)
                     }
                 }

@@ -12,7 +12,7 @@ struct LayersPanel: View {
     @State private var expanded: Set<String> = []
     @State private var editMode: EditMode = .inactive
     @State private var name = ""
-    @State private var renaming: LayerTree.PartLayer?
+    @State private var renaming: LayerTree.LayerItem?
     @State private var renamingGroup: LayerTree.GroupLayer?
     @State private var newName = ""
     @State private var photoItem: PhotosPickerItem?
@@ -25,7 +25,7 @@ struct LayersPanel: View {
             Section {
                 rootRow
                 treeRows
-                if ui.layers.parts.isEmpty {
+                if ui.layers.layers.isEmpty {
                     Text("Draw with the pencil or pen to add a layer.")
                         .foregroundStyle(.secondary)
                 }
@@ -64,14 +64,14 @@ struct LayersPanel: View {
         .alert("Rename Layer", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
             TextField("Name", text: $newName)
             Button("Rename") {
-                if let part = renaming { store.renamePart(part.id, to: newName) }
+                if let layer = renaming { store.renameLayer(layer.id, to: newName) }
             }
             Button("Cancel", role: .cancel) {}
         }
         .alert("Rename Group", isPresented: Binding(get: { renamingGroup != nil }, set: { if !$0 { renamingGroup = nil } })) {
             TextField("Name", text: $newName)
             Button("Rename") {
-                if let group = renamingGroup { store.renameGroup(group.id, inPart: group.part, to: newName) }
+                if let group = renamingGroup { store.renameGroup(group.id, inLayer: group.layer, to: newName) }
             }
             Button("Cancel", role: .cancel) {}
         }
@@ -189,13 +189,13 @@ struct LayersPanel: View {
         HStack(spacing: 10) {
             ActiveBar(isActive: false)
             visibilityButtons(isHidden: group.isHidden, isLocked: group.isLocked) {
-                store.setGroupHidden(group.id, inPart: group.part, !group.isHidden)
+                store.setGroupHidden(group.id, inLayer: group.layer, !group.isHidden)
             } lock: {
-                store.setGroupLocked(group.id, inPart: group.part, !group.isLocked)
+                store.setGroupLocked(group.id, inLayer: group.layer, !group.isLocked)
             }
             .padding(.leading, CGFloat(depth) * 16 + 16)
             Button {
-                store.selectGroup(group.id, inPart: group.part)
+                store.selectGroup(group.id, inLayer: group.layer)
             } label: {
                 HStack {
                     Label(group.name, systemImage: "square.on.square.squareshape.controlhandles")
@@ -225,7 +225,7 @@ struct LayersPanel: View {
                 newName = group.name
                 renamingGroup = group
             }
-            Toggle(isOn: Binding(get: { group.isClipped }, set: { store.setGroupClipped(group.id, inPart: group.part, $0) })) {
+            Toggle(isOn: Binding(get: { group.isClipped }, set: { store.setGroupClipped(group.id, inLayer: group.layer, $0) })) {
                 Label("Clip to Shape Below", systemImage: "arrow.turn.left.down")
             }
             .disabled(!group.canClip && !group.isClipped)
@@ -236,49 +236,49 @@ struct LayersPanel: View {
 
     /// A layer: the active-layer bar, eye and lock, and its name, which selects it and
     /// makes it the layer new art goes into.
-    private func layerRow(_ part: LayerTree.PartLayer, depth: Int, disclosure: some View) -> some View {
+    private func layerRow(_ layer: LayerTree.LayerItem, depth: Int, disclosure: some View) -> some View {
         HStack(spacing: 10) {
-            ActiveBar(isActive: ui.activeLayer == part.id)
+            ActiveBar(isActive: ui.activeLayer == layer.id)
             disclosure
                 .padding(.leading, CGFloat(depth) * 16)
-            visibilityButtons(isHidden: part.isHidden, isLocked: part.isLocked) {
-                store.setPartHidden(part.id, !part.isHidden)
+            visibilityButtons(isHidden: layer.isHidden, isLocked: layer.isLocked) {
+                store.setLayerHidden(layer.id, !layer.isHidden)
             } lock: {
-                store.setPartLocked(part.id, !part.isLocked)
+                store.setLayerLocked(layer.id, !layer.isLocked)
             }
             if isEditing {
-                layerLabel(part)
+                layerLabel(layer)
             } else {
-                Button { store.activateLayer(part.id) } label: { layerLabel(part) }
+                Button { store.activateLayer(layer.id) } label: { layerLabel(layer) }
                     .buttonStyle(.plain)
-                    .disabled(part.isHidden || part.isLocked)
+                    .disabled(layer.isHidden || layer.isLocked)
             }
         }
-        .contextMenu { layerMenu(part) }
+        .contextMenu { layerMenu(layer) }
         .swipeActions {
-            Button("Delete", systemImage: "trash", role: .destructive) { store.deletePart(part.id) }
-            Button("Rename", systemImage: "pencil") { startRenaming(part) }
+            Button("Delete", systemImage: "trash", role: .destructive) { store.deleteLayer(layer.id) }
+            Button("Rename", systemImage: "pencil") { startRenaming(layer) }
         }
     }
 
-    private func layerLabel(_ part: LayerTree.PartLayer) -> some View {
+    private func layerLabel(_ layer: LayerTree.LayerItem) -> some View {
         HStack {
-            Text(part.name)
+            Text(layer.name)
                 .lineLimit(1)
-                .foregroundStyle(part.isHidden ? Color.secondary : Color.primary)
-            if ui.isolatedPart == part.id {
+                .foregroundStyle(layer.isHidden ? Color.secondary : Color.primary)
+            if ui.isolatedLayer == layer.id {
                 Image(systemName: "scope").foregroundStyle(Color.accentColor)
             }
             Spacer()
-            if part.hasHiddenOrLockedShapes {
+            if layer.hasHiddenOrLockedShapes {
                 Image(systemName: "eye.trianglebadge.exclamationmark")
                     .foregroundStyle(.secondary)
                     .accessibilityLabel("Some shapes are hidden or locked")
             }
-            Text(shapeCount(part.shapeCount))
+            Text(shapeCount(layer.shapeCount))
                 .font(.footnote)
                 .foregroundStyle(.secondary)
-            if !isEditing, ui.selectedLayers.contains(part.id) {
+            if !isEditing, ui.selectedLayers.contains(layer.id) {
                 Image(systemName: "checkmark").foregroundStyle(Color.accentColor)
             }
         }
@@ -298,29 +298,29 @@ struct LayersPanel: View {
     }
 
     @ViewBuilder
-    private func layerMenu(_ part: LayerTree.PartLayer) -> some View {
-        Button("Rename", systemImage: "pencil") { startRenaming(part) }
-        if ui.isolatedPart == part.id {
+    private func layerMenu(_ layer: LayerTree.LayerItem) -> some View {
+        Button("Rename", systemImage: "pencil") { startRenaming(layer) }
+        if ui.isolatedLayer == layer.id {
             Button("Exit Isolation", systemImage: "scope") { store.exitIsolation() }
         } else {
             Button("Isolate", systemImage: "scope") {
-                store.isolate(part: part.id)
+                store.isolate(layer: layer.id)
                 dismiss()
             }
         }
-        if store.canMergePartDown(part.id) {
-            Button("Merge Down", systemImage: "arrow.down.to.line") { store.mergePartDown(part.id) }
+        if store.canMergeLayerDown(layer.id) {
+            Button("Merge Down", systemImage: "arrow.down.to.line") { store.mergeLayerDown(layer.id) }
         }
-        Button("Delete", systemImage: "trash", role: .destructive) { store.deletePart(part.id) }
+        Button("Delete", systemImage: "trash", role: .destructive) { store.deleteLayer(layer.id) }
     }
 
     private func shapeCount(_ count: Int) -> String {
         count == 1 ? "1 shape" : "\(count) shapes"
     }
 
-    private func startRenaming(_ part: LayerTree.PartLayer) {
-        newName = part.name
-        renaming = part
+    private func startRenaming(_ layer: LayerTree.LayerItem) {
+        newName = layer.name
+        renaming = layer
     }
 
     private func commitName() {

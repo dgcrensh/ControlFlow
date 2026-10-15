@@ -24,7 +24,9 @@ enum ThumbnailRenderer {
     }
 
     private static func renderPNG(for drawing: Drawing, size: Int) -> Data? {
-        let bounds = drawing.parts.reduce(Rect.null) { $0.union($1.bounds) }
+        // Drawn as it looks: the transforms go into the points.
+        let drawing = drawing.world
+        let bounds = drawing.layers.reduce(Rect.null) { $0.union($1.bounds) }
         guard !bounds.isNull, max(bounds.width, bounds.height) > 0 else { return nil }
         guard let context = makeContext(width: size, height: size) else { return nil }
 
@@ -45,6 +47,7 @@ enum ThumbnailRenderer {
     /// `scale` pixels per point (less if the image would pass `maxExportSide`).
     static func exportPNG(for drawing: Drawing, area: Rect, scale: Double) -> Data? {
         guard !area.isNull, area.width > 0, area.height > 0, scale > 0 else { return nil }
+        let drawing = drawing.world
         let k = min(scale, maxExportSide / max(area.width, area.height))
         let width = max(Int((area.width * k).rounded()), 1), height = max(Int((area.height * k).rounded()), 1)
         guard let context = makeContext(width: width, height: height) else { return nil }
@@ -65,19 +68,19 @@ enum ThumbnailRenderer {
 
     /// Draws every layer back to front. Hidden art is left out when `skipHidden` is set.
     private static func drawArt(_ drawing: Drawing, in context: CGContext, tolerance: Double, skipHidden: Bool) {
-        for part in drawing.parts {
-            let clips = part.clipPlan()
+        for layer in drawing.layers {
+            let clips = layer.clipPlan()
             // Each base's mask, made once for all the shapes it clips.
             var masks: [Int: CGPath] = [:]
-            for (index, shape) in part.shapes.enumerated() {
-                if skipHidden, !part.isShown(index) { continue }
+            for (index, shape) in layer.shapes.enumerated() {
+                if skipHidden, !layer.isShown(index) { continue }
                 // Clipped shapes draw only where their base draws, and shapes in a clipped
                 // group only where the group's base draws.
                 let bases = [clips.groupBase(of: index), clips.base(of: index)].compactMap { $0 }
-                if skipHidden, bases.contains(where: { !part.isShown($0) }) { continue }
+                if skipHidden, bases.contains(where: { !layer.isShown($0) }) { continue }
                 context.saveGState()
                 for base in bases {
-                    let mask = masks[base] ?? clipMask(part.shapes[base], tolerance: tolerance)
+                    let mask = masks[base] ?? clipMask(layer.shapes[base], tolerance: tolerance)
                     masks[base] = mask
                     context.addPath(mask)
                     context.clip(using: .winding)
