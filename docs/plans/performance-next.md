@@ -245,7 +245,7 @@ per frame of CPU, like a drag sample's art, plus the overlay. Keep "Wiggle frame
 Shipped as `ArtBuilder.build(leavingOutUncached:)` and `refinePlan(wholeParts:)`: the first frame's art went from
 a 51.5 ms cold build to 0.008 ms at 2,400 shapes, and a refine job flattens the drawing meanwhile, whole parts in
 view first (the audit's "Next 5" table). It is shipped ahead of the device trace this section asked for, at
-Dallas's request. The trace is still the acceptance: `Art rebuild` with reason `open` in the first frame, then
+the owner's request. The trace is still the acceptance: `Art rebuild` with reason `open` in the first frame, then
 `Art merge` and `Art rebuild` with reason `open` as each result arrives.
 
 

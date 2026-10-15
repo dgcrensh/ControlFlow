@@ -1,6 +1,6 @@
 # ControlFlow: Animation App Spec
 
-Draft 1, 2026-10-15. Written from the interview with Dallas in the project thread.
+Draft 1, 2026-10-15. Written from a design interview in the project thread.
 
 ControlFlow is a fork of Character Studio (iPad, SwiftUI + Metal, Apple Pencil). It keeps the vector drawing editor and the infinite canvas, and replaces the character and rigging work with **keyframed vector presentations**. You draw a scene inside a fixed-aspect viewport, record keyframes, group them into sequences, and present them. Each interaction plays the next sequence and stops on its last keyframe.
 
