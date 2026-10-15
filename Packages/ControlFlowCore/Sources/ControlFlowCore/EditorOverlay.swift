@@ -371,8 +371,8 @@ private struct Builder {
             let refs = drawing.shapeRefs(in: editor.selection)
             let active = refs.count == 1 ? refs[0] : nil
             for ref in refs {
-                // A text has no anchors to edit: its glyphs just show as selected.
-                if drawing.shape(ref)?.text != nil { outline(of: ref, color: accent); continue }
+                // A text or an image has no anchors to edit: it just shows as selected.
+                if drawing.shape(ref)?.hasEditablePath == false { outline(of: ref, color: accent); continue }
                 drawAnchors(of: ref, showHandles: true, active: active)
             }
         case .pencil, .shape, .eraser, .pen, .select, .text:

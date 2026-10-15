@@ -3,8 +3,8 @@ import Foundation
 /// The presentation as a static web page: a folder that any web server, GitHub Pages
 /// included, serves as is. It holds `index.html`, `player.js`, `presentation.json`
 /// (the same file the app saves) and, when there is text, `text.json` (its glyph
-/// outlines, since a browser can't be counted on to have the fonts), uses relative
-/// paths and needs no build step. The player plays it as presentation mode does, with the same inputs plus
+/// outlines, since a browser can't be counted on to have the fonts) and the pictures of
+/// image shapes at their `src` (`images/...`), uses relative paths and needs no build step. The player plays it as presentation mode does, with the same inputs plus
 /// swipes, and the address's hash (`#3`) opens it with that many sequences played.
 ///
 /// `index.html` and `player.js` are the files in `Player/`; the player ports the
@@ -20,8 +20,9 @@ public enum HTMLExport {
         case missingResource(String)
     }
 
-    /// The folder's files, by path within it.
-    public static func files(for presentation: Presentation) throws -> [String: Data] {
+    /// The folder's files, by path within it. `images` holds the encoded pixels of image
+    /// shapes by `src`; those the presentation shows are copied in.
+    public static func files(for presentation: Presentation, images: [String: Data] = [:]) throws -> [String: Data] {
         var presentation = presentation
         presentation.opening.references = []
         let json = PresentationFormat.encode(presentation)
@@ -31,6 +32,9 @@ public enum HTMLExport {
             PresentationPackage.presentationFile: Data(json.formatted().utf8),
         ]
         if let texts = try textLayouts(json) { files[textFile] = Data(texts.formatted().utf8) }
+        for src in presentation.imageSources {
+            if let image = images[src] { files[src] = image }
+        }
         return files
     }
 

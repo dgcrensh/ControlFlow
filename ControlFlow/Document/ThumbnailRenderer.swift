@@ -101,11 +101,26 @@ enum ThumbnailRenderer {
         return data as Data
     }
 
-    /// Draws one shape's fill and outline. Outlines come from the same stroker as the
-    /// canvas, so caps, joins, dashes and varying width match it.
+    /// Draws one shape's fill (or picture) and outline. Outlines come from the same
+    /// stroker as the canvas, so caps, joins, dashes and varying width match it.
     private static func draw(_ shape: VectorShape, in context: CGContext, tolerance: Double) {
         let opacity = CGFloat(min(max(shape.opacity, 0), 1))
         let path = cgPath(shape.path)
+        if let image = shape.image, let placement = shape.imagePlacement, let pixels = ImageLibrary.shared.image(image.src) {
+            context.saveGState()
+            context.setAlpha(opacity)
+            context.addPath(path)
+            context.clip(using: .winding)
+            // The unit square onto the frame. Core Graphics draws an image upright in a
+            // y-up space, so flip the square for the picture's top to land on the frame's.
+            context.concatenate(CGAffineTransform(a: placement.a, b: placement.b, c: placement.c, d: placement.d,
+                                                  tx: placement.tx, ty: placement.ty))
+            context.translateBy(x: 0, y: 1)
+            context.scaleBy(x: 1, y: -1)
+            context.interpolationQuality = .high
+            context.draw(pixels, in: CGRect(x: 0, y: 0, width: 1, height: 1))
+            context.restoreGState()
+        }
         if let fill = shape.visibleFill {
             context.saveGState()
             context.setAlpha(opacity)
@@ -161,7 +176,9 @@ enum ThumbnailRenderer {
     /// non-zero fill is their union.
     private static func clipMask(_ base: VectorShape, tolerance: Double) -> CGPath {
         let mask = CGMutablePath()
-        if base.visibleFill != nil {
+        // An image clips to its frame, as a fill does to its path.
+        let covers = base.visibleFill != nil || base.image != nil
+        if covers {
             let poly = base.path.flattened(tolerance: tolerance)
             var area = 0.0
             for i in poly.indices { area += poly[i].cross(poly[(i + 1) % poly.count]) }
@@ -170,7 +187,7 @@ enum ThumbnailRenderer {
         if let stroke = base.stroke, stroke.width > 0 {
             let alignment = base.path.closed ? stroke.alignment : .center
             // An inside outline lies within the fill; an outside one is the far half of a doubled one.
-            if alignment != .inside || base.visibleFill == nil {
+            if alignment != .inside || !covers {
                 let triangles = Stroker.triangles(for: base.path, style: stroke,
                                                   widthScale: alignment == .outside ? 2 : 1, tolerance: tolerance)
                 addTriangles(triangles, to: mask)

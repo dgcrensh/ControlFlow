@@ -57,6 +57,22 @@ private struct PaintUniforms {
     }
 }
 
+/// Where a cover step samples an image shape's picture. Layout must match `ImagePaint`
+/// in ShaderSource: the world-to-image map's two rows, then the opacity.
+private struct ImagePaintUniforms {
+    var u: SIMD4<Float>
+    var v: SIMD4<Float>
+    var info: SIMD4<Float>
+
+    init(_ image: ArtImage, opacity: Double) {
+        let m = image.worldToImage
+        // u = a x + c y + tx, v = b x + d y + ty.
+        u = SIMD4(Float(m.a), Float(m.c), Float(m.tx), 0)
+        v = SIMD4(Float(m.b), Float(m.d), Float(m.ty), 0)
+        info = SIMD4(Float(min(max(opacity, 0), 1)), 0, 0, 0)
+    }
+}
+
 /// Draws the canvas: dot grid, the viewport's background, reference images, the art,
 /// the veil that dims everything outside the viewport, the live stroke, then the
 /// editing overlay. Hidden shapes are skipped. In isolation the other layers are drawn
@@ -86,6 +102,7 @@ final class CanvasRenderer {
     private let stencilPipeline: any MTLRenderPipelineState
     private let coverPipeline: any MTLRenderPipelineState
     private let imagePipeline: any MTLRenderPipelineState
+    private let imageCoverPipeline: any MTLRenderPipelineState
     private let gridPipeline: any MTLRenderPipelineState
     private let plainState: any MTLDepthStencilState
     /// Depth-stencil states for the art's steps, made on first use.
@@ -172,6 +189,13 @@ final class CanvasRenderer {
     private var overlayKept: (wireframe: Range<Int>, selection: Range<Int>) = (0..<0, 0..<0)
 
     private var textures: [Int: any MTLTexture] = [:]
+    /// Image shapes' pictures, by `src`, from `ImageLibrary`.
+    private var imageTextures: [String: any MTLTexture] = [:]
+    /// Pictures the art drew without (it paints their placeholder), to load before the next frame.
+    private var wantedImages: Set<String> = []
+    /// Pictures the library didn't have, not looked for again until it gains some.
+    private var missingImages: Set<String> = []
+    private var libraryGeneration = -1
 
     /// Supplies the pixels for a reference image id.
     var referenceImage: (@MainActor (Int) -> CGImage?)?
@@ -221,6 +245,10 @@ final class CanvasRenderer {
             let image = descriptor("Reference image", vertex: "image_vertex", fragment: "image_fragment")
             premultipliedBlending(image)
             imagePipeline = try device.makeRenderPipelineState(descriptor: image)
+
+            let imageCover = descriptor("Image cover", vertex: "fill_vertex", fragment: "image_cover_fragment")
+            premultipliedBlending(imageCover)
+            imageCoverPipeline = try device.makeRenderPipelineState(descriptor: imageCover)
 
             let grid = descriptor("Grid", vertex: "grid_vertex", fragment: "grid_fragment")
             gridPipeline = try device.makeRenderPipelineState(descriptor: grid)
@@ -295,6 +323,7 @@ final class CanvasRenderer {
         // A preview (scrubbing or playing) shows its scene in place of the drawing.
         let shown = editor.shownDrawing
         loadMissingTextures(for: shown.references, commandBuffer: commandBuffer)
+        loadWantedImages(commandBuffer: commandBuffer)
 
         var uniforms = makeUniforms(camera: session.camera, viewSize: viewSize, scale: scale, darkMode: darkMode)
 
@@ -348,6 +377,7 @@ final class CanvasRenderer {
             commandBuffer.present(drawable)
             commandBuffer.commit()
             Signposts.canvas.endInterval("Encode", encodeInterval)
+            requestWantedImages()
             return true
         }
 
@@ -389,6 +419,7 @@ final class CanvasRenderer {
         commandBuffer.present(drawable)
         commandBuffer.commit()
         Signposts.canvas.endInterval("Encode", encodeInterval)
+        requestWantedImages()
         return true
     }
 
@@ -611,7 +642,7 @@ final class CanvasRenderer {
         var moved = uniforms
         moved.worldToClip = uniforms.worldToClip * liveTransform.matrix4x4
         var moving = false
-        enum Bound { case none, stencil, cover }
+        enum Bound { case none, stencil, cover, imageCover }
         var bound = Bound.none
         var layerBuffer: (any MTLBuffer)?
         func bind(_ pipeline: any MTLRenderPipelineState, as kind: Bound) {
@@ -640,11 +671,22 @@ final class CanvasRenderer {
                     encoder.drawPrimitives(type: .triangle, vertexStart: local.lowerBound, vertexCount: local.count)
 
                 case .cover(let range, let paint, let state, let reference):
-                    bind(coverPipeline, as: .cover)
-                    var paintUniforms = PaintUniforms(paint)
+                    if let image = paint.image, let texture = imageTextures[image.src] {
+                        bind(imageCoverPipeline, as: .imageCover)
+                        var imageUniforms = ImagePaintUniforms(image, opacity: paint.opacity)
+                        encoder.setFragmentTexture(texture, index: 0)
+                        encoder.setFragmentSamplerState(sampler, index: 0)
+                        encoder.setFragmentBytes(&imageUniforms, length: MemoryLayout<ImagePaintUniforms>.stride, index: 0)
+                    } else {
+                        // A picture not loaded yet paints its placeholder, which clears the
+                        // stencil as any cover does.
+                        if let image = paint.image { wantedImages.insert(image.src) }
+                        bind(coverPipeline, as: .cover)
+                        var paintUniforms = PaintUniforms(paint)
+                        encoder.setFragmentBytes(&paintUniforms, length: MemoryLayout<PaintUniforms>.stride, index: 0)
+                    }
                     encoder.setDepthStencilState(depthStencilState(state))
                     encoder.setStencilReferenceValue(UInt32(reference))
-                    encoder.setFragmentBytes(&paintUniforms, length: MemoryLayout<PaintUniforms>.stride, index: 0)
                     let local = segment.local(range)
                     encoder.drawPrimitives(type: .triangle, vertexStart: local.lowerBound, vertexCount: local.count)
 
@@ -776,6 +818,34 @@ final class CanvasRenderer {
             encoder.setFragmentBytes(&opacity, length: MemoryLayout<Float>.stride, index: 0)
             encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6)
         }
+    }
+
+    // MARK: Image shapes
+
+    /// Loads the pictures the last frame drew without, from `ImageLibrary`.
+    private func loadWantedImages(commandBuffer: any MTLCommandBuffer) {
+        let generation = ImageLibrary.shared.generation
+        if generation != libraryGeneration {
+            libraryGeneration = generation
+            missingImages = []
+        }
+        guard !wantedImages.isEmpty else { return }
+        for src in wantedImages where imageTextures[src] == nil && !missingImages.contains(src) {
+            let interval = Signposts.canvas.beginInterval("Image texture")
+            defer { Signposts.canvas.endInterval("Image texture", interval) }
+            if let image = ImageLibrary.shared.image(src), let texture = makeTexture(image, commandBuffer: commandBuffer) {
+                imageTextures[src] = texture
+            } else {
+                missingImages.insert(src)
+            }
+        }
+        wantedImages = []
+    }
+
+    /// Asks for another frame when this one drew without pictures that may load.
+    private func requestWantedImages() {
+        guard wantedImages.contains(where: { !missingImages.contains($0) }) else { return }
+        onNeedsRender?()
     }
 
     private func loadMissingTextures(for references: [ReferenceImage], commandBuffer: any MTLCommandBuffer) {

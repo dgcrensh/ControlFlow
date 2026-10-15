@@ -118,7 +118,7 @@ extension Drawing {
         case .globalColor: ["color"]
         case .layer: ["transform"]
         case .group: ["clipped", "transform"]
-        case .shape: ["group", "closed", "fill", "fillGlobal", "gradient", "stroke", "opacity", "clipped", "transform", "text"]
+        case .shape: ["group", "closed", "fill", "fillGlobal", "gradient", "stroke", "opacity", "clipped", "transform", "text", "image"]
         case .vertex: ["p", "in", "out", "w", "smooth", "symmetric", "stroked"]
         }
     }

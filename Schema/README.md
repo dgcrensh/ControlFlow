@@ -1,4 +1,4 @@
-# Presentation file format 1.1
+# Presentation file format 1.2
 
 A ControlFlow document is a `.controlflow` package (a folder that Files shows as one document):
 
@@ -7,8 +7,9 @@ A ControlFlow document is a `.controlflow` package (a folder that Files shows as
 | `presentation.json` | The document. Validated by [`controlflow-1.0.schema.json`](controlflow-1.0.schema.json), which covers every 1.x version. |
 | `thumbnail.png` | Optional 512 x 512 preview of the opening state. |
 | `references/` | Pixels of editor-only reference images, named `reference-1.png`, `reference-2.jpg`, ... |
+| `images/` | Pictures that [image](#images) shapes show (PNG, JPEG or HEIC), named by a hash of their bytes. |
 
-[`examples/demo.controlflow`](examples/demo.controlflow) is a complete example: a robot in three sequences that turns its head, changes color, pops up a speech bubble, grows a point on it and takes it away, with a title that spreads its letters and then changes its words. The core tests check that the app re-saves it byte for byte, and CI validates it against the schema (`python Schema/validate.py`, which needs `pip install "jsonschema>=4.18"`). [`vectors/`](vectors) holds the [test vectors](#test-vectors).
+[`examples/demo.controlflow`](examples/demo.controlflow) is a complete example: a robot in three sequences that turns its head, changes color, pops up a speech bubble, grows a point on it and takes it away, with a title that spreads its letters and then changes its words, and a picture that fades, moves and grows. The core tests check that the app re-saves it byte for byte, and CI validates it against the schema (`python Schema/validate.py`, which needs `pip install "jsonschema>=4.18"`). [`vectors/`](vectors) holds the [test vectors](#test-vectors).
 
 Character Studio's `.charstudio` files (formats 0.1 to 0.3), which ControlFlow saved until milestone 3, don't open.
 
@@ -16,7 +17,7 @@ Character Studio's `.charstudio` files (formats 0.1 to 0.3), which ControlFlow s
 
 - Points, y-axis down. Angles in degrees, clockwise on screen. Colors are `#RRGGBBAA` sRGB with straight alpha.
 - Numbers are written with at most 4 decimal places. Keys are written in a fixed order, so saving twice gives the same file.
-- `formatVersion` is `MAJOR.MINOR`. Readers refuse a newer major version; a newer minor version only adds keys, which older readers ignore. Older files are upgraded on open by the steps in `PresentationFormat.migrations` (none yet). 1.1 added [text](#text); a 1.0 file is a valid 1.1 file.
+- `formatVersion` is `MAJOR.MINOR`. Readers refuse a newer major version; a newer minor version only adds keys, which older readers ignore. Older files are upgraded on open by the steps in `PresentationFormat.migrations` (none yet). 1.1 added [text](#text) and 1.2 [images](#images); a 1.0 or 1.1 file is a valid 1.2 file.
 - Readers should ignore keys they do not know.
 - **Ids** are positive whole numbers, each used once in the file: the viewport, global colors, layers, groups, shapes, vertices, sequences and keyframes all share one numbering. The one exception is an object created by a keyframe after an object with its id was deleted: a shape moved to another layer is deleted from one and created in the other with the same id, so it animates as one shape.
 
@@ -36,7 +37,7 @@ In this order:
 
 - A **layer** is `{ "id", "name", "transform", "groups", "shapes" }`, back to front. `groups` is written only when there are some.
 - A **group** is `{ "id", "name" }`, with `"clipped": true` on a clipped group and an optional `transform`. A shape's `group` holds its group's id; a group's shapes are next to each other in `shapes`, and groups don't nest.
-- A **shape** is `{ "id", "group", "closed", "fill", "fillGlobal", "gradient", "stroke", "opacity", "clipped", "transform", "text", "points" }`, with only `id`, `closed` and `points` always written. A shape with `text` is a [text](#text).
+- A **shape** is `{ "id", "group", "closed", "fill", "fillGlobal", "gradient", "stroke", "opacity", "clipped", "transform", "text", "image", "points" }`, with only `id`, `closed` and `points` always written. A shape with `text` is a [text](#text), and one with `image` an [image](#images).
 - A **vertex** is `{ "id", "p", "in", "out" }`: the anchor `p` and its handles as offsets from `p`. Optional keys: `w` (the outline width there as a multiple of the stroke width, blended along each segment; default 1), `smooth: false` on corner points, `symmetric: true` on points whose handles are kept equally long, and `stroked: false` to leave the segment to the next point without an outline (the fill still covers it).
 - **Editor hints**: layers, groups and shapes may carry `hidden: true` and `locked: true`, written only when set. Like names, they are the same at every keyframe. The app's presentation mode and the HTML export leave hidden art out, as the SVG export does.
 
@@ -65,6 +66,14 @@ A shape with a `text` key is a text: its words are laid out in the shape's own s
 - `tracking`: extra points after each character but each line's last, default 0.
 
 The box's top-left is the shape's origin. Where lines break and how the glyphs look depend on the font, so a reader with other fonts can set a text differently. The app hit-tests a text by its box, and its SVG export and HTML export carry the glyphs as outlines (the HTML export in `text.json`, beside `presentation.json`), so they look as the app does.
+
+### Images
+
+A shape with an `image` key is an image: `{ "src" }`, the picture's file in the package, such as `images/58522a450cf10d19.png`. The file is directly in `images/` and named by a 64-bit FNV-1a hash of its bytes (16 hex digits) and its type's extension, so the same picture inserted twice is stored once and a name always means the same pixels. A `src` naming anything else is an error.
+
+An image has `"closed": true` and four straight-edged corner points: top-left, top-right, bottom-right and bottom-left. The picture is stretched over the frame they make, mapping its top-left, top-right and bottom-left corners to points 0, 1 and 3, and drawn with the shape's `opacity`, `transform` and clipping in place of a fill (a `fill` on it is not drawn); a `stroke` draws over it as on any shape. Transforms keep the frame a parallelogram. Since the frame is ordinary points and a transform, an image's place and size animate as any shape's do, and so does its opacity; a new `src` takes effect at the start of a transition. Readers that don't know `image` (1.1 and older) see a closed shape with no fill and draw only its outline, if any.
+
+The HTML export copies each picture the presentation shows to the same path beside `presentation.json`.
 
 ### Transforms
 
@@ -102,6 +111,7 @@ A transition into a keyframe animates from the scene before it to its own over `
 - **Numbers** (transform fields, opacity, outline width, miter limit, dash lengths and offset, per-point width, gradient points and stop offsets) and **points** (vertex positions and handle offsets) move linearly. Rotation is a plain number, so 0 to 720 turns twice.
 - **Colors** (fills, outlines, gradient stops, global colors, the viewport background) move componentwise in sRGB with straight alpha, as CSS does. Shapes following a global color follow it as it moves.
 - **Text**: `tracking` and `lineHeight` move like numbers, with lines broken as they will be at the end. Every other text key (`string`, `font`, `weight`, `italic`, `size`, `align`, `width`) takes its new value at the start.
+- **Images**: an image's `src` takes its new value at the start; its frame (points and transform) and opacity move like any shape's.
 - **Everything else** takes its new value at the **start**: `closed`, handle modes, ends, corners, outline position, gradient kind, clipping, fill or outline turned on or off, stroked edges, group membership and draw order. Dash lists and gradient stops that change length snap too.
 - **Created** objects appear at the start. **Deleted** objects stay, as they were, until the end, in their old place.
 - Values a curve carries past its ends are clamped where they must be: colors and opacity to 0 to 1, widths to 0 or more, the miter limit to 1 or more, and a scale to the sign both ends share.

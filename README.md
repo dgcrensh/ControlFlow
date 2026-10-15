@@ -118,7 +118,7 @@ From [the plan](docs/plans/animation-app.md#11-milestones):
 
 **Using it**
 
-- **More > Export Web Page** saves a folder named after the presentation, holding `index.html`, `player.js` and `presentation.json` (the same file the app saves, without reference images), plus `text.json` with the glyph outlines when there is text, so the page doesn't depend on the viewer's fonts. Put the folder on GitHub Pages or any web server and open `index.html`; it needs no build step and uses only relative paths. Opened straight from disk (`file://`), browsers won't let the page read `presentation.json`, so it says to serve the folder instead (`python3 -m http.server` in the folder works).
+- **More > Export Web Page** saves a folder named after the presentation, holding `index.html`, `player.js` and `presentation.json` (the same file the app saves, without reference images), plus `text.json` with the glyph outlines when there is text, so the page doesn't depend on the viewer's fonts, and an `images/` folder with the pictures of image shapes. Put the folder on GitHub Pages or any web server and open `index.html`; it needs no build step and uses only relative paths. Opened straight from disk (`file://`), browsers won't let the page read `presentation.json`, so it says to serve the folder instead (`python3 -m http.server` in the folder works).
 - It plays as presentation mode does: the opening state, then one sequence per Advance, letterboxed in black. Click or tap the right half, swipe left, or press Space, →, ↓, Page Down or Return to advance; click or tap the left half, swipe right, or press ←, ↑, Page Up or Backspace to go back. Home and End jump to the start and the end, and F toggles full screen.
 - The address's hash is the number of sequences played (`index.html#3` opens with three played), and it follows along as you present, so a reload or a shared link opens on the same step.
 - Hidden art is left out, as in presentation mode. Translucent gradient stops may blend slightly differently, since browsers mix gradient colors premultiplied.
@@ -165,6 +165,22 @@ The plan is [docs/plans/text.md](docs/plans/text.md).
 - **Core** (`Text.swift`, `DrawingEditor+Text.swift`): a text is a `VectorShape` with a `TextContent` and an empty path. `TextShaping` lays it out through the `TextShaper` in use (CoreText in the app, `StubTextShaper` in tests and on Linux), and `VectorShape.resolvingText()` puts the glyphs into the path wherever shapes are drawn or hit-tested, so stored text never holds glyphs. `TextEditing` is the string and selection logic and `TextEditState` the session; `Interpolation` lerps tracking and line height with `TextContent.held`. Tests are in `TextTests.swift`.
 - **App:** `CoreTextShaper` (`Canvas/`) breaks lines with a `CTTypesetter` and caches glyph outlines from `CTFontCreatePathForGlyph`. `MetalCanvasView` keeps an invisible `UITextView` as the keyboard's target, copying words and selection both ways, and offers texts to Scribble with `UIIndirectScribbleInteraction`.
 - **Format 1.1** adds `text` to shapes (`Schema/README.md`, "Text"). The HTML export's `text.json` and `player.js` are checked by the test vectors.
+
+## Image notes
+
+The plan is [docs/plans/images.md](docs/plans/images.md).
+
+- **More > Insert Image** adds a picture from Photos or Files as an image shape in the middle of the view, shrunk if it is larger than most of the view or the viewport (a pixel is a point otherwise). It lands where new art goes (the active or isolated layer, or a new layer), selected with Select. One undo step. Dragging a picture onto the canvas still adds a reference image.
+- An image is a shape: **Select** moves, turns, scales and flips it (corner handles keep its proportions, edge handles stretch it), and the Layers panel, draw order, Arrange, copy and paste, hide and lock, clipping and the eraser treat it like any shape. Direct Select selects it whole, since its corners aren't edited one by one, and the scissors pass it by. The Appearance panel sets its **opacity**, an **outline** around it and clipping; it has no fill.
+- **Keyframes:** an image's place, size (its scale) and opacity animate like any shape's, so a picture can slide in, grow and fade. Fading in from nothing is opacity 0 at one keyframe and 1 at the next.
+- Pictures are saved in the document under `images/`, each once however often it is used, and pasting an image into another open document brings its picture along. A picture whose file is missing shows as a faint gray frame.
+- Exports: PNG exports and thumbnails draw the pictures; SVG export embeds them; the web page copies them into its `images/` folder and the player draws them.
+
+### How it is built
+
+- **Core** (`Image.swift`, `DrawingEditor+Image.swift`): an image is a `VectorShape` with a `ShapeImage` (its `src`) and a closed four-corner path, so moving, transforms, interpolation, hit testing and the file need nothing new. `imagePlacement` maps the picture's unit square onto the corners; `hasEditablePath` keeps Direct Select, the scissors and path edits off it. `ArtBuilder` stencils the frame like a fill and covers it with an `ArtImage` paint (the world-to-picture map). `Presentation.imageSources` lists the pictures every keyframe shows, which the package and the HTML export save. Tests are in `ImageTests.swift`.
+- **App:** `ImageLibrary` (`Canvas/`) holds the pictures of every open document by `src`, off the main thread too. `CanvasRenderer` draws an image cover with the `image_cover_fragment` shader, sampling its texture through the paint's map, and paints a placeholder until the texture is loaded. `ThumbnailRenderer` draws pictures with Core Graphics.
+- **Format 1.2** adds `image` to shapes (`Schema/README.md`, "Images"). `player.js` reads it and draws an `<image>`.
 
 ## Arranging and aligning notes
 

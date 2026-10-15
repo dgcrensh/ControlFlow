@@ -2,7 +2,8 @@ import Foundation
 
 /// One path with an optional fill (closed paths only) and an optional outline. A text
 /// shape (one with `text`) draws its glyph outlines instead, and keeps its own path
-/// empty and closed.
+/// empty and closed. An image shape (one with `image`) draws its picture in place of a
+/// fill, over the frame its four points make (see `imagePlacement`).
 public struct VectorShape: Hashable, Sendable, Codable, Identifiable {
     public var id: Int
     public var path: BezierPath
@@ -11,6 +12,8 @@ public struct VectorShape: Hashable, Sendable, Codable, Identifiable {
     /// A text shape as it is drawn (see `resolvingText()`): its box's corners, carried
     /// with the path by every transform. Nil in a drawing's own shapes.
     public internal(set) var textFrame: [Vec2]?
+    /// The picture an image shape shows (see `ShapeImage`).
+    public var image: ShapeImage?
     /// The fill color. With a `gradient` it is the solid color readers without
     /// gradients fall back to; `nil` means no fill at all.
     public var fill: RGBAColor?
@@ -54,8 +57,8 @@ public struct VectorShape: Hashable, Sendable, Codable, Identifiable {
         self.text = text
     }
 
-    /// Fill only applies to closed paths.
-    public var visibleFill: RGBAColor? { path.closed ? fill : nil }
+    /// Fill only applies to closed paths, and not to an image, which draws its picture instead.
+    public var visibleFill: RGBAColor? { path.closed && image == nil ? fill : nil }
 
     public var isText: Bool { text != nil }
 
@@ -154,7 +157,7 @@ public struct VectorShape: Hashable, Sendable, Codable, Identifiable {
     public func isApproximately(_ o: VectorShape, tolerance: Double = 1e-9) -> Bool {
         if self == o { return true }
         guard id == o.id, path.closed == o.path.closed, path.points.count == o.path.points.count,
-              text == o.text, (textFrame == nil) == (o.textFrame == nil), fill == o.fill, fillGlobal == o.fillGlobal, opacity == o.opacity, isClipped == o.isClipped,
+              text == o.text, image == o.image, (textFrame == nil) == (o.textFrame == nil), fill == o.fill, fillGlobal == o.fillGlobal, opacity == o.opacity, isClipped == o.isClipped,
               isHidden == o.isHidden, isLocked == o.isLocked, group == o.group, transform == o.transform,
               (stroke == nil) == (o.stroke == nil), (gradient == nil) == (o.gradient == nil) else { return false }
         for (a, b) in zip(path.points, o.path.points) {
@@ -210,7 +213,7 @@ public struct VectorShape: Hashable, Sendable, Codable, Identifiable {
             return false
         }
         let outline = outlineReach + tolerance
-        if visibleFill != nil, poly.count >= 3, windingNumber(of: p, polygon: poly) != 0 {
+        if visibleFill != nil || image != nil, poly.count >= 3, windingNumber(of: p, polygon: poly) != 0 {
             return true
         }
         guard let first = poly.first else { return false }
@@ -990,8 +993,8 @@ public struct Drawing: Hashable, Sendable, Codable {
     /// space, keeping the shape's transform. Ignored when the shape's transform collapses
     /// it, so it can't be edited.
     public mutating func setWorldPath(_ path: BezierPath, at idx: (Int, Int)) {
-        // A text's glyphs are laid out from its words, not edited.
-        guard layers[idx.0].shapes[idx.1].text == nil else { return }
+        // A text's glyphs are laid out from its words, and an image's frame isn't edited.
+        guard layers[idx.0].shapes[idx.1].hasEditablePath else { return }
         let m = layers[idx.0].worldMatrix(ofShape: idx.1)
         if m == .identity {
             layers[idx.0].shapes[idx.1].path = path
@@ -1004,7 +1007,7 @@ public struct Drawing: Hashable, Sendable, Codable {
 
     /// Changes the path of the shape at `idx` in world space (see `setWorldPath`).
     public mutating func updateWorldPath(at idx: (Int, Int), _ change: (inout BezierPath) -> Void) {
-        guard layers[idx.0].shapes[idx.1].text == nil else { return }
+        guard layers[idx.0].shapes[idx.1].hasEditablePath else { return }
         if layers[idx.0].worldMatrix(ofShape: idx.1) == .identity {
             change(&layers[idx.0].shapes[idx.1].path)
             return

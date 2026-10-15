@@ -1,7 +1,7 @@
 {
   "description": "Scenes expected while each sequence plays from the end of the one before, \"time\" seconds in. See Schema/README.md, \"Test vectors\".",
   "document": {
-    "formatVersion": "1.1",
+    "formatVersion": "1.2",
     "name": "Morph",
     "viewport": { "id": 32, "width": 1920, "height": 1080, "background": "#FFFFFFFF" },
     "palette": [],

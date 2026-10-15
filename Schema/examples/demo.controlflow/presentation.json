@@ -1,5 +1,5 @@
 {
-  "formatVersion": "1.1",
+  "formatVersion": "1.2",
   "name": "Demo",
   "viewport": { "id": 56, "width": 1920, "height": 1080, "background": "#FFFFFFFF" },
   "palette": ["#FFFFFF80"],
@@ -193,6 +193,25 @@
             "points": []
           }
         ]
+      },
+      {
+        "id": 75,
+        "name": "Photo",
+        "transform": { "pivot": [1660, 800] },
+        "shapes": [
+          {
+            "id": 76,
+            "closed": true,
+            "image": { "src": "images/58522a450cf10d19.png" },
+            "transform": { "pivot": [1660, 800] },
+            "points": [
+              { "id": 77, "p": [1560, 700], "in": [0, 0], "out": [0, 0], "smooth": false },
+              { "id": 78, "p": [1760, 700], "in": [0, 0], "out": [0, 0], "smooth": false },
+              { "id": 79, "p": [1760, 900], "in": [0, 0], "out": [0, 0], "smooth": false },
+              { "id": 80, "p": [1560, 900], "in": [0, 0], "out": [0, 0], "smooth": false }
+            ]
+          }
+        ]
       }
     ]
   },
@@ -217,6 +236,10 @@
             {
               "set": 74,
               "props": { "text.tracking": 24, "transform.rotation": -4 }
+            },
+            {
+              "set": 76,
+              "props": { "opacity": 0.6, "transform.position": [-120, -60], "transform.scale": [1.5, 1.5] }
             }
           ]
         },

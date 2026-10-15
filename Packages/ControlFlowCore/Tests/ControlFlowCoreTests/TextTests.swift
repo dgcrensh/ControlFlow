@@ -165,7 +165,7 @@ final class TextShapeTests: XCTestCase {
             (key: "size", value: 96), (key: "align", value: .string("center")), (key: "width", value: 800),
         ]))
         XCTAssertEqual(shape["points"], JSONValue.array([]))
-        XCTAssertEqual(json["formatVersion"], JSONValue.string("1.1"))
+        XCTAssertEqual(json["formatVersion"], JSONValue.string(PresentationFormat.version.description))
         let back = try PresentationFormat.decode(JSONValue(parsing: json.formatted())).drawing
         XCTAssertEqual(back.shape(ref), d.shape(ref))
     }

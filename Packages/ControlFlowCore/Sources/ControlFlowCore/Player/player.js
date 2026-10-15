@@ -1,6 +1,7 @@
-// ControlFlow player: plays a ControlFlow presentation (format 1.1, see Schema/README.md)
+// ControlFlow player: plays a ControlFlow presentation (format 1.2, see Schema/README.md)
 // in a browser, as the app's presentation mode does. It reads presentation.json next to
-// the page (and text.json, the glyph outlines of its text, when there is one), resolves each keyframe's scene, plays transitions with the same rules as
+// the page (and text.json, the glyph outlines of its text, when there is one, and the
+// pictures of image shapes under images/), resolves each keyframe's scene, plays transitions with the same rules as
 // ControlFlowCore (Interpolation.swift, VertexMerge.swift) and draws each frame as SVG
 // (as SVGWriter.swift does).
 //
@@ -141,6 +142,17 @@
     shape.clipped = bool(o, 'clipped', false);
     shape.transform = readTransform(o.transform);
     shape.text = present(o, 'text') ? readText(o.text) : null;
+    shape.image = present(o, 'image') ? readImage(o.image) : null;
+  }
+
+  /// SceneJSON.readImage: a file directly in images/.
+  function readImage(o) {
+    if (!isObject(o) || typeof o.src !== 'string') fail('an image has no src');
+    const name = o.src.slice('images/'.length);
+    if (o.src.indexOf('images/') !== 0 || !name || /[\/\\]/.test(name) || name === '.' || name === '..') {
+      fail('an image src is not a file in images/');
+    }
+    return { src: o.src };
   }
 
   /// SceneJSON.readText.
@@ -291,6 +303,7 @@
     if (shape.group !== null) out.group = shape.group;
     out.closed = shape.closed;
     if (shape.text) out.text = textJSON(shape.text);
+    if (shape.image) out.image = { src: shape.image.src };
     if (shape.fill) {
       out.fill = hexColor(shape.fill);
       if (shape.fillGlobal !== null) out.fillGlobal = shape.fillGlobal;
@@ -475,7 +488,7 @@
 
   const settable = {
     viewport: ['background'], globalColor: ['color'], layer: ['transform'], group: ['clipped', 'transform'],
-    shape: ['group', 'closed', 'fill', 'fillGlobal', 'gradient', 'stroke', 'opacity', 'clipped', 'transform', 'text'],
+    shape: ['group', 'closed', 'fill', 'fillGlobal', 'gradient', 'stroke', 'opacity', 'clipped', 'transform', 'text', 'image'],
     vertex: ['p', 'in', 'out', 'w', 'smooth', 'symmetric', 'stroked'],
   };
 
@@ -1450,7 +1463,32 @@
       };
     }
     return { closed: !!shape.closed || !!text, pts: pts, fill: shape.fill || null, gradient: gradient, stroke: stroke,
-      opacity: shape.opacity === undefined ? 1 : shape.opacity };
+      opacity: shape.opacity === undefined ? 1 : shape.opacity, image: shape.image ? shape.image.src : null };
+  }
+
+  /**
+   * VectorShape.imagePlacement: the map from the image's unit square to its frame, whose
+   * top-left, top-right and bottom-left corners are points 0, 1 and 3 (or the bounds of
+   * a path without four points). Null when the frame has no area.
+   */
+  function r_imagePlacement(shape) {
+    const pts = shape.pts;
+    let ox, oy, ax, ay, dx, dy;
+    if (pts.length >= 4) {
+      ox = pts[0].x; oy = pts[0].y;
+      ax = pts[1].x - ox; ay = pts[1].y - oy;
+      dx = pts[3].x - ox; dy = pts[3].y - oy;
+    } else {
+      if (pts.length === 0) return null;
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (const p of pts) {
+        minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x);
+        minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y);
+      }
+      ox = minX; oy = minY; ax = maxX - minX; ay = 0; dx = 0; dy = maxY - minY;
+    }
+    if (!(Math.abs(ax * dy - ay * dx) > 1e-12)) return null;
+    return { a: ax, b: ay, c: dx, d: dy, tx: ox, ty: oy };
   }
 
   // MARK: Text (Text.swift)
@@ -1975,6 +2013,11 @@
 
   const r_tolerance = 0.1;
 
+  /** Escapes text for an attribute value (SVGWriter.escaped). */
+  function r_escape(text) {
+    return String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
   function r_makeID(w, prefix) {
     return w.prefix + prefix + (w.next++);
   }
@@ -2000,7 +2043,8 @@
     const id = r_makeID(w, 'clip');
     let m = '<mask id="' + id + '" maskUnits="userSpaceOnUse"' + r_areaAttrs(w) + '>';
     const d = r_pathData(base);
-    const filled = base.closed && base.fill;
+    // An image clips to its frame, as a fill does to its path.
+    const filled = base.closed && base.fill || base.image;
     if (filled) m += '<path d="' + d + '" fill="#FFFFFF"/>';
     const stroke = base.stroke;
     if (stroke && stroke.width > 0) {
@@ -2053,7 +2097,16 @@
     const body = w.body;
     const d = r_pathData(shape);
     const opacity = Math.min(Math.max(shape.opacity, 0), 1);
-    const visibleFill = shape.closed ? shape.fill : null;
+    // An image draws its picture in place of a fill.
+    const visibleFill = shape.closed && !shape.image ? shape.fill : null;
+    const placement = shape.image ? r_imagePlacement(shape) : null;
+    if (placement) {
+      const m = placement;
+      let image = '<image width="1" height="1" preserveAspectRatio="none" transform="matrix(' +
+        [m.a, m.b, m.c, m.d, m.tx, m.ty].map(r_num).join(' ') + ')" href="' + r_escape(shape.image) + '"';
+      if (opacity < 1) image += ' opacity="' + r_num(opacity) + '"';
+      body.push(image + '/>');
+    }
     let fill = 'fill="none"';
     if (visibleFill) {
       const g = shape.gradient;

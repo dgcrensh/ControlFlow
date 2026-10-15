@@ -1,5 +1,6 @@
 import ControlFlowCore
 import CoreText
+import PhotosUI
 import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
@@ -131,6 +132,9 @@ private struct ToolBar: View {
     @State private var showingAppearance = false
     @State private var showingViewport = false
     @State private var importingSVG = false
+    @State private var pickingPhoto = false
+    @State private var photoItem: PhotosPickerItem?
+    @State private var importingImage = false
     @State private var exporting = false
     @State private var exportFile = ExportFile()
     @State private var importError: String?
@@ -157,6 +161,22 @@ private struct ToolBar: View {
             Color.clear.fileImporter(isPresented: $importingSVG, allowedContentTypes: [.svg]) { result in
                 guard case .success(let url) = result else { return }
                 importSVG(from: url)
+            }
+        }
+        .background {
+            Color.clear.fileImporter(isPresented: $importingImage, allowedContentTypes: [.image]) { result in
+                guard case .success(let url) = result else { return }
+                let access = url.startAccessingSecurityScopedResource()
+                defer { if access { url.stopAccessingSecurityScopedResource() } }
+                if let data = try? Data(contentsOf: url) { store.insertImage(data: data) }
+            }
+        }
+        .photosPicker(isPresented: $pickingPhoto, selection: $photoItem, matching: .images)
+        .onChange(of: photoItem) { _, item in
+            guard let item else { return }
+            Task {
+                if let data = try? await item.loadTransferable(type: Data.self) { store.insertImage(data: data) }
+                photoItem = nil
             }
         }
         .overlay {
@@ -226,6 +246,10 @@ private struct ToolBar: View {
             Button("Layers", systemImage: "square.3.layers.3d") { showingLayers = true }
             ViewMenu(store: store, ui: ui, showingViewport: $showingViewport)
             Menu {
+                Menu("Insert Image", systemImage: "photo.badge.plus") {
+                    Button("From Photos", systemImage: "photo.on.rectangle") { pickingPhoto = true }
+                    Button("From Files", systemImage: "folder") { importingImage = true }
+                }
                 Button("Import SVG", systemImage: "square.and.arrow.down") { importingSVG = true }
                     .disabled(ui.isImporting)
                 Button("Export SVG", systemImage: "square.and.arrow.up") { export(store.svgData(), type: .svg) }

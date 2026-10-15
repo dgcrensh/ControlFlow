@@ -138,6 +138,8 @@ final class EditorUIState {
     var textStyle = TextContent()
     /// The selection holds a text, so the context bar shows its style.
     var selectionHasText = false
+    /// The selection holds an image, which shows its picture in place of a fill.
+    var selectionHasImage = false
     /// Text is being typed into on the canvas.
     var isEditingText = false
     var canConvertToOutlines = false
@@ -198,6 +200,7 @@ final class CanvasStore {
         session.editor.snap.smartGuides = UserDefaults.standard.object(forKey: Self.smartGuidesKey) as? Bool ?? true
         session.setRotationLocked(Self.storedRotationLock, viewSize: .zero, animated: false)
         referenceData = package.referenceImages
+        ImageLibrary.shared.add(package.images)
         document = package
         handOff = DocumentHandOff(revision: session.editor.revision)
         sentDocuments = [package]
@@ -250,8 +253,9 @@ final class CanvasStore {
         let interval = Signposts.canvas.beginInterval("Hand off")
         defer { Signposts.canvas.endInterval("Hand off", interval) }
         let presentation = session.editor.presentation
-        let images = referenceData.filter { id, _ in presentation.opening.referenceIndex(id) != nil }
-        document = PresentationPackage(presentation: presentation, referenceImages: images)
+        let references = referenceData.filter { id, _ in presentation.opening.referenceIndex(id) != nil }
+        document = PresentationPackage(presentation: presentation, referenceImages: references,
+                                       images: ImageLibrary.shared.data(for: presentation.imageSources))
         sentDocuments.append(document)
         if sentDocuments.count > 32 { sentDocuments.removeFirst() }
         onDocumentChange?(document)
@@ -268,6 +272,7 @@ final class CanvasStore {
             onDocumentChange?(document)
             return
         }
+        ImageLibrary.shared.add(package.images)
         var presentation = package.presentation
         presentation.opening.nextID = max(presentation.opening.nextID, session.editor.drawing.nextID)
         // Fresh reference ids, so cached pixels and textures never mix up images.
@@ -380,6 +385,7 @@ final class CanvasStore {
         update(\.keyedProperties, session.editor.keyedProperties())
         update(\.textStyle, editor.textStyle)
         update(\.selectionHasText, editor.selectionHasText)
+        update(\.selectionHasImage, editor.selectionHasImage)
         update(\.isEditingText, editor.textEdit != nil)
         update(\.canConvertToOutlines, editor.canConvertToOutlines)
         update(\.isAtKeyframe, editor.currentKeyframe != nil)
@@ -829,15 +835,20 @@ final class CanvasStore {
         return nil
     }
 
-    /// The art as SVG, over the viewport.
+    /// The art as SVG, over the viewport, with its pictures embedded.
     func svgData() -> Data? {
-        Signposts.canvas.withIntervalSignpost("SVG export") { session.editor.svgDocument().map { Data($0.utf8) } }
+        let images = ImageLibrary.shared.data(for: session.editor.drawing.imageSources)
+        return Signposts.canvas.withIntervalSignpost("SVG export") {
+            session.editor.svgDocument(images: images).map { Data($0.utf8) }
+        }
     }
 
     /// The presentation as a static web page's files (see `HTMLExport`), or nil if the
     /// player is missing from the build.
     func htmlFiles() -> [String: Data]? {
-        Signposts.canvas.withIntervalSignpost("HTML export") { try? HTMLExport.files(for: session.editor.presentation) }
+        let presentation = session.editor.presentation
+        let images = ImageLibrary.shared.data(for: presentation.imageSources)
+        return Signposts.canvas.withIntervalSignpost("HTML export") { try? HTMLExport.files(for: presentation, images: images) }
     }
 
     /// The viewport as a PNG at `scale` pixels per point: its background and the art.
@@ -1063,6 +1074,29 @@ final class CanvasStore {
             $0.editor.selection = .reference(id)
             $0.editor.deleteSelection()
         }
+    }
+
+    // MARK: Images
+
+    /// Adds a picture as an image shape in the middle of the view, shrunk to fit the
+    /// view and the viewport if it is larger, and selects it with Select so it can be
+    /// placed at once. Its opacity, place and size animate like any shape's.
+    func insertImage(data: Data) {
+        guard let image = UIImage(data: data), let cgImage = Self.normalized(image),
+              let encoded = Self.encoded(cgImage) else {
+            showToast("Couldn't read that image")
+            return
+        }
+        let src = ImageLibrary.shared.add(encoded)
+        let pixels = Vec2(Double(cgImage.width), Double(cgImage.height))
+        let view = viewSize.width > 0 ? Vec2(viewSize) : Vec2(1024, 768)
+        let camera = session.camera
+        let stage = session.editor.drawing.viewport
+        // A pixel is a point, unless that is more than most of the view or the viewport.
+        let fit = min(view.x * 0.7 / camera.zoom / pixels.x, view.y * 0.7 / camera.zoom / pixels.y,
+                      stage.width * 0.8 / pixels.x, stage.height * 0.8 / pixels.y, 1)
+        let center = camera.toWorld(view / 2)
+        edit { $0.editor.addImage(ShapeImage(src: src), size: pixels * fit, center: center) }
     }
 
     /// Bakes orientation and caps the size at 4096 pixels on the long side.
