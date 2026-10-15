@@ -71,6 +71,32 @@ struct EditorCommands: Commands {
                 Button("Send to Back") { store?.arrange(.sendToBack) }
                     .keyboardShortcut("[", modifiers: [.command, .shift])
                 Divider()
+                Menu("Align") {
+                    Button("Left") { store?.align(.left) }
+                        .keyboardShortcut("a", modifiers: .option)
+                    Button("Horizontal Centers") { store?.align(.centerX) }
+                        .keyboardShortcut("h", modifiers: .option)
+                    Button("Right") { store?.align(.right) }
+                        .keyboardShortcut("d", modifiers: .option)
+                    Button("Top") { store?.align(.top) }
+                        .keyboardShortcut("w", modifiers: .option)
+                    Button("Vertical Centers") { store?.align(.centerY) }
+                        .keyboardShortcut("v", modifiers: .option)
+                    Button("Bottom") { store?.align(.bottom) }
+                        .keyboardShortcut("s", modifiers: .option)
+                }
+                // Option-letters type characters into a text.
+                .disabled(typing || store?.ui.canAlign != true)
+                Menu("Distribute") {
+                    Button("Horizontal Spacing") { store?.distribute(.spacingX) }
+                        .keyboardShortcut("h", modifiers: [.option, .shift])
+                    Button("Vertical Spacing") { store?.distribute(.spacingY) }
+                        .keyboardShortcut("v", modifiers: [.option, .shift])
+                    Button("Horizontal Centers") { store?.distribute(.centersX) }
+                    Button("Vertical Centers") { store?.distribute(.centersY) }
+                }
+                .disabled(typing || store?.ui.canDistribute != true)
+                Divider()
                 Button("Hide") { store?.hideSelection() }
                     .keyboardShortcut("3")
                 Button("Show All") { store?.showAll() }
@@ -101,6 +127,14 @@ struct EditorCommands: Commands {
                         .keyboardShortcut(.upArrow, modifiers: [])
                     Button("Nudge Down") { store?.nudge(0, 1) }
                         .keyboardShortcut(.downArrow, modifiers: [])
+                    Button("Nudge Left 10") { store?.nudge(-10, 0) }
+                        .keyboardShortcut(.leftArrow, modifiers: .shift)
+                    Button("Nudge Right 10") { store?.nudge(10, 0) }
+                        .keyboardShortcut(.rightArrow, modifiers: .shift)
+                    Button("Nudge Up 10") { store?.nudge(0, -10) }
+                        .keyboardShortcut(.upArrow, modifiers: .shift)
+                    Button("Nudge Down 10") { store?.nudge(0, 10) }
+                        .keyboardShortcut(.downArrow, modifiers: .shift)
                 }
                 .disabled(typing)
             }
