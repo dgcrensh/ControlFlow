@@ -1,6 +1,6 @@
-// ControlFlow player: plays a ControlFlow presentation (format 1.0, see Schema/README.md)
+// ControlFlow player: plays a ControlFlow presentation (format 1.1, see Schema/README.md)
 // in a browser, as the app's presentation mode does. It reads presentation.json next to
-// the page, resolves each keyframe's scene, plays transitions with the same rules as
+// the page (and text.json, the glyph outlines of its text, when there is one), resolves each keyframe's scene, plays transitions with the same rules as
 // ControlFlowCore (Interpolation.swift, VertexMerge.swift) and draws each frame as SVG
 // (as SVGWriter.swift does).
 //
@@ -140,6 +140,31 @@
     shape.opacity = clamp01(number(o, 'opacity', 1));
     shape.clipped = bool(o, 'clipped', false);
     shape.transform = readTransform(o.transform);
+    shape.text = present(o, 'text') ? readText(o.text) : null;
+  }
+
+  /// SceneJSON.readText.
+  function readText(o) {
+    if (!isObject(o)) fail('text is not an object');
+    if (typeof o.string !== 'string') fail('a text has no string');
+    const text = { string: o.string };
+    text.font = typeof o.font === 'string' && o.font ? o.font : 'system';
+    const weight = integer(o, 'weight');
+    text.weight = weight === null ? 400 : Math.min(Math.max(weight, 100), 900);
+    text.italic = bool(o, 'italic', false);
+    const size = number(o, 'size', 72);
+    if (!(size > 0)) fail('a text size is not positive');
+    text.size = Math.min(Math.max(size, 1), 2000);
+    text.align = keyword(o, 'align', ['left', 'center', 'right'], 'left');
+    text.width = null;
+    if (present(o, 'width')) {
+      text.width = number(o, 'width');
+      if (!(text.width > 0)) fail('a text width is not positive');
+    }
+    text.lineHeight = Math.min(Math.max(number(o, 'lineHeight', 1.2), 0.1), 10);
+    text.tracking = number(o, 'tracking', 0);
+    text.held = null;
+    return text;
   }
 
   function readVertexProps(o, point) {
@@ -265,6 +290,7 @@
     const out = {};
     if (shape.group !== null) out.group = shape.group;
     out.closed = shape.closed;
+    if (shape.text) out.text = textJSON(shape.text);
     if (shape.fill) {
       out.fill = hexColor(shape.fill);
       if (shape.fillGlobal !== null) out.fillGlobal = shape.fillGlobal;
@@ -275,6 +301,20 @@
     if (shape.clipped) out.clipped = true;
     const t = transformJSON(shape.transform);
     if (t) out.transform = t;
+    return out;
+  }
+
+  /// SceneJSON.text: the string, and the style where it isn't the default. Never `held`.
+  function textJSON(text) {
+    const out = { string: text.string };
+    if (text.font !== 'system') out.font = text.font;
+    if (text.weight !== 400) out.weight = text.weight;
+    if (text.italic) out.italic = true;
+    if (text.size !== 72) out.size = text.size;
+    if (text.align !== 'left') out.align = text.align;
+    if (text.width !== null) out.width = text.width;
+    if (text.lineHeight !== 1.2) out.lineHeight = text.lineHeight;
+    if (text.tracking !== 0) out.tracking = text.tracking;
     return out;
   }
 
@@ -435,7 +475,7 @@
 
   const settable = {
     viewport: ['background'], globalColor: ['color'], layer: ['transform'], group: ['clipped', 'transform'],
-    shape: ['group', 'closed', 'fill', 'fillGlobal', 'gradient', 'stroke', 'opacity', 'clipped', 'transform'],
+    shape: ['group', 'closed', 'fill', 'fillGlobal', 'gradient', 'stroke', 'opacity', 'clipped', 'transform', 'text'],
     vertex: ['p', 'in', 'out', 'w', 'smooth', 'symmetric', 'stroked'],
   };
 
@@ -1132,6 +1172,15 @@
       });
       if (sa.dash.length === sb.dash.length) out.stroke.dash = sa.dash.map((d, i) => Math.max(lerpNumber(d, sb.dash[i], p), 0));
     }
+    const ta = a.text, tb = b.text;
+    if (ta && tb && (ta.tracking !== tb.tracking || ta.lineHeight !== tb.lineHeight)) {
+      // Lines stay broken as they are at the end (TextContent.held).
+      out.text = Object.assign({}, tb, {
+        tracking: lerpNumber(ta.tracking, tb.tracking, p),
+        lineHeight: Math.max(lerpNumber(ta.lineHeight, tb.lineHeight, p), 0),
+        held: { tracking: tb.tracking, lineHeight: tb.lineHeight },
+      });
+    }
     if (!samePoints(a, b)) {
       let pairs;
       if (a.closed === b.closed && a.points.length === b.points.length && a.points.every((x, i) => x.id === b.points[i].id)) {
@@ -1340,6 +1389,7 @@
    * in world space. Only what drawing needs is kept.
    */
   function r_worldShape(layer, shape, groupsById) {
+    const text = shape.text ? r_textOutline(shape.text) : null;
     const layerMatrix = r_matrix(layer.transform);
     let parent = layerMatrix;
     if (shape.group !== null && shape.group !== undefined) {
@@ -1348,7 +1398,7 @@
     }
     const m = r_transformIsIdentity(shape.transform) ? parent : r_mul(parent, r_matrix(shape.transform));
     const ident = r_isIdentityMatrix(m);
-    const src = shape.points;
+    const src = text || shape.points;
     const pts = new Array(src.length);
     for (let i = 0; i < src.length; i++) {
       const v = src[i];
@@ -1389,7 +1439,8 @@
           stops: stops,
         };
     }
-    let stroke = shape.stroke || null;
+    // Text draws its glyphs filled, with no outline (VectorShape.resolvingText).
+    let stroke = text ? null : shape.stroke || null;
     if (stroke && !ident) {
       const k = Math.sqrt(Math.abs(m.a * m.d - m.b * m.c));
       stroke = {
@@ -1398,8 +1449,80 @@
         dashOffset: (stroke.dashOffset || 0) * k, align: stroke.align,
       };
     }
-    return { closed: !!shape.closed, pts: pts, fill: shape.fill || null, gradient: gradient, stroke: stroke,
+    return { closed: !!shape.closed || !!text, pts: pts, fill: shape.fill || null, gradient: gradient, stroke: stroke,
       opacity: shape.opacity === undefined ? 1 : shape.opacity };
+  }
+
+  // MARK: Text (Text.swift)
+
+  /// The layouts in text.json (HTMLExport.textLayouts), by `r_textKey` of their text.
+  let r_texts = null;
+  let r_textCache = new Map();
+
+  function r_textKey(text) { return JSON.stringify(textJSON(text)); }
+
+  /// Reads text.json (already parsed) into the layouts `renderScene` takes as
+  /// `options.texts`.
+  function readTextLayouts(json) {
+    const out = new Map();
+    for (const entry of (isObject(json) && Array.isArray(json.texts) ? json.texts : [])) {
+      if (!isObject(entry) || !Array.isArray(entry.lines) || !Array.isArray(entry.glyphs)) continue;
+      out.set(r_textKey(readText(entry.text)), entry);
+    }
+    return out;
+  }
+
+  /// The glyph origins of `layout` (laid out for `base`) with the tracking and line
+  /// height changed, lines broken as they are: TextLayout.adjusted.
+  function r_adjustedOrigins(layout, base, tracking, lineHeight) {
+    const dt = tracking - base.tracking;
+    const spacing = lineHeight * base.size, dh = spacing - base.lineHeight * base.size;
+    if (dt === 0 && dh === 0) return layout.glyphs.map((g) => g.origin);
+    const lines = layout.lines;
+    const widths = lines.map((l) => l.width + dt * Math.max(l.glyphCount - 1, 0));
+    const boxWidth = base.width !== null ? base.width : Math.max(widths.length ? Math.max.apply(null, widths) : 0, 0);
+    const f = base.align === 'center' ? 0.5 : base.align === 'right' ? 1 : 0;
+    const shifts = lines.map((l, i) => (boxWidth - widths[i]) * f - l.x);
+    return layout.glyphs.map((g) => {
+      if (!(g.line >= 0 && g.line < lines.length)) return g.origin;
+      return [g.origin[0] + shifts[g.line] + dt * g.index, g.origin[1] + dh * (g.line + 0.5)];
+    });
+  }
+
+  /// A text's glyphs as one path's points `{ p, in, out }`, in the shape's space
+  /// (TextLayout.outline, bridged as BezierPath.bridging does). Empty when text.json
+  /// has no layout for it.
+  function r_textOutline(text) {
+    if (!r_texts) return [];
+    const cacheKey = JSON.stringify(text);
+    if (r_textCache.has(cacheKey)) return r_textCache.get(cacheKey);
+    // Partway through a transition the lines are as they are at the end.
+    const base = text.held ? Object.assign({}, text, { tracking: text.held.tracking, lineHeight: text.held.lineHeight }) : text;
+    const layout = r_texts.get(r_textKey(base));
+    const out = [];
+    if (layout) {
+      const origins = r_adjustedOrigins(layout, base, text.tracking, text.lineHeight);
+      let hub = null;
+      layout.glyphs.forEach((glyph, g) => {
+        const [gx, gy] = origins[g];
+        for (const c of (Array.isArray(glyph.contours) ? glyph.contours : [])) {
+          if (c.length < 12) continue;
+          const ring = [];
+          for (let i = 0; i + 5 < c.length; i += 6) {
+            ring.push({ p: [c[i] + gx, c[i + 1] + gy], in: [c[i + 2], c[i + 3]], out: [c[i + 4], c[i + 5]] });
+          }
+          // Enter at the first point and come back to it along straight bridges.
+          const back = { p: ring[0].p, in: ring[0].in, out: [0, 0] };
+          ring[0] = { p: ring[0].p, in: [0, 0], out: ring[0].out };
+          for (const point of ring) out.push(point);
+          out.push(back);
+          if (hub) out.push(hub); else hub = { p: ring[0].p, in: [0, 0], out: [0, 0] };
+        }
+      });
+    }
+    if (r_textCache.size >= 512) r_textCache = new Map();
+    r_textCache.set(cacheKey, out);
+    return out;
   }
 
   // MARK: Bézier paths
@@ -2059,9 +2182,15 @@
    * options.idPrefix: put before every element id, for several renders in one page.
    * options.drawHidden: draw hidden layers and shapes too (the app's presentation mode
    * skips them, as does SVG export, so the default is false).
+   * options.texts: the glyph layouts from text.json (readTextLayouts); without them text
+   * draws nothing.
    */
   function renderScene(scene, options) {
     const opts = options || {};
+    if ((opts.texts || null) !== r_texts) {
+      r_texts = opts.texts || null;
+      r_textCache = new Map();
+    }
     const drawHidden = !!opts.drawHidden;
     const w = {
       defs: [], body: [], next: 1, prefix: opts.idPrefix || '',
@@ -2082,8 +2211,16 @@
   // MARK: Exports
 
   const api = {
-    FormatError, readPresentation, Timeline, interpolateScene, progress, sceneJSON, hexColor, parseColor,
+    FormatError, readPresentation, readTextLayouts, Timeline, interpolateScene, progress, sceneJSON, hexColor, parseColor,
     renderScene: typeof renderScene === 'function' ? renderScene : null,
+    /// A text's glyph outline points, from layouts read by readTextLayouts (for the tests).
+    textOutline(text, texts) {
+      if ((texts || null) !== r_texts) {
+        r_texts = texts || null;
+        r_textCache = new Map();
+      }
+      return r_textOutline(text);
+    },
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.ControlFlowPlayer = api;
@@ -2094,7 +2231,7 @@
   /// stopping on its last keyframe. Advancing while a sequence plays jumps to its end;
   /// Back jumps, with no animation, to the end of the sequence before. The address's
   /// hash (`#3`) is the number of sequences played, so a link opens on that step.
-  function play(svg, presentation) {
+  function play(svg, presentation, texts) {
     const timeline = new Timeline(presentation);
     const count = presentation.sequences.length;
     const { width, height } = presentation.viewport;
@@ -2114,7 +2251,7 @@
 
     const draw = (scene) => {
       stage.innerHTML = renderScene({ width, height, background: scene.viewport.background,
-        globalColors: scene.globalColors, layers: scene.layers });
+        globalColors: scene.globalColors, layers: scene.layers }, { texts });
     };
     const rest = () => {
       draw(timeline.stateAfter(position));
@@ -2246,7 +2383,13 @@
         if (!response.ok) throw new Error('presentation.json could not be loaded (' + response.status + ').');
         return response.json();
       })
-      .then((json) => play(svg, readPresentation(json)))
+      .then((json) => {
+        const presentation = readPresentation(json);
+        // text.json is there only when the presentation has text.
+        return fetch('text.json', { cache: 'no-cache' })
+          .then((response) => (response.ok ? response.json() : null), () => null)
+          .then((texts) => play(svg, presentation, texts ? readTextLayouts(texts) : null));
+      })
       .catch((error) => {
         // Browsers don't let a page opened from a file read the file next to it.
         const local = location.protocol === 'file:';

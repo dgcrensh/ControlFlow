@@ -315,7 +315,7 @@ private struct Builder {
                 ring(hover, radius: EditorMetrics.eraserRadius * px, color: Overlay.eraserColor)
             case .scissors:
                 if let point = cut?.point { ringDot(point, radius: 6) }
-            case .pen, .select, .directSelect, .shape:
+            case .pen, .select, .directSelect, .shape, .text:
                 break
             }
         }
@@ -329,6 +329,25 @@ private struct Builder {
         }
     }
 
+    /// The text being edited: its box (dashed), the selection's boxes and the caret.
+    mutating func textEdit() {
+        guard let edit = editor.textEditGeometry else { return }
+        let f = edit.frame
+        for i in 0..<4 { dashedLine(f[i], f[(i + 1) % 4], dash: 4 * px, width: 1, color: accent) }
+        for box in edit.selection {
+            // A translucent band down the middle of each box, as tall as the box.
+            let left = (box[0] + box[3]) / 2, right = (box[1] + box[2]) / 2
+            let height = box[0].distance(to: box[3])
+            let across = right - left
+            guard across.length > 1e-9 else { continue }
+            let inset = across.normalized * min(height / 2, across.length / 2)
+            CapsuleTessellator.append(points: [left + inset, right - inset], width: height,
+                                      color: RGBAColor(r: accent.r, g: accent.g, b: accent.b, a: 0.3), screenSpace: false,
+                                      to: &out)
+        }
+        if let caret = edit.caret { line(caret.top, caret.bottom, width: 2) }
+    }
+
     /// The selection's outlines (scissors) or outlines, anchors and handles (direct select).
     mutating func selection() {
         switch editor.tool {
@@ -337,8 +356,12 @@ private struct Builder {
         case .directSelect:
             let refs = drawing.shapeRefs(in: editor.selection)
             let active = refs.count == 1 ? refs[0] : nil
-            for ref in refs { drawAnchors(of: ref, showHandles: true, active: active) }
-        case .pencil, .shape, .eraser, .pen, .select:
+            for ref in refs {
+                // A text has no anchors to edit: its glyphs just show as selected.
+                if drawing.shape(ref)?.text != nil { outline(of: ref, color: accent); continue }
+                drawAnchors(of: ref, showHandles: true, active: active)
+            }
+        case .pencil, .shape, .eraser, .pen, .select, .text:
             break
         }
     }
@@ -396,6 +419,9 @@ private struct Builder {
                 line(edge.from, edge.to, width: 1.5)
                 ringDot(edge.to, radius: 9)
             }
+
+        case .text:
+            textEdit()
 
         case .pencil, .shape, .eraser, .scissors:
             break

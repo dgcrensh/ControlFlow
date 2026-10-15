@@ -1,5 +1,5 @@
 {
-  "formatVersion": "1.0",
+  "formatVersion": "1.1",
   "name": "Demo",
   "viewport": { "id": 56, "width": 1920, "height": 1080, "background": "#FFFFFFFF" },
   "palette": ["#FFFFFF80"],
@@ -178,6 +178,21 @@
             ]
           }
         ]
+      },
+      {
+        "id": 73,
+        "name": "Title",
+        "shapes": [
+          {
+            "id": 74,
+            "closed": true,
+            "text": { "string": "Hello", "weight": 700, "size": 120, "align": "center" },
+            "fill": "#222222FF",
+            "fillGlobal": 3,
+            "transform": { "position": [780, 90], "pivot": [180, 72] },
+            "points": []
+          }
+        ]
       }
     ]
   },
@@ -198,6 +213,10 @@
             {
               "set": 16,
               "props": { "transform.rotation": -8 }
+            },
+            {
+              "set": 74,
+              "props": { "text.tracking": 24, "transform.rotation": -4 }
             }
           ]
         },
@@ -273,6 +292,10 @@
             {
               "set": 63,
               "props": { "opacity": 1 }
+            },
+            {
+              "set": 74,
+              "props": { "text.string": "Nice to meet you", "text.tracking": 0 }
             }
           ]
         }

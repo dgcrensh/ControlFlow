@@ -52,6 +52,7 @@ enum SceneJSON {
         var members: [(key: String, value: JSONValue)] = []
         if let group = shape.group { members.append((key: "group", value: id(group))) }
         members.append((key: "closed", value: .bool(shape.path.closed)))
+        if let text = shape.text { members.append((key: "text", value: self.text(text))) }
         if let fill = shape.fill {
             members.append((key: "fill", value: color(fill)))
             if let global = shape.fillGlobal { members.append((key: "fillGlobal", value: id(global))) }
@@ -89,6 +90,21 @@ enum SceneJSON {
             if stroke.dashOffset != 0 { members.append((key: "dashOffset", value: num(stroke.dashOffset))) }
         }
         if stroke.alignment != .center { members.append((key: "align", value: .string(stroke.alignment.rawValue))) }
+        return .object(members)
+    }
+
+    /// A text's words, and its style where it isn't the default.
+    static func text(_ text: TextContent) -> JSONValue {
+        let plain = TextContent()
+        var members: [(key: String, value: JSONValue)] = [(key: "string", value: .string(text.string))]
+        if text.font != plain.font { members.append((key: "font", value: .string(text.font))) }
+        if text.weight != plain.weight { members.append((key: "weight", value: .number(Double(text.weight)))) }
+        if text.italic { members.append((key: "italic", value: .bool(true))) }
+        if text.size != plain.size { members.append((key: "size", value: num(text.size))) }
+        if text.align != plain.align { members.append((key: "align", value: .string(text.align.rawValue))) }
+        if let width = text.width { members.append((key: "width", value: num(width))) }
+        if text.lineHeight != plain.lineHeight { members.append((key: "lineHeight", value: num(text.lineHeight))) }
+        if text.tracking != plain.tracking { members.append((key: "tracking", value: num(text.tracking))) }
         return .object(members)
     }
 
@@ -207,6 +223,7 @@ enum SceneJSON {
             shape.fillGlobal = try node.integer("fillGlobal").flatMap { context.globals.contains($0) ? $0 : nil }
             shape.gradient = try node.field("gradient").map(readGradient)
         }
+        shape.text = try node.field("text").map(readText)
         shape.stroke = try node.field("stroke").map { try readStroke($0, context: context) }
         shape.opacity = min(max(try node.number("opacity") ?? 1, 0), 1)
         shape.isClipped = try node.bool("clipped") ?? false
@@ -250,6 +267,30 @@ enum SceneJSON {
         stroke.dashOffset = try node.number("dashOffset") ?? 0
         stroke.alignment = try node.field("align")?.keyword(StrokeAlignment.self) ?? .center
         return stroke
+    }
+
+    static func readText(_ node: Node) throws -> TextContent {
+        var text = TextContent(string: try node.require("string").string())
+        text.font = try node.string("font") ?? TextContent.systemFont
+        if text.font.isEmpty { text.font = TextContent.systemFont }
+        if let weight = try node.integer("weight") {
+            text.weight = min(max(weight, TextContent.weightRange.lowerBound), TextContent.weightRange.upperBound)
+        }
+        text.italic = try node.bool("italic") ?? false
+        if let size = try node.number("size") {
+            guard size > 0 else { throw PresentationFileError.invalid(path: node.childPath("size"), problem: "is not positive") }
+            text.size = min(max(size, TextContent.sizeRange.lowerBound), TextContent.sizeRange.upperBound)
+        }
+        text.align = try node.field("align")?.keyword(TextAlignment.self) ?? .left
+        if let width = try node.number("width") {
+            guard width > 0 else { throw PresentationFileError.invalid(path: node.childPath("width"), problem: "is not positive") }
+            text.width = width
+        }
+        if let lineHeight = try node.number("lineHeight") {
+            text.lineHeight = min(max(lineHeight, TextContent.lineHeightRange.lowerBound), TextContent.lineHeightRange.upperBound)
+        }
+        text.tracking = try node.number("tracking") ?? 0
+        return text
     }
 
     static func readGradient(_ node: Node) throws -> ShapeGradient {
@@ -333,6 +374,8 @@ enum PropertyPath {
         "stroke.cap": .string("round"), "stroke.join": .string("round"), "stroke.miterLimit": 4,
         "stroke.dash": .array([]), "stroke.dashOffset": 0, "stroke.align": .string("center"),
         "w": 1, "smooth": .bool(true), "symmetric": .bool(false), "stroked": .bool(true),
+        "text.font": .string(TextContent.systemFont), "text.weight": 400, "text.italic": .bool(false), "text.size": 72,
+        "text.align": .string("left"), "text.lineHeight": 1.2, "text.tracking": 0,
     ]
 
     /// The property changes that turn `a` into `b` (both objects of the same kind): every

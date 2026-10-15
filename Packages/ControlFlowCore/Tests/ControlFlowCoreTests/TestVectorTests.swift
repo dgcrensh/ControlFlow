@@ -55,8 +55,12 @@ final class TestVectorTests: XCTestCase {
         for sample in samples {
             guard case .number(let sequence)? = sample["sequence"], case .number(let time)? = sample["time"],
                   let expected = sample["scene"] else { return XCTFail("\(name) has a malformed sample") }
-            let scene = Self.scene(timeline.playing(sequence: Int(sequence), at: time).scene)
+            let played = timeline.playing(sequence: Int(sequence), at: time).scene
+            let scene = Self.scene(played)
             if let difference = Self.difference(scene, expected, path: "") {
+                XCTFail("\(name), sequence \(Int(sequence)) at \(time)s: \(difference)")
+            }
+            if let outlines = sample["outlines"], let difference = Self.difference(Self.outlines(played), outlines, path: "outlines") {
                 XCTFail("\(name), sequence \(Int(sequence)) at \(time)s: \(difference)")
             }
         }
@@ -80,21 +84,33 @@ final class TestVectorTests: XCTestCase {
         var timeline = Timeline(presentation)
         var samples: [JSONValue] = []
         for s in presentation.sequences.indices {
-            for time in Self.sampleTimes(presentation.sequences[s]) {
-                samples.append(.object([
+            let times = Self.sampleTimes(presentation.sequences[s])
+            for time in times {
+                let scene = timeline.playing(sequence: s, at: time).scene
+                var sample: [(key: String, value: JSONValue)] = [
                     (key: "sequence", value: .number(Double(s))),
                     (key: "time", value: .number(time)),
-                    (key: "scene", value: Self.scene(timeline.playing(sequence: s, at: time).scene)),
-                ]))
+                    (key: "scene", value: Self.scene(scene)),
+                ]
+                // Text outlines where a text's spacing is moving.
+                let moving = scene.layers.contains { $0.shapes.contains { $0.text?.held != nil } }
+                if moving {
+                    sample.append((key: "outlines", value: Self.outlines(scene)))
+                }
+                samples.append(.object(sample))
             }
         }
-        let file: JSONValue = .object([
+        var file: [(key: String, value: JSONValue)] = [
             (key: "description", value: .string("Scenes expected while each sequence plays from the end of the one before, " +
                 "\"time\" seconds in. See Schema/README.md, \"Test vectors\".")),
             (key: "document", value: documentValue),
-            (key: "samples", value: .array(samples)),
-        ])
-        try Data(file.rounded().formatted().utf8).write(to: url)
+        ]
+        // The glyphs the HTML export would write, from the stub shaper.
+        if let texts = try HTMLExport.textLayouts(PresentationFormat.encode(presentation)) {
+            file.append((key: "texts", value: texts))
+        }
+        file.append((key: "samples", value: .array(samples)))
+        try Data(JSONValue.object(file).rounded().formatted().utf8).write(to: url)
     }
 
     /// The start, a quarter, half and three quarters into each transition, and the end.
@@ -121,6 +137,23 @@ final class TestVectorTests: XCTestCase {
         ]).rounded()
     }
 
+    /// Each text shape's glyph outline in its own space, as `[{ "shape", "points" }]` with
+    /// each point's `x, y, inX, inY, outX, outY` in one flat list.
+    static func outlines(_ d: Drawing) -> JSONValue {
+        var out: [JSONValue] = []
+        for layer in d.layers {
+            for shape in layer.shapes {
+                guard let text = shape.text else { continue }
+                let points = TextShaping.outline(text).points.flatMap { p in
+                    [p.position.x, p.position.y, p.inHandle.x, p.inHandle.y, p.outHandle.x, p.outHandle.y]
+                }
+                out.append(.object([(key: "shape", value: .number(Double(shape.id))),
+                                    (key: "points", value: .array(points.map(JSONValue.number)))]))
+            }
+        }
+        return JSONValue.array(out).rounded()
+    }
+
     /// Where two values differ beyond 2e-4 per number (rounding to 4 decimals can differ by
     /// one in the last place between platforms), or nil.
     static func difference(_ a: JSONValue, _ b: JSONValue, path: String) -> String? {
@@ -144,7 +177,8 @@ final class TestVectorTests: XCTestCase {
 
     /// Small shapes exercising each interpolation rule: points born and dying on segments
     /// and at an open path's ends, turns past 360, a flip, an overshooting color, a cut, a
-    /// shape created and one deleted, a new draw order and a shape that can't be merged.
+    /// shape created and one deleted, a new draw order, a shape that can't be merged, and
+    /// a wrapping text whose spacing and words change.
     private func morphDocument() -> Presentation {
         var d = Drawing()
         d.name = "Morph"
@@ -225,6 +259,28 @@ final class TestVectorTests: XCTestCase {
             let ln = shape(&s, line)
             s.layers[0].shapes[ln].path.points.removeLast()
             s.layers[0].transform.rotation = 0
+        }
+        // Sequence 2: a text in a box, right-aligned and wrapping, whose spacing moves
+        // with its lines broken as they are at the end, then whose words change.
+        var title = 0
+        timeline.insertSequence(after: 4, transition: Transition(duration: 0, curve: .linear))
+        edit(5) { s in
+            let text = TextContent(string: "Words wrap in a box", weight: 700, size: 40, align: .right, width: 300)
+            title = s.makeID()
+            s.layers[0].shapes.append(VectorShape(id: title, text: text, fill: s.globalColors[0].color,
+                                                  transform: Transform(position: Vec2(1300, 650))))
+        }
+        timeline.insertKeyframe(after: 5, transition: Transition(duration: 1, curve: .easeInOut))
+        edit(6) { s in
+            let t = shape(&s, title)
+            s.layers[0].shapes[t].text!.tracking = -6
+            s.layers[0].shapes[t].text!.lineHeight = 2
+        }
+        timeline.insertKeyframe(after: 6, transition: Transition(duration: 0.5, curve: .linear))
+        edit(7) { s in
+            let t = shape(&s, title)
+            s.layers[0].shapes[t].text!.string = "New words"
+            s.layers[0].shapes[t].text!.lineHeight = 1
         }
         return timeline.presentation
     }

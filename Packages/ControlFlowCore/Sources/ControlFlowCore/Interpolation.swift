@@ -8,9 +8,12 @@ import Foundation
 ///   plain number, so 0 to 720 turns twice.
 /// - Colors (fills, outlines, gradient stops, global colors, the viewport background)
 ///   move componentwise in sRGB with straight alpha, as CSS does.
+/// - A text's tracking and line height move linearly too, its lines broken as they are
+///   at the end (see `TextContent.held`), so no word jumps between lines midway.
 /// - Everything else (`closed`, handle modes, ends, corners, outline position, gradient
-///   kind, clipping, fill or outline on or off, bare edges, group membership, draw order)
-///   takes its new value at the start.
+///   kind, clipping, fill or outline on or off, bare edges, group membership, draw order,
+///   a text's words, font, weight, size, alignment and width) takes its new value at the
+///   start.
 /// - Objects that are created appear at the start; objects that are deleted stay, as they
 ///   were, until the end. A shape's vertices line up as `VertexMerge` describes.
 /// - Values a curve carries past its ends are clamped where they must be: colors and
@@ -101,6 +104,11 @@ enum Interpolation {
             if sa.dash.count == sb.dash.count {
                 out.stroke!.dash = zip(sa.dash, sb.dash).map { max(lerp($0, $1, p), 0) }
             }
+        }
+        if let ta = a.text, let tb = b.text, ta.tracking != tb.tracking || ta.lineHeight != tb.lineHeight {
+            out.text!.tracking = lerp(ta.tracking, tb.tracking, p)
+            out.text!.lineHeight = max(lerp(ta.lineHeight, tb.lineHeight, p), 0)
+            out.text!.held = TextMetrics(tracking: tb.tracking, lineHeight: tb.lineHeight)
         }
         if a.path != b.path {
             let pairs: (from: [PathPoint], to: [PathPoint])

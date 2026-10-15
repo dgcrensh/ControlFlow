@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/dgcrensh/ControlFlow/Schema/controlflow-1.0.schema.json",
   "title": "ControlFlow presentation",
-  "description": "presentation.json inside a .controlflow package, format 1.0: the opening scene in full, then sequences of keyframes, each the changes from the state before it. Units are points with the y-axis down, angles are degrees (clockwise on screen), and colors are sRGB hex with straight alpha. Every id is a positive whole number used once in the file. Readers should ignore keys they do not know. See Schema/README.md for the rules the schema can't express (which ids changes may name, and how transitions play).",
+  "description": "presentation.json inside a .controlflow package, format 1.1 (1.0 files are valid too): the opening scene in full, then sequences of keyframes, each the changes from the state before it. Units are points with the y-axis down, angles are degrees (clockwise on screen), and colors are sRGB hex with straight alpha. Every id is a positive whole number used once in the file. Readers should ignore keys they do not know. See Schema/README.md for the rules the schema can't express (which ids changes may name, and how transitions play).",
   "type": "object",
   "required": ["formatVersion"],
   "properties": {
@@ -143,6 +143,7 @@
         "opacity": { "description": "Multiplies the alpha of the fill and of the outline (each on its own). Defaults to 1.", "type": "number", "minimum": 0, "maximum": 1 },
         "clipped": { "description": "The shape draws only where the nearest unclipped shape below it in the same layer (and group) draws. Defaults to false.", "type": "boolean" },
         "transform": { "description": "The shape's transform, in its group (or layer). Its points are before it.", "$ref": "#/$defs/transform" },
+        "text": { "description": "Makes the shape a text (format 1.1): the words are laid out in the shape's space and drawn with the shape's fill, opacity, transform and clipping. A text has no stroke or gradient, and its points are empty; readers that ignore text draw nothing for it.", "$ref": "#/$defs/text" },
         "hidden": { "description": "Editor hint, not keyed. Defaults to false.", "type": "boolean" },
         "locked": { "description": "Editor hint, not keyed. Defaults to false.", "type": "boolean" },
         "points": {
@@ -150,6 +151,22 @@
           "type": "array",
           "items": { "$ref": "#/$defs/vertex" }
         }
+      }
+    },
+    "text": {
+      "description": "A text's words and style. Every key but string is optional and written only when it differs from its default.",
+      "type": "object",
+      "required": ["string"],
+      "properties": {
+        "string": { "description": "The words. \\n breaks a line.", "type": "string" },
+        "font": { "description": "A font's PostScript name, or \"system\" (the default) for the platform's system font. A reader without the font uses the system font.", "type": "string", "minLength": 1 },
+        "weight": { "description": "100 (thin) to 900 (black). Defaults to 400. The system font takes any weight; a named font uses the face nearest it.", "type": "integer", "minimum": 100, "maximum": 900 },
+        "italic": { "description": "Defaults to false.", "type": "boolean" },
+        "size": { "description": "Font size in points. Defaults to 72.", "type": "number", "exclusiveMinimum": 0, "maximum": 2000 },
+        "align": { "description": "Each line's alignment in the box (or about the origin without a width). Defaults to left.", "enum": ["left", "center", "right"] },
+        "width": { "description": "The box's width: lines wrap to it. Absent means one line per \\n, as wide as its words.", "type": "number", "exclusiveMinimum": 0 },
+        "lineHeight": { "description": "Line spacing as a multiple of size. Defaults to 1.2.", "type": "number", "minimum": 0.1, "maximum": 10 },
+        "tracking": { "description": "Extra space after each character but a line's last, in points. Defaults to 0.", "type": "number" }
       }
     },
     "stroke": {
@@ -262,10 +279,10 @@
           "properties": {
             "set": { "$ref": "#/$defs/id" },
             "props": {
-              "description": "Dotted keys into the object's JSON (transform.rotation, stroke.width, gradient.stops.1.color) and their new values. null removes a key that has no default (fill, stroke, gradient, group). Names, editor hints, ids and children can't be set.",
+              "description": "Dotted keys into the object's JSON (transform.rotation, stroke.width, gradient.stops.1.color, text.string) and their new values. null removes a key that has no default (fill, stroke, gradient, group, text.width). Names, editor hints, ids and children can't be set.",
               "type": "object",
               "propertyNames": {
-                "pattern": "^(transform|stroke|gradient|group|closed|fill|fillGlobal|opacity|clipped|p|in|out|w|smooth|symmetric|stroked|background|color)(\\.[A-Za-z0-9]+)*$"
+                "pattern": "^(transform|stroke|gradient|group|closed|fill|fillGlobal|opacity|clipped|text|p|in|out|w|smooth|symmetric|stroked|background|color)(\\.[A-Za-z0-9]+)*$"
               }
             }
           },

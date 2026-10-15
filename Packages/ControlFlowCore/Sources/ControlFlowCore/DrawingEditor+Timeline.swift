@@ -29,6 +29,7 @@ extension DrawingEditor {
     /// Makes keyframe `id` (nil: the opening state) the one being edited. Not an undo step.
     public mutating func selectKeyframe(_ id: Int?) {
         guard id != currentKeyframe, id == nil || timeline.presentation.chainIndex(of: id) != nil else { return }
+        endTextEdit()
         cancelGesture()
         endPreview()
         syncTimeline()
@@ -290,6 +291,7 @@ extension DrawingEditor {
 
     /// Runs a timeline command as one undo step, then shows the current keyframe.
     private mutating func timelineCommand(key: String? = nil, _ body: (inout DrawingEditor) -> Void) {
+        endTextEdit()
         cancelGesture()
         endPreview()
         syncTimeline()

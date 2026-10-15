@@ -1,5 +1,6 @@
 // Checks the HTML export's player against the test vectors: each sample's scene, played
-// by player.js, must match the one the app recorded (see README.md, "Test vectors").
+// by player.js, must match the one the app recorded, and so must its text outlines where
+// the sample has them (see README.md, "Test vectors").
 //
 //   node Schema/test_player.js
 //
@@ -46,6 +47,22 @@ function difference(a, b, at) {
   return a === b ? null : `${at} is ${JSON.stringify(a)}, expected ${JSON.stringify(b)}`;
 }
 
+/// Each text shape's glyph outline in its own space, drawn from the file's `texts` (the
+/// HTML export's text.json) as the vectors write it: `[{ shape, points }]`, each point's
+/// x, y, inX, inY, outX, outY in one flat list.
+function outlines(scene, texts) {
+  const out = [];
+  for (const layer of scene.layers) {
+    for (const shape of layer.shapes) {
+      if (!shape.text) continue;
+      const points = [];
+      for (const p of player.textOutline(shape.text, texts)) points.push(p.p[0], p.p[1], p.in[0], p.in[1], p.out[0], p.out[1]);
+      out.push({ shape: shape.id, points });
+    }
+  }
+  return out;
+}
+
 let failures = 0, checked = 0;
 const folder = path.join(here, 'vectors');
 for (const name of fs.readdirSync(folder).filter((n) => n.endsWith('.json')).sort()) {
@@ -53,16 +70,18 @@ for (const name of fs.readdirSync(folder).filter((n) => n.endsWith('.json')).sor
   const document = typeof vectors.document === 'string'
     ? JSON.parse(fs.readFileSync(path.join(folder, vectors.document), 'utf8')) : vectors.document;
   const timeline = new player.Timeline(player.readPresentation(document));
+  const texts = vectors.texts ? player.readTextLayouts(vectors.texts) : null;
   for (const sample of vectors.samples) {
     const scene = timeline.playing(sample.sequence, sample.time).scene;
-    const d = difference(rounded(player.sceneJSON(scene)), sample.scene, 'scene');
+    let d = difference(rounded(player.sceneJSON(scene)), sample.scene, 'scene');
+    if (!d && sample.outlines) d = difference(rounded(outlines(scene, texts)), sample.outlines, 'outlines');
     checked++;
     if (d) {
       failures++;
       console.error(`${name}, sequence ${sample.sequence} at ${sample.time}s: ${d}`);
     }
     if (player.renderScene) {
-      const svg = player.renderScene(scene);
+      const svg = player.renderScene(scene, { texts });
       if (typeof svg !== 'string' || /NaN|undefined|Infinity/.test(svg)) {
         failures++;
         console.error(`${name}, sequence ${sample.sequence} at ${sample.time}s: the drawing has bad values`);
