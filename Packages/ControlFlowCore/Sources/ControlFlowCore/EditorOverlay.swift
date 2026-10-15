@@ -12,6 +12,8 @@ public enum EditorOverlay {
     public static let symmetryColor = RGBAColor(r: 0.85, g: 0.35, b: 0.75, a: 0.8)
     /// The viewport's border.
     public static let viewportBorderColor = RGBAColor(r: 0.5, g: 0.5, b: 0.54, a: 0.9)
+    /// Smart guides, a magenta like Illustrator's so they read apart from the selection.
+    public static let guideColor = RGBAColor(r: 0.93, g: 0.17, b: 0.6)
 
     /// The outline view's wireframe on a light or dark canvas, and the dimmed wireframe of
     /// art outside isolation or the ghost focus. Opaque, since overlapping capsules
@@ -116,7 +118,7 @@ public enum EditorOverlay {
 public struct OverlayLayers: Sendable {
     /// The outline view's wireframe of every shown shape. Kept between frames.
     public var wireframe: [Float] = []
-    /// The viewport's border, symmetry axis, hover feedback and a layer's pivot.
+    /// The viewport's border, smart guides, symmetry axis, hover feedback and a layer's pivot.
     public var guides: [Float] = []
     /// The selection's outlines, and in direct select its anchors and handles. Kept
     /// between frames.
@@ -275,9 +277,21 @@ private struct Builder {
                                   to: &out)
     }
 
-    /// The viewport's border, symmetry, hover feedback and a layer's pivot.
+    /// The viewport's border, smart guides, symmetry, hover feedback and a layer's pivot.
     mutating func guides(viewRect: Rect?, zoom: Double) {
         viewportBorder()
+
+        // What a move or resize lined up with; a middle gets a small cross at each end.
+        for guide in editor.guideLines {
+            line(guide.from, guide.to, width: 1, color: Overlay.guideColor)
+            if guide.isCenter {
+                let r = 3 * px
+                for end in [guide.from, guide.to] {
+                    line(end - Vec2(r, r), end + Vec2(r, r), width: 1, color: Overlay.guideColor)
+                    line(end - Vec2(r, -r), end + Vec2(r, -r), width: 1, color: Overlay.guideColor)
+                }
+            }
+        }
 
         // The symmetry axis, and what symmetry will add for a shape or pen path in progress.
         if editor.symmetry.isEnabled {

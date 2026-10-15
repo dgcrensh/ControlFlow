@@ -596,6 +596,7 @@ private struct ContextBar: View {
 
     private var snapMenu: some View {
         Menu {
+            Toggle("Smart Guides", isOn: snapBinding(\.smartGuides))
             Toggle("Snap", isOn: snapBinding(\.isEnabled))
             Toggle("Anchors", isOn: snapBinding(\.toAnchors))
             Toggle("Grid", isOn: snapBinding(\.toGrid))

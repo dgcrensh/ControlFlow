@@ -114,6 +114,8 @@ struct EditorCommands: Commands {
                     .keyboardShortcut("g", modifiers: [.command, .option])
                 Button("Lock Rotation") { if let store { store.setRotationLocked(!store.ui.rotationLocked) } }
                     .keyboardShortcut("r", modifiers: [.command, .option])
+                Button("Smart Guides") { if let store { store.setSmartGuides(!store.ui.snap.smartGuides) } }
+                    .keyboardShortcut("u")
                 Button("Zoom to Fit") { store?.zoomToFit() }
                     .keyboardShortcut("0")
             }

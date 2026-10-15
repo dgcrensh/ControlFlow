@@ -7,12 +7,17 @@ public struct SnapSettings: Hashable, Sendable {
     public var toGrid: Bool
     /// Grid spacing in world points.
     public var gridSize: Double
+    /// Select-tool moves and resizes line up with other objects' edges and middles and
+    /// the viewport's (see `SmartGuides`). Independent of `isEnabled`.
+    public var smartGuides: Bool
 
-    public init(isEnabled: Bool = false, toAnchors: Bool = true, toGrid: Bool = true, gridSize: Double = 10) {
+    public init(isEnabled: Bool = false, toAnchors: Bool = true, toGrid: Bool = true, gridSize: Double = 10,
+                smartGuides: Bool = true) {
         self.isEnabled = isEnabled
         self.toAnchors = toAnchors
         self.toGrid = toGrid
         self.gridSize = gridSize
+        self.smartGuides = smartGuides
     }
 }
 
@@ -53,7 +58,13 @@ public enum Snapper {
     /// snap target. Each axis takes the smallest adjustment among the points.
     public static func snapTranslation(_ delta: Vec2, of points: [Vec2], settings: SnapSettings,
                                        anchors: [Vec2], radius: Double) -> Vec2 {
-        guard settings.isEnabled else { return delta }
+        translation(delta, of: points, settings: settings, anchors: anchors, radius: radius).point
+    }
+
+    /// `snapTranslation`, saying which axes snapped (`point` is the adjusted delta).
+    public static func translation(_ delta: Vec2, of points: [Vec2], settings: SnapSettings,
+                                   anchors: [Vec2], radius: Double) -> SnapResult {
+        guard settings.isEnabled else { return SnapResult(point: delta, snappedX: false, snappedY: false) }
         var bestX: Double?
         var bestY: Double?
         for point in points {
@@ -68,6 +79,6 @@ public enum Snapper {
                 if bestY == nil || abs(d) < abs(bestY!) { bestY = d }
             }
         }
-        return delta + Vec2(bestX ?? 0, bestY ?? 0)
+        return SnapResult(point: delta + Vec2(bestX ?? 0, bestY ?? 0), snappedX: bestX != nil, snappedY: bestY != nil)
     }
 }
