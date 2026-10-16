@@ -11,6 +11,10 @@ public struct MathContent: Hashable, Sendable, Codable {
     /// True: display style, as in `\[ \]`. False: inline style, as in `$ $` (smaller
     /// fractions and limits).
     public var display: Bool
+    /// Partway through a transition from another formula: that formula and the progress
+    /// (see `MathMorph`). Never saved, and ignored by `MathTypesetting`, whose layouts are
+    /// of the formula without it.
+    public var morph: MathMorphState?
 
     public init(source: String, size: Double = 72, display: Bool = true) {
         self.source = source
@@ -22,7 +26,34 @@ public struct MathContent: Hashable, Sendable, Codable {
     public var style: MathContent {
         var copy = self
         copy.source = ""
+        copy.morph = nil
         return copy
+    }
+
+    /// The formula without `morph`: what a keyframe holds and what is typeset.
+    public var unmorphed: MathContent {
+        guard morph != nil else { return self }
+        var copy = self
+        copy.morph = nil
+        return copy
+    }
+}
+
+/// A formula partway through a transition: the formula it comes from and the progress
+/// (the timing curve's value, so it can overshoot 0...1).
+public struct MathMorphState: Hashable, Sendable, Codable {
+    // An array, since a struct can't hold its own type directly.
+    private var storage: [MathContent]
+    public var progress: Double
+
+    public var from: MathContent {
+        get { storage[0] }
+        set { storage = [newValue.unmorphed] }
+    }
+
+    public init(from: MathContent, progress: Double) {
+        self.storage = [from.unmorphed]
+        self.progress = progress
     }
 }
 
@@ -76,10 +107,16 @@ public struct MathLayout: Hashable, Sendable {
     /// the glyphs (so a rule that overlaps a glyph, such as a radical's bar, adds to it
     /// rather than cutting a hole), bridged into one path.
     static func outline(outlines: [String: [BezierPath]], glyphs: [Glyph], rules: [Rect]) -> BezierPath {
+        outline(placed: glyphs.map { (outlines[$0.key] ?? [], $0.place) }, rules: rules)
+    }
+
+    /// `outline` for glyphs given as their contours (in glyph units) and places: a
+    /// formula partway through a morph (see `MathMorph`) is drawn the same way.
+    static func outline(placed: [(contours: [BezierPath], place: Affine2D)], rules: [Rect]) -> BezierPath {
         var rings: [BezierPath] = []
         var area = 0.0
-        for glyph in glyphs {
-            for contour in outlines[glyph.key] ?? [] where contour.points.count >= 2 {
+        for glyph in placed {
+            for contour in glyph.contours where contour.points.count >= 2 {
                 var ring = contour
                 ring.closed = true
                 ring.apply(glyph.place)

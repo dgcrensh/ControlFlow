@@ -349,6 +349,25 @@ struct Workload: @unchecked Sendable {
         playbackFrame(textTrackingTween(drawing))
     }
 
+    static let playbackFrameFormulasMorph = Workload(name: "Playback frame, ten formulas morph") { drawing in
+        playbackFrame(formulasMorph(drawing))
+    }
+
+    /// `drawing` with ten formulas on its first layer, into a keyframe where each changes
+    /// (`a + b = c` to `a = c - b`), their layouts known as an opened file's are.
+    static func formulasMorph(_ drawing: Drawing) -> Timeline {
+        let from = MathContent(source: "a + b = c", size: 48), to = MathContent(source: "a = c - b", size: 48)
+        for math in [from, to] { MathTypesetting.insert([math: try! FixtureMathTypesetter.layout(math)], engine: "test") }
+        var start = drawing
+        for i in 0..<10 {
+            start.layers[0].shapes.append(VectorShape(id: start.makeID(), math: from,
+                                                      transform: Transform(position: start.layers[0].pivot + Vec2(0, Double(i) * 60))))
+        }
+        var end = start
+        for s in end.layers[0].shapes.indices where end.layers[0].shapes[s].math != nil { end.layers[0].shapes[s].math = to }
+        return StressDrawing.transition(from: start, to: end)
+    }
+
     /// `drawing` with a text on every layer, into a keyframe that tweens their tracking.
     static func textTrackingTween(_ drawing: Drawing) -> Timeline {
         let start = StressDrawing.withText(drawing)
@@ -713,7 +732,8 @@ struct Workload: @unchecked Sendable {
          scissorsHover, pencilStroke, quickShapeCheck, eraserSample, dragSampleEverything, dragEndOneLayer,
          dragEndEverything, undoRedo, twoFingerNavigation, refreshQueries, layerTree, save, open, openParse,
          openDecode, openFirstFrame, openFirstArtInView, svgExport, svgImport, playbackFrameAllLayersSlide,
-         playbackFrameEveryFillChanges, playbackFrameOneLayerFades, playbackFrameTextTracking, frameAfterPlayback,
+         playbackFrameEveryFillChanges, playbackFrameOneLayerFades, playbackFrameTextTracking, playbackFrameFormulasMorph,
+         frameAfterPlayback,
          undoRedoAtKeyframe, resolveLastKeyframeCold, changedObjectsAtKeyframe, onionSkinBuild,
          nudgeAtKeyframeKeyingEverything, deleteAndUndoWithReorders, firstHoverAfterNudge, firstHoverAfterNudgeTransformed,
          hoverFrameEverythingSelected, nudgeEverything,

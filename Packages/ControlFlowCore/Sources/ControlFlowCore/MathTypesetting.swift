@@ -40,6 +40,9 @@ public enum MathTypesetting {
         var errors: [MathContent: MathError] = [:]
         /// Formulas being typeset, with what to call when each is done.
         var waiting: [MathContent: [@Sendable () -> Void]] = [:]
+        /// Counts changes to `entries`, so caches built from layouts (`MathMorph`'s) know
+        /// when to start again.
+        var generation = 0
     }
 
     private static let state = State()
@@ -58,23 +61,30 @@ public enum MathTypesetting {
 
     /// The layout of `math` if it is known; never typesets.
     public static func layout(_ math: MathContent) -> MathLayout? {
-        locked { $0.entries[math]?.layout }
+        let math = math.unmorphed
+        return locked { $0.entries[math]?.layout }
     }
+
+    /// Changes whenever a layout is added or forgotten.
+    static var generation: Int { locked { $0.generation } }
 
     /// The layout of `math` and the engine that made it, if known.
     static func entry(_ math: MathContent) -> Entry? {
-        locked { $0.entries[math] }
+        let math = math.unmorphed
+        return locked { $0.entries[math] }
     }
 
     /// The error from typesetting `math`, if it failed.
     public static func error(_ math: MathContent) -> MathError? {
-        locked { $0.errors[math] }
+        let math = math.unmorphed
+        return locked { $0.errors[math] }
     }
 
     /// Typesets `math` unless its layout is known, it failed, or it is being typeset
     /// already; `done` runs (on any thread) once the layout or the error is known, at once
     /// when it is already. Requests for the same formula share one typeset.
     public static func request(_ math: MathContent, done: @Sendable @escaping () -> Void = {}) {
+        let math = math.unmorphed
         enum Next { case now, later, start(any MathTypesetter) }
         let next: Next = locked { s in
             // Known, failed, or no typesetter: nothing to wait for.
@@ -95,7 +105,9 @@ public enum MathTypesetting {
             let result = await typeset(math, with: typesetter)
             let callbacks: [@Sendable () -> Void] = locked { s in
                 switch result {
-                case .success(let layout): s.entries[math] = Entry(layout: layout, engine: typesetter.engine)
+                case .success(let layout):
+                    s.entries[math] = Entry(layout: layout, engine: typesetter.engine)
+                    s.generation += 1
                 case .failure(let error): s.errors[math] = error
                 }
                 return s.waiting.removeValue(forKey: math) ?? []
@@ -128,18 +140,20 @@ public enum MathTypesetting {
     public static func insert(_ layouts: [MathContent: MathLayout], engine: String) {
         locked { s in
             for (math, layout) in layouts {
-                s.entries[math] = Entry(layout: layout, engine: engine)
-                s.errors[math] = nil
+                s.entries[math.unmorphed] = Entry(layout: layout, engine: engine)
+                s.errors[math.unmorphed] = nil
             }
+            s.generation += 1
         }
     }
 
     static func insert(_ entries: [MathContent: Entry]) {
         locked { s in
             for (math, entry) in entries {
-                s.entries[math] = entry
-                s.errors[math] = nil
+                s.entries[math.unmorphed] = entry
+                s.errors[math.unmorphed] = nil
             }
+            s.generation += 1
         }
     }
 
@@ -148,9 +162,10 @@ public enum MathTypesetting {
     public static func forget(_ maths: [MathContent]) {
         locked { s in
             for math in maths {
-                s.entries[math] = nil
-                s.errors[math] = nil
+                s.entries[math.unmorphed] = nil
+                s.errors[math.unmorphed] = nil
             }
+            s.generation += 1
         }
     }
 
@@ -159,6 +174,7 @@ public enum MathTypesetting {
         locked { s in
             s.entries = [:]
             s.errors = [:]
+            s.generation += 1
         }
     }
 }

@@ -201,7 +201,7 @@ final class MathTests: XCTestCase {
         XCTAssertThrowsError(try read("{ \"size\": 10 }"), "a source is required")
     }
 
-    func testAKeyframeChangesTheSourceAsAPropertyAndItSnaps() {
+    func testAKeyframeChangesTheSourceAsAPropertyAndItMorphs() {
         let (d, ref) = mathDrawing()
         var t = Timeline(Presentation(opening: d))
         let k = t.insertKeyframe(after: 0, transition: Transition(duration: 1, curve: .linear))
@@ -213,7 +213,8 @@ final class MathTests: XCTestCase {
                        [.set(id: ref.shape, props: [PropertyChange("math.source", .string("a = c - b")),
                                                     PropertyChange("math.size", 36)])])
         let half = t.transition(into: 1, elapsed: 0.5).layers[0].shapes[0].math
-        XCTAssertEqual(half, MathContent(source: "a = c - b", size: 36), "a formula takes its new value at the start")
+        XCTAssertEqual(half?.unmorphed, MathContent(source: "a = c - b", size: 36), "the new formula, morphing from the old")
+        XCTAssertEqual(half?.morph, MathMorphState(from: sum, progress: 0.5))
         // Back to the default writes the default.
         s.layers[0].shapes[0].math!.size = 72
         s.layers[0].shapes[0].math!.display = false

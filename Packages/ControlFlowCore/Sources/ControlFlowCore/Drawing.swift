@@ -83,6 +83,10 @@ public struct VectorShape: Hashable, Sendable, Codable, Identifiable {
         if let text {
             copy.path = TextShaping.outline(text)
             copy.layoutFrame = TextShaping.layout(text).frame.corners
+        } else if let math, let frame = MathMorph.frame(math) {
+            // Partway through a morph (see `MathMorph`).
+            copy.path = frame.outline
+            copy.layoutFrame = frame.bounds.corners
         } else if let math {
             let layout = MathTypesetting.layout(math)
             copy.path = layout?.outline ?? BezierPath(closed: true)

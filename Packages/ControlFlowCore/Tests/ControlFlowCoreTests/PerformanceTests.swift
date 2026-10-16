@@ -480,6 +480,9 @@ final class PerformanceTests: XCTestCase {
     /// 10 frames of a text per layer tweening its tracking.
     func testPlaybackFrameTextTracking() { measure(.playbackFrameTextTracking, calls: 10) }
 
+    /// 10 frames of ten formulas morphing at once.
+    func testPlaybackFrameFormulasMorph() { measure(.playbackFrameFormulasMorph, calls: 10) }
+
     /// What each played frame uploads, printed per transition. A slide only moves layers,
     /// so it uploads nothing; a change of paint uploads its layers' paints, one 256-byte
     /// slot per cover, and none of their triangles; a tracking tween uploads its texts'
