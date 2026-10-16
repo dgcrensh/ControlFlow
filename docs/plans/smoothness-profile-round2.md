@@ -297,7 +297,20 @@ Copying everything encodes JSON on the main thread: **298 ms**. Pasting it back 
    | Bytes copied into the command buffer | 2.24 MB | 64 B |
 
    The calls left are a pipeline, a depth-stencil state and usually a reference per step, since stencil and cover steps alternate. **Still to do on a device:** take the `Frame` and `GPU frame` signposts while hovering and while drawing a stroke over the stress drawing, and decide from them whether culling (fix 3) or an art cache (fix 4) is still worth it.
-4. **#3 (M):** paint-only changes keep their buffers.
+4. **#3, paint-only changes keep their buffers (shipped).**
+
+   What shipped: each layer's paints moved out of its vertex buffer into a paint buffer of their own, named by a new `ArtSegment.paintID` (one 256-byte slot per cover, as before, now from offset 0). When a layer's key differs from its cached one only in its shapes' paint (`VectorShape.hasSameGeometry(as:)`: fill, gradient and outline colors, gradient stops and points, opacity and a picture's `src`, but not whether a fill, gradient, outline or picture is there), `ArtBuilder` keeps the layer's id, vertices and steps, and paints its covers again from a list of which shape and which part each cover paints (`LayerBatch.covers`), taking a new paint id. The renderer then uploads the layer's paints (`ArtBatch.segmentsToRepaint`) and none of its triangles, in the editor and in the pool alike. A change that the art doesn't draw (a global colour link) keeps the paint id too. The pool picks the smallest free buffer that fits, and a `Pool fallback` signpost event marks each buffer it has to make. `ArtRepaintTests` checks that a repainted build equals a cold one for fills, outlines, fades under the ghost view, gradients baked into a stretch, clipping, text and pictures, that adding or removing a fill, gradient or outline still rebuilds, and lists `VectorShape`'s properties so a new one has to be placed on one side. "Art rebuild after one edit" and its two variants now move a shape instead of recolouring it, so they still time a rebuild; "Art repaint after one recolour, with upload" is the new row.
+
+   Measured in this container against `main` before the change (release, full stress drawing, median of 15 runs of 20 calls, with glibc's mmap threshold fixed so its page faults don't swing the rows):
+
+   | Workload | Before | After |
+   |---|---|---|
+   | Playback frame, every fill changes | 27 ms, 15.5 MB uploaded | 8.3 ms, 1.0 MB |
+   | Playback frame, one layer fades | 1.3-1.7 ms, 393 KB | 1.1-1.3 ms, 25 KB |
+   | Recolour one shape, with upload | 1.0-1.2 ms, 393 KB | 0.8-0.9 ms, 25 KB |
+   | Playback frame, every layer slides (for scale) | 0.9-1.2 ms, 0 | 0.9-1.1 ms, 0 |
+
+   A frame of one layer fading now costs what a slide does: the walk that copies every layer's steps into the batch, which is the floor of any frame that changes something. What is left of "every fill changes" is the scene's interpolation (about a fifth), that walk, and writing 4,000 paints. A layer whose geometry changes now takes two buffers, its vertices and its paints, so a preview that rebuilds many layers per frame (a tracking tween on every layer) takes twice the pool slots; the `Pool fallback` events will show on a device whether the pool needs to grow.
 5. **#9, #10, #12 (M):** incremental diff, prune and shape index for edits that touch many keyframes or shapes.
 6. **#13 and #16 (M).**
 
@@ -307,6 +320,6 @@ Round 1's signposts cover most of this. The new questions for an Instruments pas
 
 - **How much CPU `drawArt` encoding takes per frame** on the stress drawing while hovering and while drawing a stroke. This decides how far #1 goes.
 - **The GPU time** of 8k stencil-and-cover draws at 4× MSAA on a 12.9" screen.
-- **The cost of a fade transition's re-uploads (#3)**, and pool fallbacks.
+- **Pool fallbacks (#3):** the `Pool fallback` events during a preview that rebuilds many layers per frame. A fade no longer re-uploads its triangles.
 - **CoreText cost of a tracking tween (#13).**
 - **Whether typing hands off per keystroke (#14).**

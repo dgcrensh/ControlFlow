@@ -30,11 +30,13 @@ final class ScalingTests: XCTestCase {
     }
 
     /// What the art pass hands the GPU at each size: vertices, the bytes of a full upload
-    /// (the first build, or a new zoom bucket), and what `CanvasRenderer.uploadArt` uploads
-    /// after one edit (only the edited layer's segment).
+    /// (the first build, or a new zoom bucket), what `CanvasRenderer.uploadArt` uploads
+    /// after one edit (only the edited layer's segment) and after one recolour (only the
+    /// recoloured layer's paints).
     func testArtUploadSize() {
-        var lines = ["Art batch per size", "", "| Shapes | Vertices | Full upload | Upload after one edit | Steps |",
-                     "| ---: | ---: | ---: | ---: | ---: |"]
+        var lines = ["Art batch per size", "",
+                     "| Shapes | Vertices | Full upload | Upload after one edit | Upload after one recolour | Steps |",
+                     "| ---: | ---: | ---: | ---: | ---: | ---: |"]
         func megabytes(_ floats: Int) -> String {
             String(format: "%.2f", Double(floats * MemoryLayout<Float>.size) / 1_048_576) + " MB"
         }
@@ -42,14 +44,22 @@ final class ScalingTests: XCTestCase {
             let drawing = StressDrawing.make(layers: layers, shapesPerLayer: Self.shapesPerLayer)
             var builder = ArtBuilder.likeRenderer()
             let batch = builder.build(drawing, isolatedLayer: nil, tolerance: 0.5)
-            let floats = batch.segments.reduce(0) { $0 + $1.floats.count }
+            let floats = batch.segments.reduce(0) { $0 + $1.floats.count + $1.paintFloats(in: batch.steps).count }
             var edited = drawing
-            edited.layers[0].shapes[0].fill = RGBAColor(r: 1, g: 0, b: 0)
+            edited.layers[0].shapes[0].path.points[0].position += Vec2(2, 1)
             let after = builder.build(edited, isolatedLayer: nil, tolerance: 0.5)
             let uploaded = after.segmentsToUpload(resident: batch.residentIDs).reduce(0) { $0 + $1.floats.count }
-            lines.append("| \(drawing.shapeCount) | \(floats / 2) | \(megabytes(floats)) | \(megabytes(uploaded)) | \(batch.steps.count) |")
+            var recoloured = edited
+            recoloured.layers[0].shapes[0].fill = RGBAColor(r: 1, g: 0, b: 0)
+            let repainted = builder.build(recoloured, isolatedLayer: nil, tolerance: 0.5)
+            XCTAssertTrue(repainted.segmentsToUpload(resident: after.residentIDs).isEmpty)
+            let paints = repainted.segmentsToRepaint(resident: after.residentPaintIDs)
+                .reduce(0) { $0 + $1.paintFloats(in: repainted.steps).count }
+            lines.append("| \(drawing.shapeCount) | \(batch.segments.reduce(0) { $0 + $1.floats.count } / 2) | " +
+                         "\(megabytes(floats)) | \(megabytes(uploaded)) | \(megabytes(paints)) | \(batch.steps.count) |")
             XCTAssertGreaterThan(floats, 0)
             XCTAssertEqual(uploaded, after.segments[0].floats.count)
+            XCTAssertEqual(paints, repainted.segments[0].paintFloats(in: repainted.steps).count)
         }
         print(lines.joined(separator: "\n"))
     }

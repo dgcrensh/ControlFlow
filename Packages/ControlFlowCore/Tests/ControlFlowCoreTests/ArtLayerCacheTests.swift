@@ -72,7 +72,7 @@ final class ArtLayerCacheTests: XCTestCase {
 
     func testOneEditRebuildsOneLayerAndUploadsOneSegment() {
         var edited = base
-        edited.layers[3].shapes[2].fill = RGBAColor(r: 1, g: 0, b: 0)
+        edited.layers[3].shapes[2].path.points[1].position += Vec2(3, 2)
         let (rebuilt, uploads) = assertWarmEqualsCold(from: base, to: edited)
         XCTAssertEqual(rebuilt, 1)
         XCTAssertEqual(uploads, 1)

@@ -14,11 +14,12 @@ struct Workload: @unchecked Sendable {
 
     // MARK: Rendering
 
-    /// What a frame after an edit costs: a warm builder rebuilds the art with one shape's
-    /// fill changed (alternately between two drawings, so every call has one change).
+    /// What a frame after an edit costs: a warm builder rebuilds the art with one shape
+    /// moved (alternately between two drawings, so every call has one change). The move
+    /// rebuilds its layer's steps and vertices from the shapes' kept tessellations, as a
+    /// recolour did before a change of paint alone kept them (`artRepaintAfterOneRecolour`).
     static let artRebuildAfterOneEdit = Workload(name: "Art rebuild after one edit") { drawing in
-        var edited = drawing
-        edited.layers[0].shapes[0].fill = RGBAColor(r: 1, g: 0, b: 0)
+        let edited = movingFirstShape(drawing)
         var builder = ArtBuilder.likeRenderer()
         _ = builder.build(drawing, isolatedLayer: nil, tolerance: 0.5)
         var flip = false
@@ -31,8 +32,7 @@ struct Workload: @unchecked Sendable {
     /// The same rebuild with no vertices written: the cache walk alone (lookups, shape
     /// comparisons, clip plans and steps). The difference from the row above is the appends.
     static let artRebuildAfterOneEditWalkOnly = Workload(name: "Art rebuild after one edit, no vertices") { drawing in
-        var edited = drawing
-        edited.layers[0].shapes[0].fill = RGBAColor(r: 1, g: 0, b: 0)
+        let edited = movingFirstShape(drawing)
         var builder = ArtBuilder.likeRenderer()
         builder.skipsVertices = true
         _ = builder.build(drawing, isolatedLayer: nil, tolerance: 0.5)
@@ -46,6 +46,19 @@ struct Workload: @unchecked Sendable {
     /// The rebuild after one edit plus the upload (plan step 2.3): only the segments that
     /// changed copied out, as `uploadArt` copies them into new GPU buffers.
     static let artRebuildAfterOneEditAndUpload = Workload(name: "Art rebuild after one edit, with upload") { drawing in
+        let edited = movingFirstShape(drawing)
+        var builder = ArtBuilder.likeRenderer()
+        var upload = SegmentUpload(builder.build(drawing, isolatedLayer: nil, tolerance: 0.5))
+        var flip = false
+        return {
+            flip.toggle()
+            upload.copy(builder.build(flip ? edited : drawing, isolatedLayer: nil, tolerance: 0.5))
+        }
+    }
+
+    /// A frame after one shape's fill changed, with the upload: the layer keeps its
+    /// vertices and paints its covers again, and only its paints are copied out.
+    static let artRepaintAfterOneRecolour = Workload(name: "Art repaint after one recolour, with upload") { drawing in
         var edited = drawing
         edited.layers[0].shapes[0].fill = RGBAColor(r: 1, g: 0, b: 0)
         var builder = ArtBuilder.likeRenderer()
@@ -55,6 +68,14 @@ struct Workload: @unchecked Sendable {
             flip.toggle()
             upload.copy(builder.build(flip ? edited : drawing, isolatedLayer: nil, tolerance: 0.5))
         }
+    }
+
+    /// `drawing` with its first shape moved a little: a change of placement, so its
+    /// triangles stay and its layer is built again.
+    private static func movingFirstShape(_ drawing: Drawing) -> Drawing {
+        var edited = drawing
+        edited.layers[0].shapes[0].transform.position += Vec2(3, 2)
+        return edited
     }
 
     /// A zoom that crosses a power-of-two bucket changes the flattening tolerance, which
@@ -613,7 +634,8 @@ struct Workload: @unchecked Sendable {
 
     /// Everything above, in the order `ScalingTests` prints them.
     static var all: [Workload] {
-        [artRebuildAfterOneEdit, artRebuildAfterOneEditWalkOnly, artRebuildAfterOneEditAndUpload, artRebuildAtNewZoomBucket,
+        [artRebuildAfterOneEdit, artRebuildAfterOneEditWalkOnly, artRebuildAfterOneEditAndUpload, artRepaintAfterOneRecolour,
+         artRebuildAtNewZoomBucket,
          zoomInRefineVisible, hoverFrame, selectHoverHitTest, overlayWireframeAtNewZoom, overlayWireframeAcrossZoomBucket,
          scissorsHover, pencilStroke, quickShapeCheck, eraserSample, dragSampleEverything, dragEndOneLayer,
          dragEndEverything, undoRedo, twoFingerNavigation, refreshQueries, layerTree, save, open, openParse,
@@ -641,31 +663,37 @@ extension ArtBuilder {
     }
 }
 
-/// The floats a renderer uploads after each build: the segments it doesn't hold yet,
-/// copied into a buffer kept from build to build, as the playback pool's are.
+/// The floats a renderer uploads after each build: the vertices and the paints it doesn't
+/// hold yet, copied into a buffer kept from build to build, as the playback pool's are.
 struct SegmentUpload {
     private var resident: Set<Int>
+    private var residentPaints: Set<Int>
     private var buffer: [Float] = []
     /// What the last `copy` uploaded.
     private(set) var floats = 0
 
-    init(_ first: ArtBatch) { resident = first.residentIDs }
+    init(_ first: ArtBatch) {
+        resident = first.residentIDs
+        residentPaints = first.residentPaintIDs
+    }
 
     mutating func copy(_ batch: ArtBatch) {
-        let segments = batch.segmentsToUpload(resident: resident)
-        floats = segments.reduce(0) { $0 + $1.floats.count }
+        let chunks = batch.segmentsToUpload(resident: resident).map(\.floats) +
+            batch.segmentsToRepaint(resident: residentPaints).map { $0.paintFloats(in: batch.steps) }
+        floats = chunks.reduce(0) { $0 + $1.count }
         if buffer.count < floats { buffer = [Float](repeating: 0, count: floats) }
         buffer.withUnsafeMutableBufferPointer { target in
             var offset = 0
-            for segment in segments {
-                segment.floats.withUnsafeBufferPointer { source in
+            for chunk in chunks {
+                chunk.withUnsafeBufferPointer { source in
                     guard let base = source.baseAddress else { return }
                     (target.baseAddress! + offset).update(from: base, count: source.count)
                 }
-                offset += segment.floats.count
+                offset += chunk.count
             }
         }
         resident = batch.residentIDs
+        residentPaints = batch.residentPaintIDs
     }
 }
 
