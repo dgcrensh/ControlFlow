@@ -22,10 +22,11 @@ extension DrawingEditor {
         return index
     }
 
-    /// Rebuilds `shapeIndex` unless it is fresh (and, with `forHitTest`, can hit-test).
+    /// Rebuilds `shapeIndex` unless it is fresh (and, with `forHitTest`, can hit-test),
+    /// keeping the entries of the layers the stale one indexed as they are now.
     mutating func refreshShapeIndex(forHitTest: Bool = true) {
         if let index = freshShapeIndex, index.supportsHitTest || !forHitTest { return }
-        shapeIndex = ShapeIndex(drawing, revision: revision)
+        shapeIndex = ShapeIndex(drawing, revision: revision, reusing: shapeIndex)
     }
 
     /// The topmost editable shape under `p`, within isolation: `Drawing.hitTest`.

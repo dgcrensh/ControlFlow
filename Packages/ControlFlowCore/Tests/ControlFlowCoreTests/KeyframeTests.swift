@@ -449,6 +449,101 @@ final class SceneDiffTests: XCTestCase {
         assertRoundTrip(b, a)
     }
 
+    /// A diff that takes the unchanged layers' changes from the last one gives exactly the
+    /// changes of a fresh diff, as one layer after another changes on either side.
+    func testAMemoizedDiffEqualsAFreshOne() {
+        let a = StressDrawing.make(layers: 6, shapesPerLayer: 8)
+        // A keyframe that keys every shape.
+        var b = a
+        for l in b.layers.indices {
+            for s in b.layers[l].shapes.indices { b.layers[l].shapes[s].transform.position += Vec2(Double(l), 3) }
+        }
+        var memo = SceneDiff.Memo()
+        var from = a
+        func check(_ label: String, _ edit: (inout Drawing) -> Void) {
+            edit(&b)
+            b.assignVertexIDs()
+            XCTAssertEqual(SceneDiff.changes(from: from, to: b, memo: &memo), SceneDiff.changes(from: from, to: b), label)
+        }
+        check("first") { _ in }
+        check("one shape moved") { $0.layers[2].shapes[1].transform.position += Vec2(5, 0) }
+        check("a vertex added") { _ = $0.layers[3].shapes[0].path.insertPoint(segment: 0, t: 0.5) }
+        check("a vertex removed") { $0.layers[3].shapes[2].path.points.remove(at: 1) }
+        check("a shape moved to another layer") { d in
+            let shape = d.layers[0].shapes.removeLast()
+            d.layers[1].shapes.insert(shape, at: 2)
+        }
+        check("shapes reordered") { $0.layers[4].shapes.swapAt(0, 3) }
+        check("a shape deleted") { $0.layers[5].shapes.remove(at: 4) }
+        check("a group added") { d in
+            let group = ShapeGroup(id: d.makeID(), name: "Pair")
+            d.layers[2].groups.append(group)
+            d.layers[2].shapes[0].group = group.id
+            d.layers[2].shapes[1].group = group.id
+        }
+        check("layers reordered") { $0.layers.swapAt(1, 4) }
+        check("a layer deleted") { $0.layers.remove(at: 5) }
+        check("a layer added") { d in
+            var layer = Layer(id: d.makeID(), name: "New")
+            layer.shapes = [VectorShape(id: d.makeID(), path: ShapePrimitives.line(Vec2(0, 0), Vec2(10, 10)), fill: nil)]
+            d.layers.insert(layer, at: 2)
+        }
+        check("an edit undone") { $0.layers[3].shapes[1].transform.position -= Vec2(5, 0) }
+        check("the background") { $0.viewport.background = RGBAColor(hex: "#202020FF")! }
+        // The state before the keyframe changes too.
+        from.layers[2].shapes[3].opacity = 0.5
+        check("from changed") { _ in }
+        from = b
+        check("no changes") { _ in }
+    }
+
+    /// Commits at a keyframe store the changes a fresh diff gives, each time.
+    func testRepeatedCommitsAtAKeyframeStoreTheFreshDiff() {
+        let a = StressDrawing.make(layers: 4, shapesPerLayer: 5)
+        var t = Timeline(Presentation(opening: a))
+        t.insertKeyframe(after: 0)
+        t.insertKeyframe(after: 1)
+        for step in 0..<6 {
+            t.edit(1) { s in
+                if step == 0 {
+                    for l in s.layers.indices { s.layers[l].transform.position += Vec2(1, 0) }
+                } else {
+                    s.layers[step % 4].shapes[step % 5].transform.position += Vec2(2, 1)
+                }
+            }
+            XCTAssertEqual(t.presentation.keyframes[0].changes, SceneDiff.changes(from: t.state(at: 0), to: t.state(at: 1)))
+        }
+    }
+
+    /// Deleting an object before a keyframe that creates a shape and reorders its layer
+    /// keeps the order of what is left, the created shape included.
+    func testPruningKeepsTheOrderOfShapesAKeyframeCreates() {
+        var (d, layer, square, triangle) = scene()
+        let circle = VectorShape(id: d.makeID(), path: ShapePrimitives.ellipse(Rect(minPoint: Vec2(0, 0), maxPoint: Vec2(50, 50))),
+                                 fill: .black)
+        d.layers[0].shapes.append(circle)
+        d.assignVertexIDs()
+        var t = Timeline(Presentation(opening: d))
+        t.insertKeyframe(after: 0)
+        t.insertKeyframe(after: 1)
+        var created = 0
+        t.edit(2) { s in
+            var shape = s.layers[0].shapes[0]
+            shape.id = s.makeID()
+            shape.path.clearVertexIDs()
+            created = shape.id
+            let rest = s.layers[0].shapes
+            s.layers[0].shapes = [rest[1], shape, rest[0], rest[2]]
+        }
+        XCTAssertEqual(t.state(at: 2).layers[0].shapes.map(\.id), [triangle, created, square, circle.id])
+        XCTAssertTrue(t.presentation.keyframes[1].changes.contains { if case .order = $0 { true } else { false } })
+        t.edit(1) { $0.layers[0].shapes.removeAll { $0.id == circle.id } }
+        XCTAssertEqual(t.state(at: 2).layers[0].shapes.map(\.id), [triangle, created, square])
+        XCTAssertEqual(t.presentation.keyframes[1].changes.compactMap { change -> [Int]? in
+            if case .order(let parent, let ids) = change, parent == layer { ids } else { nil }
+        }, [[triangle, created, square]])
+    }
+
     func testALazyLookupIndexesVerticesOnlyWhenAChangeNeedsThem() {
         let (d, layer, square, _) = scene()
         var state = d

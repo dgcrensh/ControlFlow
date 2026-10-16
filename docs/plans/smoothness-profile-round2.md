@@ -311,7 +311,24 @@ Copying everything encodes JSON on the main thread: **298 ms**. Pasting it back 
    | Playback frame, every layer slides (for scale) | 0.9-1.2 ms, 0 | 0.9-1.1 ms, 0 |
 
    A frame of one layer fading now costs what a slide does: the walk that copies every layer's steps into the batch, which is the floor of any frame that changes something. What is left of "every fill changes" is the scene's interpolation (about a fifth), that walk, and writing 4,000 paints. A layer whose geometry changes now takes two buffers, its vertices and its paints, so a preview that rebuilds many layers per frame (a tracking tween on every layer) takes twice the pool slots; the `Pool fallback` events will show on a device whether the pool needs to grow.
-5. **#9, #10, #12 (M):** incremental diff, prune and shape index for edits that touch many keyframes or shapes.
+5. **#9, #10, #12, edits that touch many keyframes or shapes (shipped).**
+
+   What shipped:
+   - **#9:** `SceneDiff` diffs layer by layer, and `Timeline` keeps the last diff's changes for each layer with the two layers they came from (`SceneDiff.Memo`). A layer's changes depend only on its two states, so the next commit takes them for every layer that is the same on both sides (an `==` that is cheap when the storage is shared) and diffs only the layers the commit changed. The output is the same as a fresh diff, change for change (`testAMemoizedDiffEqualsAFreshOne`, `testRepeatedCommitsAtAKeyframeStoreTheFreshDiff`). The diff also builds its result in one array instead of four, and `record` looks for name and hint changes only in the layers the edit changed, since every state has the same names and hints.
+   - **#10:** prune filters each `order` change against the children of its own parent, found through the shared `SceneLookup`, instead of a set of every id in the scene. It also keeps the children the keyframe itself creates: before, prune dropped them from the order, so deleting something before a keyframe that both created a shape and reordered its layer put the new shape in the wrong place (`testPruningKeepsTheOrderOfShapesAKeyframeCreates`).
+   - **#12:** `ShapeIndex` keeps each layer's entries with the layer they were made from, and a rebuild from a stale index takes them for every layer that didn't change, so only the changed layers are baked to the world and measured again. An entry's shape, bounds and clip sit in a shared box, so keeping 2,400 entries costs a retain each. `testRebuildKeepingLayersMatchesAColdBuild` checks a kept index against a cold one after moves, hides, transforms, clips, added, deleted and reordered layers, and an erase.
+
+   Measured in this container against `main` before the change (release, full stress drawing, two runs, per call). The container ran slower than when the hotspots were measured (15.5 ms and 73 ms then):
+
+   | Workload | Before | After |
+   |---|---|---|
+   | Nudge at a keyframe that keys every shape | 19-20 ms | 1.5-2 ms |
+   | Delete and undo at keyframe 1, keyframes reorder | 89-98 ms | 3.5-5 ms |
+   | First hover after a nudge (new) | 3.4-3.5 ms | 1.1-1.3 ms |
+   | The same, every layer transformed (new) | 7.0-7.3 ms | 1.1-1.6 ms |
+   | Color picker tick, everything selected, keyframe 10 | 35-39 ms | 30-34 ms |
+
+   A colour tick on everything changes every layer, so it still diffs all of them; that and a whole-selection nudge are the commit's own work now (`assignVertexIDs` and the diff of each changed shape). What is left of the first hover is the nudge itself and the index's grid, which is rebuilt over every entry.
 6. **#13 and #16 (M).**
 
 ## On-device follow-up

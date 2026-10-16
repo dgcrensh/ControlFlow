@@ -12,17 +12,42 @@ import Foundation
 /// geometry queries after shapes are removed (see `removing`).
 ///
 /// The editor tags it with the `revision` it was built for and only uses it while that
-/// still matches (see `DrawingEditor.freshShapeIndex`).
+/// still matches (see `DrawingEditor.freshShapeIndex`). A rebuild keeps the entries of
+/// the layers that didn't change, as `ArtBuilder` keeps their art.
 struct ShapeIndex: Sendable {
     struct Entry: Sendable {
         var ref: ShapeRef
         var group: Int?
-        var shape: VectorShape
-        var controlBounds: Rect
-        var hitBounds: Rect
         /// The shape's position in the draw order, back to front.
         var drawRank: Int
-        var clip: Clip
+        /// The rest, shared by the copies a rebuild keeps, so an entry copies cheaply.
+        private let measured: Measured
+
+        var shape: VectorShape { measured.shape }
+        var controlBounds: Rect { measured.controlBounds }
+        var hitBounds: Rect { measured.hitBounds }
+        var clip: Clip { measured.clip }
+
+        init(ref: ShapeRef, group: Int?, shape: VectorShape, controlBounds: Rect, hitBounds: Rect, drawRank: Int, clip: Clip) {
+            self.ref = ref
+            self.group = group
+            self.drawRank = drawRank
+            measured = Measured(shape: shape, controlBounds: controlBounds, hitBounds: hitBounds, clip: clip)
+        }
+    }
+
+    private final class Measured: Sendable {
+        let shape: VectorShape
+        let controlBounds: Rect
+        let hitBounds: Rect
+        let clip: Clip
+
+        init(shape: VectorShape, controlBounds: Rect, hitBounds: Rect, clip: Clip) {
+            self.shape = shape
+            self.controlBounds = controlBounds
+            self.hitBounds = hitBounds
+            self.clip = clip
+        }
     }
 
     /// What `Layer.shape(_:contains:tolerance:)` checks after the shape itself: the shapes
@@ -34,6 +59,15 @@ struct ShapeIndex: Sendable {
         case inside([VectorShape])
     }
 
+    /// One layer's entries, kept with the layer they were made from, so the next build
+    /// takes them for every layer that didn't change. Their `drawRank`s count from the
+    /// layer's first shape.
+    private struct LayerEntries: Sendable {
+        var source: Layer
+        var entries: [Entry]
+        var gridBounds: [Rect]
+    }
+
     /// The editor revision the index was built for (or patched to, by `removing`).
     var revision: Int
     private(set) var entries: [Entry]
@@ -43,57 +77,70 @@ struct ShapeIndex: Sendable {
     /// base and the draw stack, so `hitTest` needs a rebuild. Geometry queries don't.
     private(set) var supportsHitTest = true
     private let grid: Grid
+    /// Each layer's entries, in `layers` order.
+    private let parts: [LayerEntries]
 
-    init(_ drawing: Drawing, revision: Int) {
+    /// Indexes `drawing`. Layers that are the same as in `previous` (an index of an
+    /// earlier drawing, patched or not) keep their entries, so after an edit only the
+    /// layers it changed are baked to the world and measured again.
+    init(_ drawing: Drawing, revision: Int, reusing previous: ShapeIndex? = nil) {
         self.revision = revision
-        // Shapes are indexed as they are drawn.
-        let drawing = drawing.world
-        // Each shape's place in the draw stack and its clip bases, by its index in `layers`.
-        var layerIndex: [Int: Int] = [:]
-        for (i, layer) in drawing.layers.enumerated() where layerIndex[layer.id] == nil { layerIndex[layer.id] = i }
-        var ranks = drawing.layers.map { [Int](repeating: -1, count: $0.shapes.count) }
-        var clips = drawing.layers.map { [Clip](repeating: .none, count: $0.shapes.count) }
-        var rank = 0
-        for stackLayer in drawing.layers {
-            guard let p = layerIndex[stackLayer.id] else { rank += stackLayer.shapes.count; continue }
-            let original = drawing.layers[p]
-            let map = Array(original.shapes.indices)
-            var groupBases: [Int: Int?] = [:]
-            for (j, shape) in stackLayer.shapes.enumerated() {
-                defer { rank += 1 }
-                guard j < map.count else { continue }
-                let s = map[j]
-                ranks[p][s] = rank
-                guard stackLayer.isEditable(j) else { continue }
-                var bases: [Int] = []
-                if let base = stackLayer.clipBase(of: j) { bases.append(base) }
-                if let group = shape.group {
-                    if groupBases[group] == nil { groupBases[group] = .some(stackLayer.clipBase(ofGroup: group)) }
-                    if let base = groupBases[group] ?? nil { bases.append(base) }
-                }
-                if bases.isEmpty {
-                    clips[p][s] = .none
-                } else if bases.contains(where: { !stackLayer.isShown($0) }) {
-                    clips[p][s] = .never
-                } else {
-                    clips[p][s] = .inside(bases.map { stackLayer.shapes[$0] })
-                }
+        var known: [Int: LayerEntries] = [:]
+        for part in previous?.parts ?? [] where known[part.source.id] == nil { known[part.source.id] = part }
+        var parts: [LayerEntries] = []
+        parts.reserveCapacity(drawing.layers.count)
+        for layer in drawing.layers {
+            if let part = known[layer.id], part.source == layer {
+                parts.append(part)
+            } else {
+                parts.append(Self.entries(of: layer))
             }
         }
         var entries: [Entry] = []
         var gridBounds: [Rect] = []
-        for (p, layer) in drawing.layers.enumerated() {
-            for (s, shape) in layer.shapes.enumerated() where layer.isEditable(s) {
-                let control = shape.path.controlBounds
-                entries.append(Entry(ref: ShapeRef(layer: layer.id, shape: shape.id), group: shape.group, shape: shape,
-                                     controlBounds: control, hitBounds: shape.hitBounds, drawRank: ranks[p][s],
-                                     clip: clips[p][s]))
-                // Covers the hit bounds and the scissors' reach (half the outline width).
-                gridBounds.append(control.outset(by: max(shape.outlineReach, (shape.stroke?.width ?? 0) / 2)))
+        var rank = 0
+        for (part, layer) in zip(parts, drawing.layers) {
+            for var entry in part.entries {
+                entry.drawRank += rank
+                entries.append(entry)
             }
+            gridBounds += part.gridBounds
+            rank += layer.shapes.count
         }
         self.entries = entries
+        self.parts = parts
         grid = Grid(gridBounds)
+    }
+
+    /// The entries of `source`'s editable shapes, as they are drawn, with each one's
+    /// place in the layer's draw order and its clip bases.
+    private static func entries(of source: Layer) -> LayerEntries {
+        // Shapes are indexed as they are drawn.
+        let layer = Drawing.drawnLayer(source)
+        var groupBases: [Int: Int?] = [:]
+        var out = LayerEntries(source: source, entries: [], gridBounds: [])
+        for (s, shape) in layer.shapes.enumerated() where layer.isEditable(s) {
+            var bases: [Int] = []
+            if let base = layer.clipBase(of: s) { bases.append(base) }
+            if let group = shape.group {
+                if groupBases[group] == nil { groupBases[group] = .some(layer.clipBase(ofGroup: group)) }
+                if let base = groupBases[group] ?? nil { bases.append(base) }
+            }
+            let clip: Clip
+            if bases.isEmpty {
+                clip = .none
+            } else if bases.contains(where: { !layer.isShown($0) }) {
+                clip = .never
+            } else {
+                clip = .inside(bases.map { layer.shapes[$0] })
+            }
+            let control = shape.path.controlBounds
+            out.entries.append(Entry(ref: ShapeRef(layer: layer.id, shape: shape.id), group: shape.group, shape: shape,
+                                     controlBounds: control, hitBounds: shape.hitBounds, drawRank: s, clip: clip))
+            // Covers the hit bounds and the scissors' reach (half the outline width).
+            out.gridBounds.append(control.outset(by: max(shape.outlineReach, (shape.stroke?.width ?? 0) / 2)))
+        }
+        return out
     }
 
     /// The entries whose bounds may meet `rect` (a superset of those that do), alive and
