@@ -281,4 +281,76 @@ final class ShapeIndexTests: XCTestCase {
         e.pencilHovered(at: p, zoom: 1)
         XCTAssertEqual(e.freshShapeIndex?.supportsHitTest, true)
     }
+
+    /// An index rebuilt from a stale one keeps the entries of the layers that didn't
+    /// change, and must equal a cold build of the same drawing after every kind of edit.
+    func testRebuildKeepingLayersMatchesAColdBuild() {
+        var d = Self.drawing
+        var index = ShapeIndex(d, revision: 0)
+        var revision = 0
+        func check(_ label: String, _ edit: (inout Drawing) -> Void) {
+            edit(&d)
+            revision += 1
+            let kept = ShapeIndex(d, revision: revision, reusing: index)
+            let cold = ShapeIndex(d, revision: revision)
+            XCTAssertEqual(kept.entries.count, cold.entries.count, label)
+            for (a, b) in zip(kept.entries, cold.entries) {
+                XCTAssertEqual(a.ref, b.ref, label)
+                XCTAssertEqual(a.group, b.group, label)
+                XCTAssertEqual(a.shape, b.shape, label)
+                XCTAssertEqual(a.controlBounds, b.controlBounds, label)
+                XCTAssertEqual(a.hitBounds, b.hitBounds, label)
+                XCTAssertEqual(a.drawRank, b.drawRank, label)
+                switch (a.clip, b.clip) {
+                case (.none, .none), (.never, .never): break
+                case (.inside(let x), .inside(let y)): XCTAssertEqual(x, y, label)
+                default: XCTFail("\(label): clip \(a.clip) against \(b.clip)")
+                }
+            }
+            for (i, p) in Self.points(count: 200, seed: UInt64(revision)).enumerated() {
+                let tolerance = Double([0, 1, 4, 16][i % 4])
+                XCTAssertEqual(kept.hitTest(p, tolerance: tolerance, within: nil, group: nil),
+                               d.hitTest(p, tolerance: tolerance).map { ShapeRef(layer: $0.layer, shape: $0.shape) },
+                               "\(label) at \(p)")
+                let query = Rect(from: p, to: p).outset(by: 20)
+                XCTAssertEqual(kept.candidates(meeting: query, within: nil, group: nil).map { kept.entries[$0].ref },
+                               cold.candidates(meeting: query, within: nil, group: nil).map { cold.entries[$0].ref }, label)
+            }
+            index = kept
+        }
+        check("nothing changed") { _ in }
+        check("one shape moved") { $0.layers[1].shapes[2].transform.position += Vec2(40, 10) }
+        check("a shape hidden") { $0.layers[5].shapes[1].isHidden = true }
+        check("a layer rotated") { $0.layers[6].transform.rotation = 30 }
+        check("a group unclipped") { $0.layers[4].groups[0].isClipped = false }
+        check("a shape added") { d in
+            var shape = d.layers[0].shapes[0]
+            shape.id = d.makeID()
+            shape.path.clearVertexIDs()
+            shape.transform.position += Vec2(15, 15)
+            d.layers[0].shapes.append(shape)
+        }
+        check("a layer deleted") { $0.layers.remove(at: 7) }
+        check("layers reordered") { $0.layers.swapAt(0, 1) }
+        check("a layer unlocked") { $0.layers[2].isLocked = false }
+        check("a layer added") { d in
+            var layer = d.layers[4]
+            layer.id = d.makeID()
+            for s in layer.shapes.indices { layer.shapes[s].id = d.makeID() }
+            for g in layer.groups.indices {
+                let id = d.makeID()
+                for s in layer.shapes.indices where layer.shapes[s].group == layer.groups[g].id { layer.shapes[s].group = id }
+                layer.groups[g].id = id
+            }
+            layer.transform.position = Vec2(25, -25)
+            d.layers.insert(layer, at: 3)
+        }
+        // From an index patched by an erase.
+        index = index.removing([index.entries[3].ref, index.entries[40].ref], revision: revision)
+        check("after an erase") { d in
+            for ref in [index.entries[3].ref, index.entries[40].ref] {
+                if let l = d.layerIndex(ref.layer) { d.layers[l].shapes.removeAll { $0.id == ref.shape } }
+            }
+        }
+    }
 }

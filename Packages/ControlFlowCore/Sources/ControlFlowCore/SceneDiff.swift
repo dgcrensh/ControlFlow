@@ -108,6 +108,17 @@ extension Drawing {
         }
     }
 
+    /// The ids of the children an `order` change with parent `parent` lists: the layers
+    /// for nil, a layer's shapes, a shape's vertices. Empty when `parent` isn't there.
+    func childIDs(of parent: Int?, _ lookup: SceneLookup) -> Set<Int> {
+        guard let parent else { return Set(layers.map(\.id)) }
+        switch lookup.kinds[parent] {
+        case .layer: return layerIndex(parent).map { Set(layers[$0].shapes.map(\.id)) } ?? []
+        case .shape: return shapeLocation(parent, lookup).map { Set(layers[$0.layer].shapes[$0.shape].path.points.map(\.id)) } ?? []
+        default: return []
+        }
+    }
+
     /// Every id of a viewport, global color, layer, group, shape and vertex.
     var objectIDs: Set<Int> {
         var ids: Set<Int> = [viewport.id]
@@ -338,83 +349,132 @@ extension Drawing {
 
 /// Turns two scene states into the changes from one to the other: what a keyframe stores.
 enum SceneDiff {
+    /// The changes of one layer that is in both states: its own, its groups', its shapes'
+    /// and their vertices', by kind.
+    struct LayerChanges: Sendable {
+        var removals: [SceneChange] = []
+        var additions: [SceneChange] = []
+        var sets: [SceneChange] = []
+        var orders: [SceneChange] = []
+    }
+
+    /// The layer changes of the last diff, with the two layers each was made from. A
+    /// layer's changes depend only on its two states, so the next diff takes them for
+    /// every layer that is the same on both sides (cheaply, when its storage is shared)
+    /// and diffs only the rest: a commit at a keyframe that keys many shapes re-diffs the
+    /// layers the commit changed.
+    struct Memo: Sendable {
+        fileprivate var layers: [Int: (old: Layer, new: Layer, changes: LayerChanges)] = [:]
+    }
+
     /// The changes that turn `a` into `b`, so `a.apply(changes) == b` for the keyed parts
     /// of the scene: layers, groups, shapes and vertices, the viewport's background and
     /// global colors' colors. Removals come first, then additions, then property changes
     /// and new orders. Editor hints and layer and group names are left out (they aren't
     /// keyed), as is everything `Presentation` keeps for the whole document.
     static func changes(from a: Drawing, to b: Drawing) -> [SceneChange] {
-        var removals: [SceneChange] = [], additions: [SceneChange] = [], sets: [SceneChange] = [], orders: [SceneChange] = []
-        func set(_ id: Int, _ old: [(key: String, value: JSONValue)], _ new: [(key: String, value: JSONValue)]) {
-            let props = PropertyPath.changes(from: .object(old), to: .object(new))
-            if !props.isEmpty { sets.append(.set(id: id, props: props.map { PropertyChange($0.key, $0.value) })) }
-        }
+        var memo = Memo()
+        return changes(from: a, to: b, memo: &memo)
+    }
 
+    /// `changes(from:to:)`, taking the changes of layers that `memo` holds for the same
+    /// two layers, and leaving in `memo` those of this diff.
+    static func changes(from a: Drawing, to b: Drawing, memo: inout Memo) -> [SceneChange] {
+        var globalSets: [SceneChange] = []
         if a.viewport.id == b.viewport.id {
-            set(b.viewport.id, SceneJSON.viewportProps(a.viewport), SceneJSON.viewportProps(b.viewport))
+            set(b.viewport.id, SceneJSON.viewportProps(a.viewport), SceneJSON.viewportProps(b.viewport), into: &globalSets)
         }
         let oldGlobals = Dictionary(a.globalColors.map { ($0.id, $0) }, uniquingKeysWith: { x, _ in x })
         for global in b.globalColors {
-            if let old = oldGlobals[global.id] { set(global.id, SceneJSON.globalColorProps(old), SceneJSON.globalColorProps(global)) }
+            if let old = oldGlobals[global.id] {
+                set(global.id, SceneJSON.globalColorProps(old), SceneJSON.globalColorProps(global), into: &globalSets)
+            }
         }
 
         let oldLayers = Dictionary(a.layers.map { ($0.id, $0) }, uniquingKeysWith: { x, _ in x })
         let newLayerIDs = Set(b.layers.map(\.id))
-        var oldShapeLayer: [Int: Int] = [:], newShapeLayer: [Int: Int] = [:]
-        var oldGroupLayer: [Int: Int] = [:], newGroupLayer: [Int: Int] = [:]
-        // Objects only move between layers that changed.
-        let changed = a.changedLayerIDs(comparedTo: b)
-        for layer in a.layers where changed.contains(layer.id) {
-            for shape in layer.shapes { oldShapeLayer[shape.id] = layer.id }
-            for group in layer.groups { oldGroupLayer[group.id] = layer.id }
-        }
-        for layer in b.layers where changed.contains(layer.id) {
-            for shape in layer.shapes { newShapeLayer[shape.id] = layer.id }
-            for group in layer.groups { newGroupLayer[group.id] = layer.id }
-        }
-
-        for layer in a.layers where !newLayerIDs.contains(layer.id) { removals.append(.delete(id: layer.id)) }
+        // Each layer of `b` in turn: a new one's create, or the changes of one in both.
+        var layers: [(create: SceneChange?, changes: LayerChanges)] = []
+        var kept = Memo()
         for (index, layer) in b.layers.enumerated() {
             guard let old = oldLayers[layer.id] else {
-                additions.append(.create(.layer(layer), parent: nil, after: index > 0 ? b.layers[index - 1].id : nil))
+                layers.append((.create(.layer(layer), parent: nil, after: index > 0 ? b.layers[index - 1].id : nil), LayerChanges()))
                 continue
             }
             if old == layer { continue }
-            set(layer.id, SceneJSON.layerProps(old), SceneJSON.layerProps(layer))
-
-            let oldGroups = Dictionary(old.groups.map { ($0.id, $0) }, uniquingKeysWith: { x, _ in x })
-            for group in old.groups where newGroupLayer[group.id] != layer.id { removals.append(.delete(id: group.id)) }
-            for group in layer.groups {
-                if let previous = oldGroups[group.id] {
-                    set(group.id, SceneJSON.groupProps(previous), SceneJSON.groupProps(group))
-                } else {
-                    additions.append(.create(.group(group), parent: layer.id, after: nil))
-                }
+            let changes: LayerChanges
+            if let known = memo.layers[layer.id], known.old == old, known.new == layer {
+                changes = known.changes
+            } else {
+                changes = self.changes(from: old, to: layer)
             }
-
-            let oldShapes = Dictionary(old.shapes.map { ($0.id, $0) }, uniquingKeysWith: { x, _ in x })
-            for shape in old.shapes where newShapeLayer[shape.id] != layer.id { removals.append(.delete(id: shape.id)) }
-            var created: [(id: Int, after: Int?)] = []
-            for (index, shape) in layer.shapes.enumerated() {
-                let after = index > 0 ? layer.shapes[index - 1].id : nil
-                guard let previous = oldShapes[shape.id] else {
-                    additions.append(.create(.shape(shape), parent: layer.id, after: after))
-                    created.append((shape.id, after))
-                    continue
-                }
-                if previous == shape { continue }
-                set(shape.id, SceneJSON.shapeProps(previous), SceneJSON.shapeProps(shape))
-                points(from: previous, to: shape, removals: &removals, additions: &additions, sets: &sets, orders: &orders)
-            }
-            let kept = old.shapes.map(\.id).filter { newShapeLayer[$0] == layer.id }
-            if order(kept, created, layer.shapes.map(\.id)) { orders.append(.order(parent: layer.id, ids: layer.shapes.map(\.id))) }
+            kept.layers[layer.id] = (old, layer, changes)
+            layers.append((nil, changes))
         }
+        memo = kept
+
+        var out: [SceneChange] = []
+        out.reserveCapacity(globalSets.count + layers.reduce(a.layers.count + 1) {
+            $0 + 1 + $1.changes.removals.count + $1.changes.additions.count + $1.changes.sets.count + $1.changes.orders.count
+        })
+        for layer in a.layers where !newLayerIDs.contains(layer.id) { out.append(.delete(id: layer.id)) }
+        for layer in layers { out += layer.changes.removals }
+        for layer in layers {
+            if let create = layer.create { out.append(create) } else { out += layer.changes.additions }
+        }
+        out += globalSets
+        for layer in layers { out += layer.changes.sets }
+        for layer in layers { out += layer.changes.orders }
         let keptLayers = a.layers.map(\.id).filter(newLayerIDs.contains)
         let createdLayers: [(id: Int, after: Int?)] = b.layers.indices.compactMap { i in
             oldLayers[b.layers[i].id] == nil ? (b.layers[i].id, i > 0 ? b.layers[i - 1].id : nil) : nil
         }
-        if order(keptLayers, createdLayers, b.layers.map(\.id)) { orders.append(.order(parent: nil, ids: b.layers.map(\.id))) }
-        return removals + additions + sets + orders
+        if order(keptLayers, createdLayers, b.layers.map(\.id)) { out.append(.order(parent: nil, ids: b.layers.map(\.id))) }
+        return out
+    }
+
+    private static func set(_ id: Int, _ old: [(key: String, value: JSONValue)], _ new: [(key: String, value: JSONValue)],
+                            into sets: inout [SceneChange]) {
+        let props = PropertyPath.changes(from: .object(old), to: .object(new))
+        if !props.isEmpty { sets.append(.set(id: id, props: props.map { PropertyChange($0.key, $0.value) })) }
+    }
+
+    /// The changes of a layer that is in both states, from `old` to `layer`. Objects move
+    /// between layers by a delete in one and a create in the other.
+    private static func changes(from old: Layer, to layer: Layer) -> LayerChanges {
+        var out = LayerChanges()
+        set(layer.id, SceneJSON.layerProps(old), SceneJSON.layerProps(layer), into: &out.sets)
+
+        let oldGroups = Dictionary(old.groups.map { ($0.id, $0) }, uniquingKeysWith: { x, _ in x })
+        let newGroupIDs = Set(layer.groups.map(\.id))
+        for group in old.groups where !newGroupIDs.contains(group.id) { out.removals.append(.delete(id: group.id)) }
+        for group in layer.groups {
+            if let previous = oldGroups[group.id] {
+                set(group.id, SceneJSON.groupProps(previous), SceneJSON.groupProps(group), into: &out.sets)
+            } else {
+                out.additions.append(.create(.group(group), parent: layer.id, after: nil))
+            }
+        }
+
+        let oldShapes = Dictionary(old.shapes.map { ($0.id, $0) }, uniquingKeysWith: { x, _ in x })
+        let newShapeIDs = Set(layer.shapes.map(\.id))
+        for shape in old.shapes where !newShapeIDs.contains(shape.id) { out.removals.append(.delete(id: shape.id)) }
+        var created: [(id: Int, after: Int?)] = []
+        for (index, shape) in layer.shapes.enumerated() {
+            let after = index > 0 ? layer.shapes[index - 1].id : nil
+            guard let previous = oldShapes[shape.id] else {
+                out.additions.append(.create(.shape(shape), parent: layer.id, after: after))
+                created.append((shape.id, after))
+                continue
+            }
+            if previous == shape { continue }
+            set(shape.id, SceneJSON.shapeProps(previous), SceneJSON.shapeProps(shape), into: &out.sets)
+            points(from: previous, to: shape, removals: &out.removals, additions: &out.additions, sets: &out.sets,
+                   orders: &out.orders)
+        }
+        let kept = old.shapes.map(\.id).filter(newShapeIDs.contains)
+        if order(kept, created, layer.shapes.map(\.id)) { out.orders.append(.order(parent: layer.id, ids: layer.shapes.map(\.id))) }
+        return out
     }
 
     /// The vertex changes of a shape that is in the same layer in both states.

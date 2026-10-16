@@ -431,6 +431,35 @@ struct Workload: @unchecked Sendable {
         }
     }
 
+    /// A nudge of one shape, then the first hover over the busy point, which rebuilds the
+    /// shape index the nudge left stale.
+    static let firstHoverAfterNudge = Workload(name: "First hover after a nudge") { drawing in
+        firstHoverAfterNudge(drawing)
+    }
+
+    /// The same with every layer rotated, so each layer the index looks at is baked to
+    /// the world.
+    static let firstHoverAfterNudgeTransformed = Workload(name: "First hover after a nudge, every layer transformed") { drawing in
+        var rotated = drawing
+        for l in rotated.layers.indices { rotated.layers[l].transform.rotation = 5 }
+        return firstHoverAfterNudge(rotated)
+    }
+
+    private static func firstHoverAfterNudge(_ drawing: Drawing) -> () -> Void {
+        var editor = DrawingEditor(drawing: drawing)
+        editor.tool = .select
+        let layer = drawing.layers[min(3, drawing.layers.count - 1)]
+        editor.selection = .shape(layer: layer.id, shape: layer.shapes[min(2, layer.shapes.count - 1)].id)
+        let start = StressDrawing.busyPoint(layers: drawing.layers.count)
+        editor.pencilHovered(at: start, zoom: 1)
+        var i = 0
+        return {
+            i += 1
+            editor.nudge(by: Vec2(i % 2 == 0 ? 1 : -1, 0))
+            editor.pencilHovered(at: start + Vec2(Double(i % 20) * 2, 0), zoom: 1)
+        }
+    }
+
     /// The first frame after a whole-stage slide ends. The renderer plays a transition
     /// with a copy of its art builder, so the builder that drew the keyframe before the
     /// preview builds it again: the preview's frames left its caches as they were.
@@ -642,7 +671,8 @@ struct Workload: @unchecked Sendable {
          openDecode, openFirstFrame, openFirstArtInView, svgExport, svgImport, playbackFrameAllLayersSlide,
          playbackFrameEveryFillChanges, playbackFrameOneLayerFades, playbackFrameTextTracking, frameAfterPlayback,
          undoRedoAtKeyframe, resolveLastKeyframeCold, changedObjectsAtKeyframe, onionSkinBuild,
-         nudgeAtKeyframeKeyingEverything, deleteAndUndoWithReorders, hoverFrameEverythingSelected, nudgeEverything,
+         nudgeAtKeyframeKeyingEverything, deleteAndUndoWithReorders, firstHoverAfterNudge, firstHoverAfterNudgeTransformed,
+         hoverFrameEverythingSelected, nudgeEverything,
          colorTickEverythingAtKeyframe, marqueeOverGroupedArt, refreshQueriesAtKeyframe]
     }
 

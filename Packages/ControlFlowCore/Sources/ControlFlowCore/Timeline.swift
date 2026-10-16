@@ -13,6 +13,9 @@ public struct Timeline: Sendable {
     private(set) var states: [Drawing?]
     /// The transition the next new keyframe gets: the one last set on a keyframe.
     public var lastTransition = Transition.standard
+    /// The layer changes of the last keyframe recorded, so the next commit there re-diffs
+    /// only the layers it changed.
+    private var diffMemo = SceneDiff.Memo()
 
     public init(_ presentation: Presentation = Presentation()) {
         var presentation = presentation
@@ -98,9 +101,9 @@ public struct Timeline: Sendable {
             invalidate(after: 0)
         } else {
             let previous = state(at: index - 1)
-            let changes = SceneDiff.changes(from: previous, to: edited)
+            let changes = SceneDiff.changes(from: previous, to: edited, memo: &diffMemo)
             presentation.updateKeyframe(atChainIndex: index) { $0.changes = changes }
-            let unkeyed = Timeline.unkeyedChanges(from: previous, to: edited)
+            let unkeyed = Timeline.unkeyedChanges(from: previous, old: old, to: edited)
             if !unkeyed.isEmpty || !previous.hasSameDocumentSettings(as: edited) {
                 presentation.opening.adoptDocumentSettings(of: edited)
                 if !unkeyed.isEmpty { applyEverywhere(unkeyed) }
@@ -124,11 +127,14 @@ public struct Timeline: Sendable {
         for i in (index + 1)..<states.count {
             guard let keyframe = presentation.keyframe(atChainIndex: i) else { continue }
             var changes = keyframe.changes
-            // Orders list only the children still there.
+            // Orders list only the children still there, or that the keyframe creates.
             if changes.contains(where: { if case .order = $0 { true } else { false } }) {
-                let ids = state.objectIDs
+                var created = Set<Int>()
+                for case .create(let object, _, _, _, _) in changes { created.formUnion(object.allIDs) }
                 changes = changes.map { change in
-                    if case .order(let parent, let order) = change { .order(parent: parent, ids: order.filter(ids.contains)) } else { change }
+                    guard case .order(let parent, let order) = change else { return change }
+                    let children = state.childIDs(of: parent, lookup)
+                    return .order(parent: parent, ids: order.filter { children.contains($0) || created.contains($0) })
                 }
             }
             let failed = Set(state.apply(changes, lookup: &lookup))
@@ -140,17 +146,28 @@ public struct Timeline: Sendable {
         }
     }
 
-    /// Names and editor hints that differ between two states, for objects in both.
-    private static func unkeyedChanges(from a: Drawing, to b: Drawing) -> [Int: Unkeyed] {
-        // Only layers that changed can hold a change (an object moving between layers
-        // changes both).
-        let changed = a.changedLayerIDs(comparedTo: b)
+    /// Names and editor hints that differ between `previous` and `edited`, for objects in
+    /// both. They are the same in every state, so `old`, the state `edited` replaces, has
+    /// `previous`'s for every object both hold: only the layers the edit changed can hold
+    /// a change (an object moving between layers changes both).
+    private static func unkeyedChanges(from previous: Drawing, old: Drawing, to edited: Drawing) -> [Int: Unkeyed] {
+        let changed = old.changedLayerIDs(comparedTo: edited)
         guard !changed.isEmpty else { return [:] }
-        let old = Unkeyed.values(in: a.layers.filter { changed.contains($0.id) })
+        let before = Unkeyed.values(in: old.layers.filter { changed.contains($0.id) })
         var out: [Int: Unkeyed] = [:]
-        for (id, value) in Unkeyed.values(in: b.layers.filter { changed.contains($0.id) }) where old[id] != nil && old[id] != value {
+        for (id, value) in Unkeyed.values(in: edited.layers.filter { changed.contains($0.id) })
+            where before[id] != nil && before[id] != value {
             out[id] = value
         }
+        guard !out.isEmpty else { return out }
+        // Objects the keyframe creates have no earlier value.
+        var created = Set(out.keys)
+        for layer in previous.layers where !created.isEmpty {
+            created.remove(layer.id)
+            for group in layer.groups { created.remove(group.id) }
+            for shape in layer.shapes { created.remove(shape.id) }
+        }
+        for id in created { out[id] = nil }
         return out
     }
 

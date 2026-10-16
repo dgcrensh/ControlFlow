@@ -505,6 +505,12 @@ final class PerformanceTests: XCTestCase {
     /// 2 deletes and undos at keyframe 1 of 20 in a deck whose keyframes reorder shapes.
     func testDeleteAndUndoWithReorders() { measure(.deleteAndUndoWithReorders, calls: 2) }
 
+    /// 10 nudges of one shape, each followed by the first hover, which rebuilds the shape index.
+    func testFirstHoverAfterNudge() { measure(.firstHoverAfterNudge, calls: 10) }
+
+    /// The same with every layer rotated.
+    func testFirstHoverAfterNudgeTransformed() { measure(.firstHoverAfterNudgeTransformed, calls: 10) }
+
     // MARK: Big selections
 
     /// 10 hover frames with everything selected.
