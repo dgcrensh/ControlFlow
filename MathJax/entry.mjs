@@ -65,7 +65,11 @@ mathjax.asyncLoad = () => null;
 mathjax.asyncIsSynchronous = true;
 const doc = mathjax.document('', { InputJax: tex, OutputJax: svg });
 svg.font.loadDynamicFilesSync();
+// Macros a formula defines (\newcommand, \def, \let) are forgotten before the next one,
+// so a formula's layout never depends on what was typeset before it.
+const definitions = ['new-Command', 'new-Delimiter', 'new-Environment'].map((name) => tex.parseOptions.handlers.retrieve(name));
 /// `source` typeset as MathJax's SVG, in display style or inline.
 globalThis.cfTypeset = function (source, display) {
+  for (const map of definitions) map.map.clear();
   return adaptor.outerHTML(doc.convert(source, { display: !!display }));
 };
