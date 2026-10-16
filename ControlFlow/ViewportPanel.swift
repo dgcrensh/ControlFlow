@@ -35,7 +35,7 @@ struct ViewportPanel: View {
             Section {
                 ColorPicker("Background", selection: Binding(
                     get: { ui.viewport.background.color },
-                    set: { color in store.updateViewport("background") { $0.background = RGBAColor(color) } }
+                    set: { color in store.updateViewport("background", continuous: true) { $0.background = RGBAColor(color) } }
                 ), supportsOpacity: false)
             } footer: {
                 Text("Art outside the viewport is dimmed. Exports cover the viewport.")

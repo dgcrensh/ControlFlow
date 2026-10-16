@@ -351,21 +351,21 @@ struct Workload: @unchecked Sendable {
         }
     }
 
-    /// The first frame after a whole-stage slide ends: the keyframe's own state built by a
-    /// builder that drew both keyframes and then a frame in the middle of the transition.
-    /// Each call starts from a copy of that builder, so it includes copying its caches on
-    /// first write.
+    /// The first frame after a whole-stage slide ends. The renderer plays a transition
+    /// with a copy of its art builder, so the builder that drew the keyframe before the
+    /// preview builds it again: the preview's frames left its caches as they were.
     static let frameAfterPlayback = Workload(name: "Frame after playback, every layer slid") { drawing in
         var end = drawing
         for l in end.layers.indices { end.layers[l].transform.position = Vec2(200, 0) }
         var timeline = StressDrawing.transition(from: drawing, to: end)
         let state = timeline.state(at: 1)
-        var playing = ArtBuilder()
-        _ = playing.build(state, isolatedLayer: nil, tolerance: 0.5)
-        _ = playing.build(timeline.state(at: 0), isolatedLayer: nil, tolerance: 0.5)
-        _ = playing.build(timeline.transition(into: 1, elapsed: 0.5), isolatedLayer: nil, tolerance: 0.5)
+        var art = ArtBuilder()
+        _ = art.build(state, isolatedLayer: nil, tolerance: 0.5)
+        var preview = art
+        _ = preview.build(timeline.state(at: 0), isolatedLayer: nil, tolerance: 0.5)
+        _ = preview.build(timeline.transition(into: 1, elapsed: 0.5), isolatedLayer: nil, tolerance: 0.5)
         return {
-            var builder = playing
+            var builder = art
             _ = builder.build(state, isolatedLayer: nil, tolerance: 0.5)
         }
     }
@@ -387,13 +387,16 @@ struct Workload: @unchecked Sendable {
     }
 
     /// The Layers panel's "changed" marks at keyframe 10 of 20, with every state resolved:
-    /// what `CanvasStore.refresh()` reads after each edit or switch at a keyframe.
+    /// what `CanvasStore.refresh()` reads after each edit or switch at a keyframe. The
+    /// editor keeps the last result, so this times working them out, from the timeline.
     static let changedObjectsAtKeyframe = Workload(name: "Changed objects at keyframe 10 of 20") { drawing in
         let presentation = StressDrawing.presentation(drawing, keyframes: 20)
         var editor = DrawingEditor(presentation: presentation)
-        editor.selectKeyframe(presentation.keyframe(atChainIndex: 10)!.id)
+        let id = presentation.keyframe(atChainIndex: 10)!.id
+        editor.selectKeyframe(id)
         _ = editor.state(atKeyframe: presentation.keyframe(atChainIndex: 20)!.id)
-        return { precondition(!editor.changedObjects().isEmpty) }
+        var timeline = editor.timeline
+        return { precondition(!timeline.changedObjects(inKeyframe: id).isEmpty) }
     }
 
     // MARK: Navigating

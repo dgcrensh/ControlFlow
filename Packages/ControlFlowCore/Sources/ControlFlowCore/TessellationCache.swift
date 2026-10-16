@@ -9,6 +9,11 @@ import Foundation
 /// what the job returns. The cache only reads a tessellation's `shape`, `tolerance` and
 /// `vertexCount`; what the triangles are made of is `ArtBuilder`'s business.
 ///
+/// A tessellation is reused for any shape with the same id, path and outline geometry
+/// (see `Tessellation.matches`): fill, gradient, opacity and outline color are paint,
+/// which the art's steps carry, so a color or opacity change, or a transition that
+/// tweens one, flattens nothing.
+///
 /// Each entry has a second tier: the last tessellation of the same shape at another
 /// tolerance. A pinch that settles back and forth across one bucket boundary then
 /// swaps between two cached tessellations with only a warm build. The second tier is
@@ -44,8 +49,8 @@ public struct TessellationCache: Sendable {
     /// The tessellation of `shape` at exactly `tolerance`, from either tier.
     func tessellation(of shape: VectorShape, tolerance: Double) -> Tessellation? {
         guard let entry = entries[shape.id] else { return nil }
-        if entry.current.tolerance == tolerance, entry.current.shape == shape { return entry.current }
-        if let other = entry.other, other.tolerance == tolerance, other.shape == shape { return other }
+        if entry.current.tolerance == tolerance, entry.current.matches(shape) { return entry.current }
+        if let other = entry.other, other.tolerance == tolerance, other.matches(shape) { return other }
         return nil
     }
 
@@ -53,8 +58,8 @@ public struct TessellationCache: Sendable {
     /// it is of this shape, else the second's.
     func anyTessellation(of shape: VectorShape) -> Tessellation? {
         guard let entry = entries[shape.id] else { return nil }
-        if entry.current.shape == shape { return entry.current }
-        if let other = entry.other, other.shape == shape { return other }
+        if entry.current.matches(shape) { return entry.current }
+        if let other = entry.other, other.matches(shape) { return other }
         return nil
     }
 
@@ -68,8 +73,8 @@ public struct TessellationCache: Sendable {
     /// so the one in use is the one a later tolerance pushes down.
     mutating func use(_ shape: VectorShape, tolerance: Double) -> Tessellation? {
         guard var entry = entries[shape.id] else { return nil }
-        if entry.current.tolerance == tolerance, entry.current.shape == shape { return entry.current }
-        guard let other = entry.other, other.tolerance == tolerance, other.shape == shape else { return nil }
+        if entry.current.tolerance == tolerance, entry.current.matches(shape) { return entry.current }
+        guard let other = entry.other, other.tolerance == tolerance, other.matches(shape) else { return nil }
         vertexCount += other.vertexCount - entry.current.vertexCount
         secondTierVertexCount += entry.current.vertexCount - other.vertexCount
         entry.other = entry.current
@@ -88,7 +93,7 @@ public struct TessellationCache: Sendable {
             vertexCount -= old.current.vertexCount
             secondTierVertexCount -= old.other?.vertexCount ?? 0
             other = [old.current, old.other].lazy.compactMap { $0 }
-                .first { $0.tolerance != t.tolerance && $0.shape == t.shape }
+                .first { $0.tolerance != t.tolerance && $0.matches(t.shape) }
         }
         vertexCount += t.vertexCount
         if vertexCount > secondTierLimit { other = nil }
@@ -189,7 +194,7 @@ public struct TessellationCache: Sendable {
         var kept = 0
         for layer in drawing.world.layers {
             for shape in layer.shapes {
-                guard let t = made[shape.id], t.shape == shape else { continue }
+                guard let t = made[shape.id], t.matches(shape) else { continue }
                 store(t)
                 kept += 1
             }

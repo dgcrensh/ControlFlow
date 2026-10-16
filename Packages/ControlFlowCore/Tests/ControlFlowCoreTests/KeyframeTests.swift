@@ -208,6 +208,58 @@ final class TimelineCommandTests: XCTestCase {
         XCTAssertEqual(t.changedObjects(inKeyframe: t.presentation.keyframes[0].id), [layer])
         XCTAssertEqual(t.changedObjects(inKeyframe: t.presentation.keyframes[2].id), [layer, square])
     }
+
+    /// Vertex, shape and layer changes, created and deleted objects: the marks match the
+    /// parents found by indexing both whole scenes, as they were worked out before.
+    func testChangedObjectsFindTheParentsOfVerticesAndCreatedObjects() {
+        let (d, layer, square, triangle) = scene()
+        var t = Timeline(Presentation(opening: d))
+        func keyframe(_ change: (inout Drawing) -> Void) {
+            let i = t.count
+            t.insertKeyframe(after: i - 1)
+            t.edit(i, change)
+        }
+        keyframe { $0.withShape(square) { $0.path.points[0].position += Vec2(10, 0) } }
+        keyframe { $0.withShape(triangle) { $0.path.points.insert(PathPoint(Vec2(450, 320)), at: 2) } }
+        keyframe { $0.withShape(square) { $0.path.points.remove(at: 1) } }
+        keyframe { d in
+            var added = Layer(id: d.makeID(), name: "New")
+            added.shapes = [VectorShape(id: d.makeID(), path: ShapePrimitives.rectangle(Rect(minPoint: Vec2(0, 0), maxPoint: Vec2(9, 9))),
+                                        fill: .black)]
+            d.layers.append(added)
+            d.layers[0].shapes.removeAll { $0.id == triangle }
+        }
+        keyframe { $0.viewport.background = .black }
+        for i in 1..<t.count {
+            let id = t.presentation.keyframe(atChainIndex: i)!.id
+            let expected = Self.changedObjectsIndexingEverything(&t, at: i)
+            XCTAssertFalse(expected.isEmpty, "keyframe \(i)")
+            XCTAssertEqual(t.changedObjects(inKeyframe: id), expected, "keyframe \(i)")
+        }
+        XCTAssertEqual(t.changedObjects(inKeyframe: t.presentation.keyframe(atChainIndex: 1)!.id),
+                       [layer, square, d.layers[0].shapes[0].path.points[0].id])
+    }
+
+    /// The marks as they were worked out before: every object and vertex of both scenes
+    /// indexed, then each change's target and parent walked up.
+    private static func changedObjectsIndexingEverything(_ t: inout Timeline, at index: Int) -> Set<Int> {
+        let keyframe = t.presentation.keyframe(atChainIndex: index)!
+        let lookup = SceneLookup(t.state(at: index - 1)), after = SceneLookup(t.state(at: index))
+        var ids = Set<Int>()
+        for change in keyframe.changes {
+            var parent: Int?
+            switch change {
+            case .create(_, let p, _, _, _): parent = p
+            case .order(let p, _): parent = p
+            case .set, .delete: break
+            }
+            for id in [change.target, parent].compactMap({ $0 }) {
+                var current: Int? = id
+                while let c = current, ids.insert(c).inserted { current = lookup.parents[c] ?? after.parents[c] }
+            }
+        }
+        return ids
+    }
 }
 
 final class KeyframeEditorTests: XCTestCase {
@@ -273,6 +325,25 @@ final class KeyframeEditorTests: XCTestCase {
         e.revertSelectionToPrevious()
         XCTAssertEqual(e.drawing.shape(square)?.opacity, 1)
         XCTAssertEqual(e.drawing.shape(triangle)?.opacity, 0.5)
+        XCTAssertEqual(e.changedObjects(), [layer, triangle])
+    }
+
+    /// The marks are kept between refreshes, and worked out again when a timeline edit
+    /// changes the current keyframe's changes without changing its scene.
+    func testChangedObjectsFollowTimelineEdits() {
+        let (d, layer, square, triangle) = scene()
+        var e = DrawingEditor(drawing: d)
+        let first = e.setKeyframe()
+        e.selection = .shape(layer: layer, shape: square)
+        e.setOpacity(0.5)
+        e.setKeyframe()
+        e.selection = .shape(layer: layer, shape: triangle)
+        e.setOpacity(0.5)
+        XCTAssertEqual(e.changedObjects(), [layer, triangle])
+        XCTAssertEqual(e.changedObjects(), [layer, triangle])
+        e.deleteKeyframe(first)
+        XCTAssertEqual(e.changedObjects(), [layer, square, triangle], "the deleted keyframe's changes fold in")
+        e.undo()
         XCTAssertEqual(e.changedObjects(), [layer, triangle])
     }
 

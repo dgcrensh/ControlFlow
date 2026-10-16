@@ -323,23 +323,60 @@ public struct Timeline: Sendable {
     /// the Layers panel marks as changed there.
     public mutating func changedObjects(inKeyframe id: Int) -> Set<Int> {
         guard let index = presentation.chainIndex(of: id), index > 0, let keyframe = presentation.keyframe(id) else { return [] }
-        let lookup = SceneLookup(state(at: index - 1)), after = SceneLookup(state(at: index))
         var ids = Set<Int>()
+        // Parents a change names itself: a created object's.
+        var parents: [Int: Int] = [:]
         for change in keyframe.changes {
             var parent: Int?
             switch change {
-            case .create(_, let p, _, _, _): parent = p
+            case .create(let object, let p, _, _, _):
+                parent = p
+                if let p { parents[object.id] = p }
             case .order(let p, _): parent = p
             case .set, .delete: break
             }
-            for id in [change.target, parent].compactMap({ $0 }) {
-                var current: Int? = id
-                while let c = current, ids.insert(c).inserted {
-                    current = lookup.parents[c] ?? after.parents[c]
-                }
-            }
+            for id in [change.target, parent].compactMap({ $0 }) { ids.insert(id) }
+        }
+        // The rest are looked up in the state before the keyframe, then in its own (for
+        // objects it creates), searching only for the ids still wanted rather than
+        // indexing every object and vertex of the scene.
+        var wanted = ids.subtracting(parents.keys)
+        for state in [self.state(at: index - 1), self.state(at: index)] where !wanted.isEmpty {
+            Self.findParents(of: &wanted, in: state, into: &parents)
+        }
+        // Each parent's own parent: a vertex's shape belongs to a layer.
+        wanted = Set(parents.values).subtracting(ids).subtracting(parents.keys)
+        for state in [self.state(at: index - 1), self.state(at: index)] where !wanted.isEmpty {
+            Self.findParents(of: &wanted, in: state, into: &parents)
+        }
+        for id in ids {
+            var current = parents[id]
+            while let c = current, ids.insert(c).inserted { current = parents[c] }
         }
         return ids
+    }
+
+    /// Finds the parents of the ids in `wanted` in `drawing` (a group's or shape's layer,
+    /// a vertex's shape and its layer) and removes each id found, parent or not. The
+    /// points are searched only while vertices may be left.
+    private static func findParents(of wanted: inout Set<Int>, in drawing: Drawing, into parents: inout [Int: Int]) {
+        wanted.remove(drawing.viewport.id)
+        for global in drawing.globalColors { wanted.remove(global.id) }
+        for layer in drawing.layers where !wanted.isEmpty {
+            wanted.remove(layer.id)
+            for group in layer.groups where wanted.remove(group.id) != nil { parents[group.id] = layer.id }
+            for shape in layer.shapes where wanted.remove(shape.id) != nil { parents[shape.id] = layer.id }
+        }
+        guard !wanted.isEmpty else { return }
+        for layer in drawing.layers {
+            for shape in layer.shapes {
+                for point in shape.path.points where wanted.remove(point.id) != nil {
+                    parents[point.id] = shape.id
+                    parents[shape.id] = parents[shape.id] ?? layer.id
+                }
+                if wanted.isEmpty { return }
+            }
+        }
     }
 
     // MARK: Playing

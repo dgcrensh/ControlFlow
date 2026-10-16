@@ -144,6 +144,17 @@ final class CanvasRenderer {
     /// The drawing the art was last built from, which a refine merges against.
     private var artDrawing = Drawing()
 
+    // Preview art, in the editor: a scrubbed or playing scene. Built by a copy of the art
+    // builder taken when the preview starts, so its first frame flattens only what the
+    // transition changes, while the art builder keeps the keyframe's own art and cache.
+    // When the preview ends, the keyframe shows again without a rebuild. Presenting has
+    // no drawing of its own, so there the scenes are the art.
+    private var previewBuilder: ArtBuilder?
+    private var previewKey: (revision: Int, merges: Int, isolation: Int?, groupIsolation: Int?, ghost: Set<Int>?)?
+    private var previewSteps: [ArtStep] = []
+    private var previewSegments: [ArtSegment] = []
+    private var previewBuffers: [Int: any MTLBuffer] = [:]
+
     // Onion skin: the keyframe before the current one, every shape at the ghost opacity.
     // Built in the frame from its own cache, at the art's tolerance.
     private var onionBuilder: ArtBuilder = {
@@ -167,6 +178,8 @@ final class CanvasRenderer {
     private var artMixed = false
     /// A refine merged: rebuild the art from the cache on the next frame.
     private var artRefined = false
+    /// Counts the refine results merged, so a preview takes them too.
+    private var refineMerges = 0
     /// From the first frame until a refine's last result merges: the drawing is being
     /// tessellated in the background for the first time, so builds leave out the layers
     /// that aren't ready instead of flattening them in the frame.
@@ -318,7 +331,7 @@ final class CanvasRenderer {
         // The outline view draws the art as a wireframe in the overlay instead.
         if !editor.outlineView {
             updateArt(editor: editor, zoom: session.camera.zoom, navigating: session.isNavigating,
-                      viewRect: Rect(points: screen))
+                      viewRect: Rect(points: screen), presenting: presenting)
         }
         // A preview (scrubbing or playing) shows its scene in place of the drawing.
         let shown = editor.shownDrawing
@@ -362,8 +375,13 @@ final class CanvasRenderer {
                 releaseOnion()
             }
             Signposts.canvas.withIntervalSignpost("Art draw") {
-                drawArt(artSteps, segments: artSegments, buffers: artBuffers, encoder: encoder, uniforms: &uniforms,
-                        viewRect: Rect(points: screen))
+                if editor.preview != nil, previewBuilder != nil {
+                    drawArt(previewSteps, segments: previewSegments, buffers: previewBuffers, encoder: encoder,
+                            uniforms: &uniforms, viewRect: Rect(points: screen))
+                } else {
+                    drawArt(artSteps, segments: artSegments, buffers: artBuffers, encoder: encoder, uniforms: &uniforms,
+                            viewRect: Rect(points: screen))
+                }
             }
         }
         // Everything outside the viewport is dimmed toward the canvas background, or
@@ -457,11 +475,16 @@ final class CanvasRenderer {
     ///
     /// The art is flattened finely enough for the zoom, in power-of-two buckets. A new
     /// bucket never re-tessellates in the frame (see `scheduleRefine`).
-    private func updateArt(editor: DrawingEditor, zoom: Double, navigating: Bool, viewRect: Rect) {
+    ///
+    /// In the editor, a preview (a scrub or playback) is built apart, by `updatePreviewArt`,
+    /// and the art stays the drawing's. Presenting shows its scenes as the art.
+    private func updateArt(editor: DrawingEditor, zoom: Double, navigating: Bool, viewRect: Rect, presenting: Bool) {
         let bucket = pow(2, ceil(log2(max(zoom, 1.0 / 64))))
         let wanted = 0.2 / bucket
         let live = editor.liveTransform.flatMap { $0.movesTessellation ? $0 : nil }
-        let drawing = live?.base ?? editor.shownDrawing
+        let previewsApart = !presenting
+        let drawing = live?.base ?? (previewsApart ? editor.drawing : editor.shownDrawing)
+        let revision = previewsApart ? editor.revision : editor.displayRevision
         // A live drag just ended: carry the moved shapes' triangles to where they landed
         // rather than flattening them again. Enlarged ones are coarse until a refine.
         if live == nil, let ended = lastLive {
@@ -484,15 +507,20 @@ final class CanvasRenderer {
         scheduleRefine(to: wanted, drawing: drawing, navigating: navigating, viewRect: viewRect)
 
         let ghost = editor.ghostFocus
+        if previewsApart, live == nil, let preview = editor.preview {
+            updatePreviewArt(preview, editor: editor, ghost: ghost)
+            return
+        }
+        if previewBuilder != nil { releasePreview() }
         liveTransform = live?.transform ?? .identity
-        let current = live.map { artLive == $0.id } ?? (artLive == nil && editor.displayRevision == artRevision)
+        let current = live.map { artLive == $0.id } ?? (artLive == nil && revision == artRevision)
         guard !current || artRefined ||
             editor.isolatedLayer != artIsolation || editor.isolatedGroup != artGroupIsolation || ghost != artGhost
         else { return }
         // Why, for the signpost.
         let reason = artCold ? "open" : !current ? (live != nil ? "drag" : "edit") : artRefined ? "refine" : "focus"
         // A live build stands for no revision, so the drawing is rebuilt when the drag ends.
-        artRevision = live == nil ? editor.displayRevision : -1
+        artRevision = live == nil ? revision : -1
         artLive = live?.id
         artIsolation = editor.isolatedLayer
         artGroupIsolation = editor.isolatedGroup
@@ -508,6 +536,46 @@ final class CanvasRenderer {
                                      tolerance: artTolerance, ghostFocus: ghost, moving: live?.shapes ?? [],
                                      reusingOtherTolerances: refineJob != nil || artMixed, leavingOutUncached: artCold)
         uploadArt(batch)
+    }
+
+    /// Builds a preview frame's art with `previewBuilder`, starting it from a copy of the
+    /// art builder (and the art's buffers, which its cached layers use) on the
+    /// preview's first frame. The copies share storage until the preview's builds write.
+    private func updatePreviewArt(_ preview: Drawing, editor: DrawingEditor, ghost: Set<Int>?) {
+        if previewBuilder == nil {
+            previewBuilder = artBuilder
+            previewBuffers = artBuffers
+            previewKey = nil
+        } else if let key = previewKey, key.merges != refineMerges {
+            // A refine merged into the art's cache (at a new tolerance, or the first
+            // flattening after opening): take its shapes too.
+            previewBuilder?.tessellations = artBuilder.tessellations
+        }
+        if let key = previewKey, key.revision == editor.displayRevision, key.merges == refineMerges,
+           key.isolation == editor.isolatedLayer, key.groupIsolation == editor.isolatedGroup, key.ghost == ghost {
+            return
+        }
+        previewKey = (editor.displayRevision, refineMerges, editor.isolatedLayer, editor.isolatedGroup, ghost)
+        let interval = Signposts.canvas.beginInterval("Art rebuild")
+        defer { Signposts.canvas.endInterval("Art rebuild", interval, "preview") }
+        guard let batch = previewBuilder?.build(preview, isolatedLayer: editor.isolatedLayer,
+                                                isolatedGroup: editor.isolatedGroup, tolerance: artTolerance,
+                                                ghostFocus: ghost,
+                                                reusingOtherTolerances: refineJob != nil || artMixed,
+                                                leavingOutUncached: artCold)
+        else { return }
+        previewSteps = batch.steps
+        previewSegments = batch.segments
+        previewBuffers = upload(batch, keeping: previewBuffers)
+    }
+
+    /// Drops the preview's art, its buffers and its builder's copies of the caches.
+    private func releasePreview() {
+        previewBuilder = nil
+        previewKey = nil
+        previewSteps = []
+        previewSegments = []
+        previewBuffers = [:]
     }
 
     /// Keeps the buffers of layers that didn't change and makes one for each layer that did.
@@ -621,6 +689,7 @@ final class CanvasRenderer {
         artTolerance = result.tolerance
         artMixed = !final
         artRefined = true
+        refineMerges += 1
         if final {
             refineJob = nil
             refineTolerance = nil

@@ -228,6 +228,19 @@ public struct ArtBuilder: Sendable {
         /// What the cache counts against its second-tier limit.
         var vertexCount: Int { (fan.count + outline.count) / 2 }
 
+        /// The triangles are those of `shape` too: it has the same id and path, and its
+        /// outline has the same geometry. Paint (fill, gradient, opacity, image and outline
+        /// color) plays no part in them; `tessellate` reads only the path and the outline.
+        func matches(_ shape: VectorShape) -> Bool {
+            self.shape.id == shape.id && self.shape.path == shape.path && Self.sameOutline(self.shape.stroke, shape.stroke)
+        }
+
+        private static func sameOutline(_ a: StrokeStyle?, _ b: StrokeStyle?) -> Bool {
+            guard let a, let b else { return a == nil && b == nil }
+            return a.width == b.width && a.cap == b.cap && a.join == b.join && a.miterLimit == b.miterLimit &&
+                a.dash == b.dash && a.dashOffset == b.dashOffset && a.alignment == b.alignment
+        }
+
         /// The same triangles taken through `t`, stored for `shape` at `tolerance`.
         func applying(_ t: Affine2D, as shape: VectorShape, tolerance: Double) -> Tessellation {
             let (fan, movedFanBounds) = Self.apply(t, to: self.fan)

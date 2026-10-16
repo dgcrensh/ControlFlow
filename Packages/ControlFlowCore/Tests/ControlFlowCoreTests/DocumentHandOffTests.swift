@@ -47,4 +47,51 @@ final class DocumentHandOffTests: XCTestCase {
         XCTAssertTrue(handOff.flush(revision: 4, now: nil))
         XCTAssertEqual(handOff.sentRevision, 4)
     }
+
+    // MARK: The editor's document revision
+
+    /// Switching keyframes shows another scene but leaves the document as it was, so it
+    /// is not handed off (each hand-off is an autosave).
+    func testSwitchingKeyframesLeavesTheDocumentRevision() {
+        var editor = DrawingEditor()
+        let first = editor.setKeyframe()
+        let second = editor.setKeyframe()
+        let revision = editor.documentRevision
+        let drawingRevision = editor.revision
+        editor.selectKeyframe(first)
+        editor.selectKeyframe(nil)
+        editor.selectKeyframe(second)
+        XCTAssertEqual(editor.documentRevision, revision)
+        XCTAssertNotEqual(editor.revision, drawingRevision, "the canvas still redraws")
+    }
+
+    /// Timeline edits that leave every scene as it was still change the document, so
+    /// they are handed off like any other edit.
+    func testTimelineEditsMoveTheDocumentRevision() throws {
+        var editor = DrawingEditor()
+        let first = editor.setKeyframe()
+        let second = editor.setKeyframe()
+        var revision = editor.documentRevision
+        func moved(_ what: String, file: StaticString = #filePath, line: UInt = #line) {
+            XCTAssertNotEqual(editor.documentRevision, revision, what, file: file, line: line)
+            revision = editor.documentRevision
+        }
+        var transition = Transition.standard
+        transition.duration += 1
+        editor.setTransition(transition, ofKeyframe: second)
+        moved("transition")
+        editor.renameKeyframe(first, to: "Title")
+        moved("rename")
+        editor.splitSequence(at: second)
+        moved("split")
+        let sequence = try XCTUnwrap(editor.timeline.presentation.sequences.first?.id)
+        editor.mergeSequenceWithNext(sequence)
+        moved("merge")
+        editor.updateViewport(coalescingKey: "width") { $0.width += 100 }
+        moved("drawing edit")
+        editor.undo()
+        moved("undo")
+        editor.renameKeyframe(first, to: "Title")
+        XCTAssertEqual(editor.documentRevision, revision, "a rename to the same name changes nothing")
+    }
 }

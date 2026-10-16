@@ -202,7 +202,7 @@ final class CanvasStore {
         referenceData = package.referenceImages
         ImageLibrary.shared.add(package.images)
         document = package
-        handOff = DocumentHandOff(revision: session.editor.revision)
+        handOff = DocumentHandOff(revision: session.editor.documentRevision)
         sentDocuments = [package]
         refresh()
         noteMissingFonts(package.presentation)
@@ -227,7 +227,7 @@ final class CanvasStore {
     private func updateDocument(continuous: Bool = false) {
         let editor = session.editor
         guard !editor.isInGesture else { return }
-        if handOff.changed(revision: editor.revision, continuous: continuous, now: CACurrentMediaTime()) {
+        if handOff.changed(revision: editor.documentRevision, continuous: continuous, now: CACurrentMediaTime()) {
             handOffTimer?.cancel()
             sendDocument()
         } else if let due = handOff.due {
@@ -243,7 +243,7 @@ final class CanvasStore {
     /// Hands a held change to the document: when it is due at `now`, or at once with no
     /// time, as the document closes or the app goes to the background.
     func flushDocument(now: Double? = nil) {
-        guard !session.editor.isInGesture, handOff.flush(revision: session.editor.revision, now: now) else { return }
+        guard !session.editor.isInGesture, handOff.flush(revision: session.editor.documentRevision, now: now) else { return }
         handOffTimer?.cancel()
         sendDocument()
     }
@@ -453,10 +453,12 @@ final class CanvasStore {
         if ui[keyPath: keyPath] != value { ui[keyPath: keyPath] = value }
     }
 
-    private func edit(_ change: (inout CanvasSession) -> Void) {
+    /// A `continuous` edit (a keystroke or a slider tick, many a second) is handed to
+    /// the document once the run goes quiet.
+    private func edit(continuous: Bool = false, _ change: (inout CanvasSession) -> Void) {
         endPreview()
         Signposts.canvas.withIntervalSignpost("Edit") { change(&session) }
-        refresh()
+        refresh(continuous: continuous)
     }
 
     /// `edit` for a change that only restyles the selection or a global color.
@@ -479,7 +481,7 @@ final class CanvasStore {
     /// The text view's words and selection after the user typed, deleted, pasted,
     /// dictated or moved the caret.
     func setEditedText(_ string: String, selection: Range<Int>) {
-        edit { $0.editor.setEditedText(string, selection: selection) }
+        edit(continuous: true) { $0.editor.setEditedText(string, selection: selection) }
     }
 
     func setTextSelection(_ range: Range<Int>) { edit { $0.editor.setTextSelection(range) } }
@@ -640,9 +642,10 @@ final class CanvasStore {
     func setOutlineView(_ on: Bool) { edit { $0.editor.outlineView = on } }
     func setGhostsUnselected(_ on: Bool) { edit { $0.editor.ghostsUnselected = on } }
 
-    /// A numeric viewport edit; edits of one field in a row are one undo step.
-    func updateViewport(_ field: String, _ change: (inout Viewport) -> Void) {
-        edit { $0.editor.updateViewport(coalescingKey: field, change) }
+    /// A viewport edit; edits of one field in a row are one undo step. A `continuous`
+    /// one (a color picker drag) is handed to the document once the run goes quiet.
+    func updateViewport(_ field: String, continuous: Bool = false, _ change: (inout Viewport) -> Void) {
+        edit(continuous: continuous) { $0.editor.updateViewport(coalescingKey: field, change) }
     }
 
     /// Gives the viewport a preset aspect, keeping its width.
@@ -982,10 +985,10 @@ final class CanvasStore {
     func setClipped(_ clipped: Bool) { edit { $0.editor.setClipped(clipped) } }
     func setGradient(_ kind: ShapeGradient.Kind?) { edit { $0.editor.setGradient(kind) } }
     func setGradientStop(_ index: Int, _ color: Color) { restyle { $0.editor.setGradientStop(index, color: RGBAColor(color)) } }
-    func setGradientAngle(_ degrees: Double) { edit { $0.editor.setGradientAngle(degrees) } }
-    func setGradientSpan(_ fraction: Double) { edit { $0.editor.setGradientSpan(fraction) } }
+    func setGradientAngle(_ degrees: Double) { restyle { $0.editor.setGradientAngle(degrees) } }
+    func setGradientSpan(_ fraction: Double) { restyle { $0.editor.setGradientSpan(fraction) } }
     func reverseGradient() { edit { $0.editor.reverseGradient() } }
-    func setAnchorWidth(_ width: Double) { edit { $0.editor.setSelectedAnchorsWidth(width) } }
+    func setAnchorWidth(_ width: Double) { edit(continuous: true) { $0.editor.setSelectedAnchorsWidth(width) } }
     func resetOutlineWidths() { edit { $0.editor.resetOutlineWidths() } }
 
     /// Pencil pressure sets the outline width along new strokes. Remembered on this iPad.

@@ -35,7 +35,10 @@ extension DrawingEditor {
         syncTimeline()
         penPath = nil
         currentKeyframe = id
+        // Showing another keyframe is not an edit, so it doesn't hand the document off.
+        let unchanged = documentRevision
         drawing = timeline.state(at: currentChainIndex)
+        documentRevision = unchanged
         updateOnionSkin()
         validateSelection()
     }
@@ -165,8 +168,15 @@ extension DrawingEditor {
     }
 
     /// The objects the current keyframe changes, with the shapes and layers they are in.
+    /// Kept until the keyframe, the drawing or the document changes, since the app asks
+    /// after every refresh.
     public mutating func changedObjects() -> Set<Int> {
-        currentKeyframe.map { timeline.changedObjects(inKeyframe: $0) } ?? []
+        guard let id = currentKeyframe else { return [] }
+        let key = ChangedObjectsKey(keyframe: id, revision: revision, documentRevision: documentRevision)
+        if let cached = changedObjectsCache, cached.key == key { return cached.ids }
+        let ids = timeline.changedObjects(inKeyframe: id)
+        changedObjectsCache = (key, ids)
+        return ids
     }
 
     /// The scene `elapsed` seconds into the transition into keyframe `id`.
@@ -299,7 +309,10 @@ extension DrawingEditor {
         body(&self)
         if currentKeyframe.map({ timeline.presentation.chainIndex(of: $0) == nil }) ?? false { currentKeyframe = nil }
         guard snapshot != before else { return }
-        if snapshot.presentation != before.presentation { undoStack.record(before, coalescingKey: key) }
+        if snapshot.presentation != before.presentation {
+            undoStack.record(before, coalescingKey: key)
+            documentRevision &+= 1
+        }
         if before.keyframe != currentKeyframe { penPath = nil }
         let state = timeline.state(at: currentChainIndex)
         if state != drawing { drawing = state }

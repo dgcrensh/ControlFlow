@@ -319,4 +319,69 @@ final class TessellationCacheTests: XCTestCase {
         XCTAssertEqual(builder.tessellations.vertexCount, expected.tessellations.vertexCount)
         XCTAssertEqual(builder.tessellations.secondTierVertexCount, expected.tessellations.secondTierVertexCount)
     }
+
+    // MARK: Geometry-only matching
+
+    /// Fill, gradient, opacity and outline color are paint: changing them, as a color
+    /// fade does every frame, reuses every tessellation, and the art is what a cold
+    /// builder makes.
+    func testPaintChangesFlattenNothing() {
+        let drawing = Self.row()
+        var builder = ArtBuilder()
+        _ = builder.build(drawing, isolatedLayer: nil, tolerance: 0.5)
+        var painted = drawing
+        for l in painted.layers.indices {
+            for s in painted.layers[l].shapes.indices {
+                painted.layers[l].shapes[s].fill = RGBAColor(r: 0.2, g: 0.4, b: 0.6)
+                painted.layers[l].shapes[s].opacity = 0.5
+                painted.layers[l].shapes[s].stroke?.color = RGBAColor(r: 0, g: 1, b: 0)
+            }
+        }
+        painted.layers[0].shapes[0].gradient = ShapeGradient(kind: .linear, start: Vec2(-40, 0), end: Vec2(40, 0),
+                                                             stops: [GradientStop(offset: 0, color: .black),
+                                                                     GradientStop(offset: 1, color: .ink)])
+        builder.tessellationCount = 0
+        let art = builder.build(painted, isolatedLayer: nil, tolerance: 0.5)
+        XCTAssertEqual(builder.tessellationCount, 0)
+        var cold = ArtBuilder()
+        assertSameArt(art, cold.build(painted, isolatedLayer: nil, tolerance: 0.5))
+    }
+
+    /// The outline's width, dashes and alignment shape its triangles: changing one
+    /// flattens that shape again.
+    func testOutlineGeometryChangesFlattenAgain() {
+        let drawing = Self.row()
+        var builder = ArtBuilder()
+        _ = builder.build(drawing, isolatedLayer: nil, tolerance: 0.5)
+        for change: (inout StrokeStyle) -> Void in [{ $0.width = 9 }, { $0.dash = [4, 4] }, { $0.alignment = .inside },
+                                                   { $0.cap = .butt }, { $0.join = .miter }] {
+            var edited = drawing
+            change(&edited.layers[0].shapes[0].stroke!)
+            builder.tessellationCount = 0
+            let art = builder.build(edited, isolatedLayer: nil, tolerance: 0.5)
+            XCTAssertEqual(builder.tessellationCount, 1)
+            var cold = ArtBuilder()
+            assertSameArt(art, cold.build(edited, isolatedLayer: nil, tolerance: 0.5))
+        }
+    }
+
+    /// The renderer builds a preview (a scrub or playback) with a copy of the art
+    /// builder, so when it ends the keyframe's own art is still cached: nothing is
+    /// flattened or rebuilt.
+    func testAPreviewBuiltWithACopyLeavesTheArtWarm() {
+        let drawing = Self.row()
+        var builder = ArtBuilder()
+        _ = builder.build(drawing, isolatedLayer: nil, tolerance: 0.5)
+        var moved = drawing
+        for l in moved.layers.indices { moved.layers[l].transform.position = Vec2(30, 0) }
+        var preview = builder
+        preview.tessellationCount = 0
+        _ = preview.build(moved, isolatedLayer: nil, tolerance: 0.5)
+        XCTAssertEqual(preview.tessellationCount, drawing.shapeCount, "every shape moved")
+        builder.tessellationCount = 0
+        let layerBuilds = builder.layerBuilds
+        _ = builder.build(drawing, isolatedLayer: nil, tolerance: 0.5)
+        XCTAssertEqual(builder.tessellationCount, 0)
+        XCTAssertEqual(builder.layerBuilds, layerBuilds)
+    }
 }

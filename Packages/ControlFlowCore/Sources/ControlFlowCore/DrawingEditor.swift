@@ -101,6 +101,13 @@ public enum EditorMetrics {
     public static let guideRadius = 6.0
 }
 
+/// What `DrawingEditor.changedObjects()` depends on.
+struct ChangedObjectsKey: Hashable, Sendable {
+    var keyframe: Int
+    var revision: Int
+    var documentRevision: Int
+}
+
 /// The open path the Pen tool is extending. The active end is the last point, except
 /// right after continuing a path from its start, when the path is reversed on the
 /// next placement.
@@ -121,6 +128,7 @@ public struct DrawingEditor: Sendable {
     public var drawing = Drawing() {
         didSet {
             revision &+= 1
+            documentRevision &+= 1
             displayRevision &+= 1
             // Isolation ends when its layer goes (deleted, erased, merged or undone away).
             if let id = isolatedLayer, drawing.layerIndex(id) == nil { isolatedLayer = nil }
@@ -130,6 +138,11 @@ public struct DrawingEditor: Sendable {
     }
     /// Increments on every change to `drawing`, so renderers know to rebuild.
     public private(set) var revision = 0
+    /// Increments whenever the document (`presentation`) may have changed: an edit to
+    /// `drawing`, a timeline command, undo or redo. Unlike `revision`, showing another
+    /// keyframe leaves it alone, and a change of transition, a rename, a split or a
+    /// merge moves it. The app hands the document off when it moves.
+    public internal(set) var documentRevision = 0
     /// Changing the selection adopts the selected shape's style, so the style
     /// controls show it and new strokes continue in it.
     public var selection: Selection = .none {
@@ -237,6 +250,8 @@ public struct DrawingEditor: Sendable {
     }
     /// Increments whenever `onionSkin` changes, so renderers know to rebuild it.
     public private(set) var onionRevision = 0
+    /// The last `changedObjects()`, and what it was worked out for.
+    var changedObjectsCache: (key: ChangedObjectsKey, ids: Set<Int>)?
 
     /// A pivot the user dragged for a selection that is not a layer. Layers keep theirs in `Layer.pivot`.
     public internal(set) var customPivot: Vec2?
@@ -1828,6 +1843,7 @@ public struct DrawingEditor: Sendable {
         currentKeyframe = state.keyframe.flatMap { presentation.chainIndex(of: $0) != nil ? $0 : nil }
         endPreview()
         drawing = timeline.state(at: currentChainIndex)
+        documentRevision &+= 1
         updateOnionSkin()
         validateSelection()
         if let pen = penPath, drawing.indices(layer: pen.layer, shape: pen.shape) == nil { penPath = nil }
