@@ -299,7 +299,7 @@ final class TestVectorTests: XCTestCase {
             s.layers[0].transform.rotation = 0
         }
         // Sequence 2: a text in a box, right-aligned and wrapping, whose spacing moves
-        // with its lines broken as they are at the end, then whose words change.
+        // with its lines broken as they are at the end, then whose words change, the first in another weight.
         var title = 0
         timeline.insertSequence(after: 4, transition: Transition(duration: 0, curve: .linear))
         edit(5) { s in
@@ -318,6 +318,7 @@ final class TestVectorTests: XCTestCase {
         edit(7) { s in
             let t = shape(&s, title)
             s.layers[0].shapes[t].text!.string = "New words"
+            s.layers[0].shapes[t].text!.weights = [TextWeightRun(0..<3, weight: 400)]
             s.layers[0].shapes[t].text!.lineHeight = 1
         }
         return timeline.presentation

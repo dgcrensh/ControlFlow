@@ -10,10 +10,10 @@ public struct DecodedPresentation: Sendable {
     public var drawing: Drawing { presentation.opening }
 }
 
-/// Reads and writes format 1.3, `presentation.json` (see `Schema/` in the repository):
+/// Reads and writes format 1.4, `presentation.json` (see `Schema/` in the repository):
 /// the opening state in full, then each keyframe as its changes from the one before.
 public enum PresentationFormat {
-    public static let version = FormatVersion(1, 3)
+    public static let version = FormatVersion(1, 4)
     /// The oldest version this build can open.
     public static let oldestReadable = FormatVersion(1, 0)
 

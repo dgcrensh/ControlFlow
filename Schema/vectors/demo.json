@@ -112,7 +112,15 @@
         ]
       },
       {
-        "text": { "string": "Nice to meet you", "weight": 700, "size": 120, "align": "center" },
+        "text": {
+          "string": "Nice to meet you",
+          "weight": 700,
+          "weights": [
+            { "start": 5, "length": 2, "weight": 400 }
+          ],
+          "size": 120,
+          "align": "center"
+        },
         "boxWidth": 1152,
         "lines": [
           { "x": 0, "width": 1152, "top": 0, "height": 144, "baseline": 108, "glyphCount": 16 }
@@ -5842,7 +5850,16 @@
               {
                 "id": 74,
                 "closed": true,
-                "text": { "string": "Nice to meet you", "weight": 700, "size": 120, "align": "center", "tracking": 24 },
+                "text": {
+                  "string": "Nice to meet you",
+                  "weight": 700,
+                  "weights": [
+                    { "start": 5, "length": 2, "weight": 400 }
+                  ],
+                  "size": 120,
+                  "align": "center",
+                  "tracking": 24
+                },
                 "fill": "#222222FF",
                 "fillGlobal": 3,
                 "transform": { "position": [780, 90], "rotation": -4, "pivot": [180, 72] },
@@ -7701,7 +7718,16 @@
               {
                 "id": 74,
                 "closed": true,
-                "text": { "string": "Nice to meet you", "weight": 700, "size": 120, "align": "center", "tracking": 14.1957 },
+                "text": {
+                  "string": "Nice to meet you",
+                  "weight": 700,
+                  "weights": [
+                    { "start": 5, "length": 2, "weight": 400 }
+                  ],
+                  "size": 120,
+                  "align": "center",
+                  "tracking": 14.1957
+                },
                 "fill": "#222222FF",
                 "fillGlobal": 3,
                 "transform": { "position": [780, 90], "rotation": -4, "pivot": [180, 72] },
@@ -9608,7 +9634,16 @@
               {
                 "id": 74,
                 "closed": true,
-                "text": { "string": "Nice to meet you", "weight": 700, "size": 120, "align": "center", "tracking": 4.7423 },
+                "text": {
+                  "string": "Nice to meet you",
+                  "weight": 700,
+                  "weights": [
+                    { "start": 5, "length": 2, "weight": 400 }
+                  ],
+                  "size": 120,
+                  "align": "center",
+                  "tracking": 4.7423
+                },
                 "fill": "#222222FF",
                 "fillGlobal": 3,
                 "transform": { "position": [780, 90], "rotation": -4, "pivot": [180, 72] },
@@ -11515,7 +11550,16 @@
               {
                 "id": 74,
                 "closed": true,
-                "text": { "string": "Nice to meet you", "weight": 700, "size": 120, "align": "center", "tracking": 0.949 },
+                "text": {
+                  "string": "Nice to meet you",
+                  "weight": 700,
+                  "weights": [
+                    { "start": 5, "length": 2, "weight": 400 }
+                  ],
+                  "size": 120,
+                  "align": "center",
+                  "tracking": 0.949
+                },
                 "fill": "#222222FF",
                 "fillGlobal": 3,
                 "transform": { "position": [780, 90], "rotation": -4, "pivot": [180, 72] },
@@ -13421,7 +13465,15 @@
               {
                 "id": 74,
                 "closed": true,
-                "text": { "string": "Nice to meet you", "weight": 700, "size": 120, "align": "center" },
+                "text": {
+                  "string": "Nice to meet you",
+                  "weight": 700,
+                  "weights": [
+                    { "start": 5, "length": 2, "weight": 400 }
+                  ],
+                  "size": 120,
+                  "align": "center"
+                },
                 "fill": "#222222FF",
                 "fillGlobal": 3,
                 "transform": { "position": [780, 90], "rotation": -4, "pivot": [180, 72] },
@@ -13660,7 +13712,15 @@
               {
                 "id": 74,
                 "closed": true,
-                "text": { "string": "Nice to meet you", "weight": 700, "size": 120, "align": "center" },
+                "text": {
+                  "string": "Nice to meet you",
+                  "weight": 700,
+                  "weights": [
+                    { "start": 5, "length": 2, "weight": 400 }
+                  ],
+                  "size": 120,
+                  "align": "center"
+                },
                 "fill": "#222222FF",
                 "fillGlobal": 3,
                 "transform": { "position": [780, 90], "rotation": -4, "pivot": [180, 72] },
@@ -13899,7 +13959,15 @@
               {
                 "id": 74,
                 "closed": true,
-                "text": { "string": "Nice to meet you", "weight": 700, "size": 120, "align": "center" },
+                "text": {
+                  "string": "Nice to meet you",
+                  "weight": 700,
+                  "weights": [
+                    { "start": 5, "length": 2, "weight": 400 }
+                  ],
+                  "size": 120,
+                  "align": "center"
+                },
                 "fill": "#222222FF",
                 "fillGlobal": 3,
                 "transform": { "position": [780, 90], "rotation": -4, "pivot": [180, 72] },
@@ -14138,7 +14206,15 @@
               {
                 "id": 74,
                 "closed": true,
-                "text": { "string": "Nice to meet you", "weight": 700, "size": 120, "align": "center" },
+                "text": {
+                  "string": "Nice to meet you",
+                  "weight": 700,
+                  "weights": [
+                    { "start": 5, "length": 2, "weight": 400 }
+                  ],
+                  "size": 120,
+                  "align": "center"
+                },
                 "fill": "#222222FF",
                 "fillGlobal": 3,
                 "transform": { "position": [780, 90], "rotation": -4, "pivot": [180, 72] },
@@ -14377,7 +14453,15 @@
               {
                 "id": 74,
                 "closed": true,
-                "text": { "string": "Nice to meet you", "weight": 700, "size": 120, "align": "center" },
+                "text": {
+                  "string": "Nice to meet you",
+                  "weight": 700,
+                  "weights": [
+                    { "start": 5, "length": 2, "weight": 400 }
+                  ],
+                  "size": 120,
+                  "align": "center"
+                },
                 "fill": "#222222FF",
                 "fillGlobal": 3,
                 "transform": { "position": [780, 90], "rotation": -4, "pivot": [180, 72] },
@@ -14616,7 +14700,15 @@
               {
                 "id": 74,
                 "closed": true,
-                "text": { "string": "Nice to meet you", "weight": 700, "size": 120, "align": "center" },
+                "text": {
+                  "string": "Nice to meet you",
+                  "weight": 700,
+                  "weights": [
+                    { "start": 5, "length": 2, "weight": 400 }
+                  ],
+                  "size": 120,
+                  "align": "center"
+                },
                 "fill": "#222222FF",
                 "fillGlobal": 3,
                 "transform": { "position": [780, 90], "rotation": -4, "pivot": [180, 72] },
@@ -14855,7 +14947,15 @@
               {
                 "id": 74,
                 "closed": true,
-                "text": { "string": "Nice to meet you", "weight": 700, "size": 120, "align": "center" },
+                "text": {
+                  "string": "Nice to meet you",
+                  "weight": 700,
+                  "weights": [
+                    { "start": 5, "length": 2, "weight": 400 }
+                  ],
+                  "size": 120,
+                  "align": "center"
+                },
                 "fill": "#222222FF",
                 "fillGlobal": 3,
                 "transform": { "position": [780, 90], "rotation": -4, "pivot": [180, 72] },
@@ -15094,7 +15194,15 @@
               {
                 "id": 74,
                 "closed": true,
-                "text": { "string": "Nice to meet you", "weight": 700, "size": 120, "align": "center" },
+                "text": {
+                  "string": "Nice to meet you",
+                  "weight": 700,
+                  "weights": [
+                    { "start": 5, "length": 2, "weight": 400 }
+                  ],
+                  "size": 120,
+                  "align": "center"
+                },
                 "fill": "#222222FF",
                 "fillGlobal": 3,
                 "transform": { "position": [780, 90], "rotation": -4, "pivot": [180, 72] },
@@ -15333,7 +15441,15 @@
               {
                 "id": 74,
                 "closed": true,
-                "text": { "string": "Nice to meet you", "weight": 700, "size": 120, "align": "center" },
+                "text": {
+                  "string": "Nice to meet you",
+                  "weight": 700,
+                  "weights": [
+                    { "start": 5, "length": 2, "weight": 400 }
+                  ],
+                  "size": 120,
+                  "align": "center"
+                },
                 "fill": "#222222FF",
                 "fillGlobal": 3,
                 "transform": { "position": [780, 90], "rotation": -4, "pivot": [180, 72] },
@@ -15552,7 +15668,15 @@
               {
                 "id": 74,
                 "closed": true,
-                "text": { "string": "Nice to meet you", "weight": 700, "size": 120, "align": "center" },
+                "text": {
+                  "string": "Nice to meet you",
+                  "weight": 700,
+                  "weights": [
+                    { "start": 5, "length": 2, "weight": 400 }
+                  ],
+                  "size": 120,
+                  "align": "center"
+                },
                 "fill": "#222222FF",
                 "fillGlobal": 3,
                 "transform": { "position": [780, 90], "rotation": -4, "pivot": [180, 72] },

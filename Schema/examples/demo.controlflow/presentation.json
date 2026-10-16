@@ -1,5 +1,5 @@
 {
-  "formatVersion": "1.3",
+  "formatVersion": "1.4",
   "name": "Demo",
   "viewport": { "id": 56, "width": 1920, "height": 1080, "background": "#FFFFFFFF" },
   "palette": ["#FFFFFF80"],
@@ -333,7 +333,13 @@
             },
             {
               "set": 74,
-              "props": { "text.string": "Nice to meet you", "text.tracking": 0 }
+              "props": {
+                "text.string": "Nice to meet you",
+                "text.tracking": 0,
+                "text.weights": [
+                  { "start": 5, "length": 2, "weight": 400 }
+                ]
+              }
             },
             {
               "set": 82,
