@@ -199,7 +199,7 @@ From reading the code:
 ## Suggested order
 
 1. **Fix the measurement (shipped).** Give `StressDrawing` vertex ids. Keep the playback, after-playback, undo-at-keyframe and `changedObjects` workloads from the scratch file as real `PerformanceTests` and `Workloads`.
-2. **Quick wins (S):**
+2. **Quick wins (S, shipped):**
    - #5 (also fixes the data-loss risk);
    - #2 (a separate preview builder);
    - #1's geometry-only cache key;
@@ -236,3 +236,25 @@ The app already emits the signposts this needs: `Frame`, `Art rebuild`, `GPU fra
 | `changedObjectsAtKeyframe` (keyframe 10 of 20) | #4 | 14 ms |
 
 Full size, `-c release`, the `measure` average divided by the calls per run, on the same kind of cloud container as the profile (this run was faster than the profile's; compare before and after on one machine). With vertex ids, `testPlaybackFrames` dropped to 1.8 ms per frame.
+
+### Step 2: quick wins (shipped)
+
+- **#5:** `DrawingEditor.documentRevision` moves on any change to the document: a drawing edit, a timeline command (transition, rename, split, merge and the rest), undo and redo. Showing another keyframe leaves it alone. `CanvasStore` hands off on it rather than on `revision`, so a chip tap no longer autosaves and a timeline edit is no longer left unsaved until the next drawing edit. Covered by `DocumentHandOffTests`.
+- **#2:** `CanvasRenderer` builds scrub and playback frames with `previewBuilder`, a copy of the art builder taken on the preview's first frame (with the art's buffers). The art builder keeps the keyframe's art and cache, and is keyed on `revision` rather than `displayRevision`, so when the preview ends the keyframe shows with no rebuild at all. The copies share storage until the preview writes, and the copy is dropped when the preview ends. A refine merged during a preview is copied into the preview's cache too. Presenting is unchanged: its editor has no drawing of its own, so its scenes stay the art.
+- **#1, geometry-only key:** `TessellationCache` reuses a tessellation for any shape with the same id, path and outline geometry (`Tessellation.matches`): width, cap, join, miter limit, dash and alignment. Fill, gradient, opacity, image and outline colour are paint, carried by the steps. Local-space tessellation is still step 4.
+- **#7:** typing (`setEditedText`), the anchor-width slider and the viewport background picker go through `edit(continuous: true)`, and the gradient angle and spread sliders through `restyle`, so their hand-offs coalesce like the colour pickers'.
+- **#4:** `Timeline.changedObjects(inKeyframe:)` looks up only the ids its changes name (and takes created objects' parents from the changes) instead of indexing every object and vertex of two scenes, and `DrawingEditor.changedObjects()` keeps its last result until the keyframe, `revision` or `documentRevision` changes, so `updateThumbnails`' second read is free.
+
+Before and after, full size, `-c release`, per call, on one cloud container:
+
+| Workload | Before | After |
+| --- | --- | --- |
+| `playbackFrameEveryFillChanges` | 123 ms | 32 ms |
+| `playbackFrameOneLayerFades` | 17 ms | 15 ms |
+| `playbackFrameAllLayersSlide` | 123 ms | 123 ms (step 4) |
+| `frameAfterPlayback` | 114 ms | 20 ms, and none in the app |
+| `changedObjectsAtKeyframe` | 32 ms | < 0.1 ms, uncached |
+| `undoRedoAtKeyframe` | 276 ms | 273 ms (step 3) |
+
+`frameAfterPlayback` now times the art builder building the keyframe again after a preview copy played; what is left is the world bake and the layer compares of #6, and the renderer skips even that, since `revision` didn't move. `changedObjectsAtKeyframe` now times the timeline's computation, not the editor's cached copy. What is left of the fill and fade frames is the interpolation, the world bake and rebuilding each changed layer's steps.
+

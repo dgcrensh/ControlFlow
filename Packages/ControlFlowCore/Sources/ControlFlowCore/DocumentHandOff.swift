@@ -10,7 +10,7 @@ public struct DocumentHandOff: Sendable {
     /// How long a continuous change waits for the next one before it is handed off.
     public static let quietPeriod = 0.5
 
-    /// The drawing revision last handed to the document.
+    /// The document revision (`DrawingEditor.documentRevision`) last handed to the document.
     public private(set) var sentRevision: Int
     /// When the held change is due, in the caller's clock; nil when nothing is held.
     public private(set) var due: Double?
@@ -19,7 +19,7 @@ public struct DocumentHandOff: Sendable {
         sentRevision = revision
     }
 
-    /// After a finished change that left the drawing at `revision`: returns true when
+    /// After a finished change that left the document at `revision`: returns true when
     /// it should be handed off now. A `continuous` change is held instead, until
     /// `due`, when the caller asks again with `flush`.
     public mutating func changed(revision: Int, continuous: Bool, now: Double) -> Bool {
