@@ -1,6 +1,7 @@
 // Checks the HTML export's player against the test vectors: each sample's scene, played
 // by player.js, must match the one the app recorded, and so must its text outlines where
-// the sample has them (see README.md, "Test vectors").
+// the sample has them, and each formula's outline drawn from the vectors' math.json (see
+// README.md, "Test vectors").
 //
 //   node Schema/test_player.js
 //
@@ -71,6 +72,17 @@ for (const name of fs.readdirSync(folder).filter((n) => n.endsWith('.json')).sor
     ? JSON.parse(fs.readFileSync(path.join(folder, vectors.document), 'utf8')) : vectors.document;
   const timeline = new player.Timeline(player.readPresentation(document));
   const texts = vectors.texts ? player.readTextLayouts(vectors.texts) : null;
+  const math = vectors.math ? player.readMathLayouts(vectors.math) : null;
+  for (const expected of vectors.mathOutlines || []) {
+    const points = [];
+    for (const p of player.mathOutline(expected.math, math)) points.push(p.p[0], p.p[1], p.in[0], p.in[1], p.out[0], p.out[1]);
+    const d = difference(rounded(points), expected.points, `mathOutlines ${expected.math.source}`);
+    checked++;
+    if (d) {
+      failures++;
+      console.error(`${name}: ${d}`);
+    }
+  }
   for (const sample of vectors.samples) {
     const scene = timeline.playing(sample.sequence, sample.time).scene;
     let d = difference(rounded(player.sceneJSON(scene)), sample.scene, 'scene');
@@ -81,7 +93,7 @@ for (const name of fs.readdirSync(folder).filter((n) => n.endsWith('.json')).sor
       console.error(`${name}, sequence ${sample.sequence} at ${sample.time}s: ${d}`);
     }
     if (player.renderScene) {
-      const svg = player.renderScene(scene, { texts });
+      const svg = player.renderScene(scene, { texts, math });
       if (typeof svg !== 'string' || /NaN|undefined|Infinity/.test(svg)) {
         failures++;
         console.error(`${name}, sequence ${sample.sequence} at ${sample.time}s: the drawing has bad values`);

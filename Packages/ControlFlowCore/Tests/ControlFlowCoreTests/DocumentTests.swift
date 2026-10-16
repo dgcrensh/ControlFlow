@@ -14,7 +14,7 @@ private let examplesFolder = URL(fileURLWithPath: #filePath)
 private func exampleFiles(_ name: String) throws -> [String: Data] {
     let root = examplesFolder.appendingPathComponent(name)
     var files: [String: Data] = [:]
-    for path in [PresentationPackage.presentationFile, "references/reference-1.png", "images/58522a450cf10d19.png"] {
+    for path in [PresentationPackage.presentationFile, MathFile.fileName, "references/reference-1.png", "images/58522a450cf10d19.png"] {
         files[path] = try Data(contentsOf: root.appendingPathComponent(path))
     }
     return files
@@ -193,8 +193,8 @@ final class PresentationFormatTests: XCTestCase {
         let p = package.presentation
         let d = p.opening
         XCTAssertEqual(d.name, "Demo")
-        XCTAssertEqual(d.layers.map(\.name), ["Torso", "Head", "Antenna", "Title", "Photo"])
-        XCTAssertEqual(d.layers.map(\.shapes.count), [4, 4, 2, 1, 1])
+        XCTAssertEqual(d.layers.map(\.name), ["Torso", "Head", "Antenna", "Title", "Photo", "Formula"])
+        XCTAssertEqual(d.layers.map(\.shapes.count), [4, 4, 2, 1, 1, 1])
         XCTAssertEqual(d.layers[3].shapes[0].text, TextContent(string: "Hello", weight: 700, size: 120, align: .center))
         XCTAssertTrue(d.layers[3].shapes[0].path.points.isEmpty)
         XCTAssertTrue(d.vertexIDsAreValid)
@@ -218,6 +218,10 @@ final class PresentationFormatTests: XCTestCase {
         let photoBytes = try XCTUnwrap(exampleFiles("demo.controlflow")["images/58522a450cf10d19.png"])
         XCTAssertEqual(package.images, ["images/58522a450cf10d19.png": photoBytes])
         XCTAssertEqual(ImageAssets.path(for: photoBytes), "images/58522a450cf10d19.png", "named by a hash of its bytes")
+        let formula = d.layers[5].shapes[0]
+        XCTAssertEqual(formula.math, MathContent(source: "a + b = c", size: 96))
+        XCTAssertTrue(formula.path.points.isEmpty)
+        XCTAssertEqual(MathTypesetting.layout(formula.math!)?.glyphs.count, 5, "laid out from math.json")
 
         // Three sequences of two keyframes.
         XCTAssertEqual(p.sequences.map(\.name), ["Hello", "Speak", "Point"])
@@ -230,11 +234,12 @@ final class PresentationFormatTests: XCTestCase {
         XCTAssertEqual(timeline.state(at: 2).layers[0].shapes[0].fill?.hexString, "#2BB673FF", "fills follow their global color")
         XCTAssertEqual(timeline.state(at: 1).layers[3].shapes[0].text?.tracking, 24)
         XCTAssertEqual(timeline.state(at: 1).layers[4].shapes[0].opacity, 0.6)
-        XCTAssertEqual(timeline.state(at: 4).layers.map(\.name), ["Torso", "Head", "Antenna", "Bubble", "Title", "Photo"])
+        XCTAssertEqual(timeline.state(at: 4).layers.map(\.name), ["Torso", "Head", "Antenna", "Bubble", "Title", "Photo", "Formula"])
+        XCTAssertEqual(timeline.state(at: 4).layers[6].shapes[0].math?.source, "a = c - b")
         XCTAssertEqual(timeline.state(at: 4).layers[4].shapes[0].text?.string, "Nice to meet you")
         XCTAssertEqual(timeline.state(at: 4).viewport.background.hexString, "#F4F1E8FF")
         XCTAssertEqual(timeline.state(at: 5).layers[3].shapes[0].path.points.count, 5, "a point is born on the bubble")
-        XCTAssertEqual(timeline.state(at: 6).layers.count, 5)
+        XCTAssertEqual(timeline.state(at: 6).layers.count, 6)
 
         // Every id is distinct.
         var ids = Array(d.objectIDs) + d.references.map(\.id)

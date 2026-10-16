@@ -601,7 +601,7 @@ public struct ArtBuilder: Sendable {
     /// in its own space, with its group and shape transforms as its `place`, or, where
     /// drawing it through them would differ from baking them (see
     /// `stretchesUnlikeItsPoints`), with them baked into its points. A text
-    /// shape's glyphs are laid out (see `VectorShape.resolvingText()`). `tolerance` is the
+    /// shape's glyphs are laid out (see `VectorShape.resolvingLayout()`). `tolerance` is the
     /// art's, in the world; the result's is in the shape's space.
     static func artShape(_ index: Int, of layer: Layer, placement: LayerPlacement, tolerance: Double) -> ArtShape {
         let shape = layer.shapes[index]
@@ -610,10 +610,10 @@ public struct ArtBuilder: Sendable {
         if !shape.transform.isIdentity { inner = inner * shape.transform.matrix }
         let r = placement.baked.map { $0 * inner } ?? inner
         if r == .identity {
-            return ArtShape(shape: shape.resolvingText(), place: .identity, tolerance: tolerance / placement.detail)
+            return ArtShape(shape: shape.resolvingLayout(), place: .identity, tolerance: tolerance / placement.detail)
         }
         if r.isSimilarity || !stretchesUnlikeItsPoints(shape) {
-            return ArtShape(shape: shape.resolvingText(), place: r, tolerance: tolerance / detail(of: placement.segment * r))
+            return ArtShape(shape: shape.resolvingLayout(), place: r, tolerance: tolerance / detail(of: placement.segment * r))
         }
         return ArtShape(shape: shape.baked(r), place: .identity, tolerance: tolerance / placement.detail, baked: r)
     }
@@ -629,11 +629,11 @@ public struct ArtBuilder: Sendable {
     /// True when drawing `shape` through a stretch or a skew looks different from baking
     /// it into the points, as the file and the exports do: an outline would widen
     /// unevenly (baking scales its width by the area), and a gradient's bands would lean
-    /// (baking keeps them square to its axis, and a radial one round). Text has neither:
-    /// its glyphs are filled only.
+    /// (baking keeps them square to its axis, and a radial one round). Text and formulas
+    /// have neither: their glyphs are filled only.
     private static func stretchesUnlikeItsPoints(_ shape: VectorShape) -> Bool {
         if shape.gradient != nil { return true }
-        guard shape.text == nil, let stroke = shape.stroke else { return false }
+        guard !shape.isLaidOut, let stroke = shape.stroke else { return false }
         return stroke.width > 0
     }
 
@@ -966,7 +966,7 @@ public struct ArtBuilder: Sendable {
     /// Flattens and strokes one shape. Pure, so a background refine can call it.
     static func tessellate(_ shape: VectorShape, tolerance: Double) -> Tessellation {
         let poly: [Vec2]
-        if let text = shape.text, text.held != nil, shape.textFrame != nil, shape.path == TextShaping.outline(text) {
+        if let text = shape.text, text.held != nil, shape.layoutFrame != nil, shape.path == TextShaping.outline(text) {
             // A text partway through a tracking or line-height tween, drawn unbaked: its
             // glyphs' flattened outlines, moved where this frame puts them.
             poly = TextShaping.flattenedOutline(text, tolerance: tolerance)
@@ -1224,7 +1224,7 @@ extension VectorShape {
     /// outline's color, since only the covers' paint reads them. `ArtRepaintTests` lists
     /// the shape's properties, so a new one has to be placed on one side or the other.
     func hasSameGeometry(as other: VectorShape) -> Bool {
-        hasSameSteps(as: other) && path == other.path && text == other.text && textFrame == other.textFrame
+        hasSameSteps(as: other) && path == other.path && text == other.text && math == other.math && layoutFrame == other.layoutFrame
     }
 
     /// True when the art draws `other` with the same steps as this shape, given vertex
@@ -1234,6 +1234,7 @@ extension VectorShape {
     /// since they decide which parts there are.
     func hasSameSteps(as other: VectorShape) -> Bool {
         id == other.id && path.closed == other.path.closed && (text == nil) == (other.text == nil) &&
+            (math == nil) == (other.math == nil) &&
             (fill == nil) == (other.fill == nil) && (gradient == nil) == (other.gradient == nil) &&
             (image == nil) == (other.image == nil) &&
             ArtBuilder.Tessellation.sameOutline(stroke, other.stroke) &&

@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/dgcrensh/ControlFlow/Schema/math-1.0.schema.json",
+  "title": "ControlFlow formula layouts",
+  "description": "math.json inside a .controlflow package (format 1.3) and an HTML export: the typeset layout of every formula the presentation shows, so opening, playing and exporting never typeset. It is a cache: a reader that can typeset may ignore it, and a formula it leaves out is typeset when needed. Glyph outlines are in glyph units (1000 per em, y up); a formula's box, baseline, places and rules are in thousandths of an em with y down from the box's top-left, so multiplying by size / 1000 gives points in the shape's space. See Schema/README.md, \"Math\".",
+  "type": "object",
+  "required": ["glyphs", "formulas"],
+  "properties": {
+    "engine": { "description": "The typesetter and font that made every formula, such as mathjax-4.1.3/newcm. Absent when formulas name their own.", "type": "string" },
+    "glyphs": {
+      "description": "Each glyph's outline once, by key (font, variant and code point, such as NCM-I-1D44E for an italic a).",
+      "type": "object",
+      "additionalProperties": {
+        "description": "The glyph's closed contours, filled together (non-zero).",
+        "type": "array",
+        "items": { "$ref": "#/$defs/contour" }
+      }
+    },
+    "formulas": {
+      "description": "One entry per distinct formula, in draw order with the first keyframe first.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/formula" }
+    }
+  },
+  "$defs": {
+    "contour": {
+      "description": "Each point's x, y, inX, inY, outX, outY in turn, handles as offsets from the point, as a shape's points are. Closed.",
+      "type": "array",
+      "minItems": 12,
+      "items": { "type": "number" }
+    },
+    "formula": {
+      "type": "object",
+      "required": ["math", "box", "baseline", "glyphs", "rules"],
+      "properties": {
+        "math": { "description": "The formula, exactly as a shape's math object writes it.", "$ref": "controlflow-1.0.schema.json#/$defs/math" },
+        "engine": { "description": "The typesetter that made this formula, when the file has no top-level engine.", "type": "string" },
+        "box": { "description": "The box's width and height.", "type": "array", "prefixItems": [{ "type": "number", "minimum": 0 }, { "type": "number", "minimum": 0 }], "minItems": 2, "maxItems": 2 },
+        "baseline": { "description": "How far below the box's top the baseline is.", "type": "number" },
+        "glyphs": {
+          "description": "In reading order.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["key", "place"],
+            "properties": {
+              "key": { "description": "The glyph's outline in the file's glyphs.", "type": "string" },
+              "place": { "description": "The matrix [a, b, c, d, tx, ty] from glyph units to the formula's (x' = a x + c y + tx, y' = b x + d y + ty).", "type": "array", "items": { "type": "number" }, "minItems": 6, "maxItems": 6 },
+              "tags": { "description": "The \\class names the glyph sits in, outermost first.", "type": "array", "items": { "type": "string" } },
+              "source": { "description": "The LaTeX the glyph came from.", "type": "string" }
+            }
+          }
+        },
+        "rules": {
+          "description": "Fraction bars and overlines as [x, y, width, height], in document order. They are wound as the glyphs are.",
+          "type": "array",
+          "items": { "type": "array", "items": { "type": "number" }, "minItems": 4, "maxItems": 4 }
+        }
+      }
+    }
+  }
+}

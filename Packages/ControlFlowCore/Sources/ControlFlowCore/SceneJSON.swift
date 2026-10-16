@@ -53,6 +53,7 @@ enum SceneJSON {
         if let group = shape.group { members.append((key: "group", value: id(group))) }
         members.append((key: "closed", value: .bool(shape.path.closed)))
         if let text = shape.text { members.append((key: "text", value: self.text(text))) }
+        if let math = shape.math { members.append((key: "math", value: self.math(math))) }
         if let image = shape.image { members.append((key: "image", value: .object([(key: "src", value: .string(image.src))]))) }
         if let fill = shape.fill {
             members.append((key: "fill", value: color(fill)))
@@ -106,6 +107,13 @@ enum SceneJSON {
         if let width = text.width { members.append((key: "width", value: num(width))) }
         if text.lineHeight != plain.lineHeight { members.append((key: "lineHeight", value: num(text.lineHeight))) }
         if text.tracking != plain.tracking { members.append((key: "tracking", value: num(text.tracking))) }
+        return .object(members)
+    }
+
+    static func math(_ math: MathContent) -> JSONValue {
+        var members: [(key: String, value: JSONValue)] = [(key: "source", value: .string(math.source))]
+        if math.size != 72 { members.append((key: "size", value: num(math.size))) }
+        if !math.display { members.append((key: "display", value: .bool(false))) }
         return .object(members)
     }
 
@@ -225,6 +233,7 @@ enum SceneJSON {
             shape.gradient = try node.field("gradient").map(readGradient)
         }
         shape.text = try node.field("text").map(readText)
+        shape.math = try node.field("math").map(readMath)
         shape.image = try node.field("image").map(readImage)
         shape.stroke = try node.field("stroke").map { try readStroke($0, context: context) }
         shape.opacity = min(max(try node.number("opacity") ?? 1, 0), 1)
@@ -293,6 +302,16 @@ enum SceneJSON {
         }
         text.tracking = try node.number("tracking") ?? 0
         return text
+    }
+
+    static func readMath(_ node: Node) throws -> MathContent {
+        var math = MathContent(source: try node.require("source").string())
+        if let size = try node.number("size") {
+            guard size > 0 else { throw PresentationFileError.invalid(path: node.childPath("size"), problem: "is not positive") }
+            math.size = min(max(size, TextContent.sizeRange.lowerBound), TextContent.sizeRange.upperBound)
+        }
+        math.display = try node.bool("display") ?? true
+        return math
     }
 
     static func readImage(_ node: Node) throws -> ShapeImage {
@@ -386,6 +405,7 @@ enum PropertyPath {
         "w": 1, "smooth": .bool(true), "symmetric": .bool(false), "stroked": .bool(true),
         "text.font": .string(TextContent.systemFont), "text.weight": 400, "text.italic": .bool(false), "text.size": 72,
         "text.align": .string("left"), "text.lineHeight": 1.2, "text.tracking": 0,
+        "math.size": 72, "math.display": .bool(true),
     ]
 
     /// The property changes that turn `a` into `b` (both objects of the same kind): every

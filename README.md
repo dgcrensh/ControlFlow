@@ -14,6 +14,7 @@ Plan: [docs/plans/animation-app.md](docs/plans/animation-app.md).
 | `Config/Info.plist` | Document type and exported type declarations (merged with Xcode's generated Info.plist). |
 | `Packages/ControlFlowCore/` | UI-free Swift package: geometry, camera, curve fitting, Bézier paths, the drawing model, editing tools, undo, keyframes and their interpolation, tessellation, touch routing and palm rejection, the viewport, and the JSON file format. Builds and tests on macOS or Linux. |
 | `Schema/` | The file format: JSON Schema, notes, an example and the interpolation test vectors. |
+| `MathJax/` | MathJax 4 pinned and bundled into one script for typesetting formulas (`build.sh`). |
 
 ## Running
 
@@ -162,7 +163,7 @@ The plan is [docs/plans/text.md](docs/plans/text.md).
 
 **How it works**
 
-- **Core** (`Text.swift`, `DrawingEditor+Text.swift`): a text is a `VectorShape` with a `TextContent` and an empty path. `TextShaping` lays it out through the `TextShaper` in use (CoreText in the app, `StubTextShaper` in tests and on Linux), and `VectorShape.resolvingText()` puts the glyphs into the path wherever shapes are drawn or hit-tested, so stored text never holds glyphs. `TextEditing` is the string and selection logic and `TextEditState` the session; `Interpolation` lerps tracking and line height with `TextContent.held`. Tests are in `TextTests.swift`.
+- **Core** (`Text.swift`, `DrawingEditor+Text.swift`): a text is a `VectorShape` with a `TextContent` and an empty path. `TextShaping` lays it out through the `TextShaper` in use (CoreText in the app, `StubTextShaper` in tests and on Linux), and `VectorShape.resolvingLayout()` puts the glyphs into the path wherever shapes are drawn or hit-tested, so stored text never holds glyphs. `TextEditing` is the string and selection logic and `TextEditState` the session; `Interpolation` lerps tracking and line height with `TextContent.held`. Tests are in `TextTests.swift`.
 - **App:** `CoreTextShaper` (`Canvas/`) breaks lines with a `CTTypesetter` and caches glyph outlines from `CTFontCreatePathForGlyph`. `MetalCanvasView` keeps an invisible `UITextView` as the keyboard's target, copying words and selection both ways, and offers texts to Scribble with `UIIndirectScribbleInteraction`.
 - **Format 1.1** adds `text` to shapes (`Schema/README.md`, "Text"). The HTML export's `text.json` and `player.js` are checked by the test vectors.
 
@@ -181,6 +182,20 @@ The plan is [docs/plans/images.md](docs/plans/images.md).
 - **Core** (`Image.swift`, `DrawingEditor+Image.swift`): an image is a `VectorShape` with a `ShapeImage` (its `src`) and a closed four-corner path, so moving, transforms, interpolation, hit testing and the file need nothing new. `imagePlacement` maps the picture's unit square onto the corners; `hasEditablePath` keeps Direct Select, the scissors and path edits off it. `ArtBuilder` stencils the frame like a fill and covers it with an `ArtImage` paint (the world-to-picture map). `Presentation.imageSources` lists the pictures every keyframe shows, which the package and the HTML export save. Tests are in `ImageTests.swift`.
 - **App:** `ImageLibrary` (`Canvas/`) holds the pictures of every open document by `src`, off the main thread too. `CanvasRenderer` draws an image cover with the `image_cover_fragment` shader, sampling its texture through the paint's map, and paints a placeholder until the texture is loaded. `CanvasGPU` decodes and uploads each picture once, off the main thread, for every canvas (the editor, the presenter view and an external display), and asks them for a frame when it is ready. `ThumbnailRenderer` draws pictures with Core Graphics.
 - **Format 1.2** adds `image` to shapes (`Schema/README.md`, "Images"). `player.js` reads it and draws an `<image>`.
+
+## Math notes
+
+The plan is [docs/plans/math.md](docs/plans/math.md). Formulas are being built in four steps; the first, below, puts them in the core and the file, with no way to make one in the app yet.
+
+- A document with formulas (made by hand or by the tests) opens, plays, presents and exports: each formula draws in the shape's fill, at its place, turn and scale, from the layout saved with the document, so opening it typesets nothing. Select, Arrange, Align, copy and paste, the Layers panel and undo treat a formula like a text, picked anywhere in its box. Direct Select and the scissors leave it alone.
+- **Keyframes:** a formula's place, turn, scale, opacity and fill animate as any shape's; a change to its LaTeX, size or style happens at the start of the transition (the morph comes later).
+- Exports draw formulas as outlines: SVG, PNG, thumbnails and the web page look as the iPad does. A formula whose layout isn't saved draws nothing yet.
+
+### How it is built
+
+- **Core** (`Math.swift`, `MathLayout.swift`, `MathTypesetting.swift`): a formula is a `VectorShape` with a `MathContent` (its LaTeX, size and display style) and an empty path. `MathLayout.parse(svg:content:)` reads MathJax's SVG into glyphs (each outline once, by key, with where it goes, its `\class` tags and its LaTeX) and rules, in points. `MathTypesetting` keeps every layout known, with the engine that made it, and typesets in the background through the `MathTypesetter` in use; `VectorShape.resolvingLayout()` draws a formula from it, or a placeholder box until it is known. `Presentation.mathContents` lists the formulas every keyframe shows, and `MathFile` writes and reads their layouts as `math.json`, which the package and the HTML export save. Tests are in `MathLayoutTests.swift`, `MathTests.swift` and `MathPackageTests.swift`, against MathJax's real output in `Tests/ControlFlowCoreTests/Fixtures/math`.
+- **MathJax:** `MathJax/` pins MathJax 4.1.3 and its New Computer Modern font and bundles them into one script that typesets synchronously with no DOM (`MathJax/build.sh`). `node Schema/typeset_math.mjs` runs that bundle in a bare Node context, as the app will run it in JavaScriptCore, to write the test fixtures listed in `sources.json`.
+- **Format 1.3** adds `math` to shapes and `math.json` to the package (`Schema/README.md`, "Math"). `player.js` reads both and draws formulas from `math.json`, checked against the test vectors.
 
 ## Arranging and aligning notes
 

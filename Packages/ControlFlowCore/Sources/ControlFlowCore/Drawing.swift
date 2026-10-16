@@ -1,17 +1,19 @@
 import Foundation
 
 /// One path with an optional fill (closed paths only) and an optional outline. A text
-/// shape (one with `text`) draws its glyph outlines instead, and keeps its own path
-/// empty and closed. An image shape (one with `image`) draws its picture in place of a
+/// shape (one with `text`) or a formula (one with `math`) draws its glyph outlines
+/// instead, and keeps its own path empty and closed. An image shape (one with `image`) draws its picture in place of a
 /// fill, over the frame its four points make (see `imagePlacement`).
 public struct VectorShape: Hashable, Sendable, Codable, Identifiable {
     public var id: Int
     public var path: BezierPath
     /// The words a text shape shows, and how they are set (see `TextContent`).
     public var text: TextContent?
-    /// A text shape as it is drawn (see `resolvingText()`): its box's corners, carried
-    /// with the path by every transform. Nil in a drawing's own shapes.
-    public internal(set) var textFrame: [Vec2]?
+    /// The LaTeX a formula shows, and how it is set (see `MathContent`).
+    public var math: MathContent?
+    /// A text or formula as it is drawn (see `resolvingLayout()`): its box's corners,
+    /// carried with the path by every transform. Nil in a drawing's own shapes.
+    public internal(set) var layoutFrame: [Vec2]?
     /// The picture an image shape shows (see `ShapeImage`).
     public var image: ShapeImage?
     /// The fill color. With a `gradient` it is the solid color readers without
@@ -57,29 +59,47 @@ public struct VectorShape: Hashable, Sendable, Codable, Identifiable {
         self.text = text
     }
 
+    /// A formula showing `math`, at the origin of its own space.
+    public init(id: Int, math: MathContent, fill: RGBAColor? = .black, transform: Transform = .identity) {
+        self.init(id: id, path: BezierPath(closed: true), fill: fill, transform: transform)
+        self.math = math
+    }
+
     /// Fill only applies to closed paths, and not to an image, which draws its picture instead.
     public var visibleFill: RGBAColor? { path.closed && image == nil ? fill : nil }
 
     public var isText: Bool { text != nil }
 
-    /// The shape as it is drawn: a text shape's glyph outlines in its path (one path,
-    /// bridged) and its box in `textFrame`. Any other shape, or one already resolved,
-    /// as it is.
-    public func resolvingText() -> VectorShape {
-        guard let text, textFrame == nil else { return self }
+    /// True for a shape whose path comes from a layout, not its points: a text or a formula.
+    public var isLaidOut: Bool { text != nil || math != nil }
+
+    /// The shape as it is drawn: a text's or formula's glyph outlines in its path (one
+    /// path, bridged) and its box in `layoutFrame`. A formula whose layout isn't known
+    /// yet (see `MathTypesetting`) has an empty path and a placeholder box. Any other
+    /// shape, or one already resolved, as it is.
+    public func resolvingLayout() -> VectorShape {
+        guard isLaidOut, layoutFrame == nil else { return self }
         var copy = self
-        copy.path = TextShaping.outline(text)
+        if let text {
+            copy.path = TextShaping.outline(text)
+            copy.layoutFrame = TextShaping.layout(text).frame.corners
+        } else if let math {
+            let layout = MathTypesetting.layout(math)
+            copy.path = layout?.outline ?? BezierPath(closed: true)
+            copy.layoutFrame = (layout?.bounds ?? MathLayout.placeholder(math)).corners
+        }
         copy.path.closed = true
-        // Outlines on text come later: its glyphs are filled only.
+        // Outlines on text and formulas come later: their glyphs are filled only.
         copy.stroke = nil
-        copy.textFrame = TextShaping.layout(text).frame.corners
         return copy
     }
 
-    /// The text box in the shape's own space, for a text shape that isn't resolved.
-    private var textBounds: Rect? {
-        if let textFrame { return Rect(points: textFrame) }
-        return text.map { TextShaping.layout($0).frame }
+    /// The box of a text or formula in the shape's own space, when it isn't resolved.
+    private var layoutBounds: Rect? {
+        if let layoutFrame { return Rect(points: layoutFrame) }
+        if let text { return TextShaping.layout(text).frame }
+        if let math { return MathTypesetting.layout(math)?.bounds ?? MathLayout.placeholder(math) }
+        return nil
     }
 
     /// How far the outline reaches from the path at its widest, in points.
@@ -90,47 +110,47 @@ public struct VectorShape: Hashable, Sendable, Codable, Identifiable {
     }
 
     public var bounds: Rect {
-        if let box = textBounds { return box.union(path.bounds()) }
+        if let box = layoutBounds { return box.union(path.bounds()) }
         return path.bounds().outset(by: outlineReach)
     }
 
     /// A conservative `bounds` (from the control points, so it needs no flattening) for
     /// rejecting points and rectangles that can't touch the shape.
     public var hitBounds: Rect {
-        if let box = textBounds { return box.union(path.controlBounds) }
+        if let box = layoutBounds { return box.union(path.controlBounds) }
         return path.controlBounds.outset(by: outlineReach)
     }
 
     /// True when `geometryBounds` isn't null, found without measuring the path. A
     /// transform never changes it, so it holds for the shape in world space too.
     public var hasGeometry: Bool {
-        !path.points.isEmpty || !(textBounds?.isNull ?? true)
+        !path.points.isEmpty || !(layoutBounds?.isNull ?? true)
     }
 
     /// The bounds of the geometry, without outline width: the path's, or a text's box.
     public var geometryBounds: Rect {
-        if let box = textBounds { return box.union(path.bounds()) }
+        if let box = layoutBounds { return box.union(path.bounds()) }
         return path.bounds()
     }
 
     /// The shape with `m` (its whole transform from its own space to world space, see
     /// `Layer.worldMatrix(ofShape:)`) applied to its path and gradient, and its own
     /// transform cleared: what it looks like in world space. A text shape is resolved
-    /// first (see `resolvingText()`).
+    /// first (see `resolvingLayout()`).
     public func baked(_ m: Affine2D) -> VectorShape {
-        var copy = resolvingText()
+        var copy = resolvingLayout()
         copy.transform = .identity
         if m != .identity { copy.apply(m) }
         return copy
     }
 
-    /// `baked`, for a shape that stays in a drawing: a text shape keeps its words and
-    /// takes `m` as its own transform (about its pivot), or, where `m` can't be a
-    /// transform (a skew), keeps its own.
-    public func bakedKeepingText(_ m: Affine2D) -> VectorShape {
-        guard text != nil else { return baked(m) }
+    /// `baked`, for a shape that stays in a drawing: a text or formula keeps its words or
+    /// source and takes `m` as its own transform (about its pivot), or, where `m` can't
+    /// be a transform (a skew), keeps its own.
+    public func bakedKeepingLayout(_ m: Affine2D) -> VectorShape {
+        guard isLaidOut else { return baked(m) }
         var copy = self
-        copy.textFrame = nil
+        copy.layoutFrame = nil
         if let t = Transform(matrix: m, pivot: transform.pivot, near: transform.rotation) { copy.transform = t }
         return copy
     }
@@ -140,7 +160,7 @@ public struct VectorShape: Hashable, Sendable, Codable, Identifiable {
     /// shape (not resolved), whose glyphs are laid out at its origin: it takes `t` into
     /// its transform instead, where `t` can be one.
     public mutating func apply(_ t: Affine2D) {
-        if text != nil, textFrame == nil {
+        if isLaidOut, layoutFrame == nil {
             guard t != .identity, let inverse = t.inverted,
                   let next = Transform(matrix: transform.matrix * t, pivot: inverse.apply(transform.pivot),
                                        near: transform.rotation) else { return }
@@ -149,7 +169,7 @@ public struct VectorShape: Hashable, Sendable, Codable, Identifiable {
         }
         path.apply(t)
         gradient?.apply(t)
-        if textFrame != nil { textFrame = textFrame!.map(t.apply) }
+        if layoutFrame != nil { layoutFrame = layoutFrame!.map(t.apply) }
         if stroke != nil {
             let k = abs(t.determinant).squareRoot()
             stroke!.width *= k
@@ -163,7 +183,7 @@ public struct VectorShape: Hashable, Sendable, Codable, Identifiable {
     public func isApproximately(_ o: VectorShape, tolerance: Double = 1e-9) -> Bool {
         if self == o { return true }
         guard id == o.id, path.closed == o.path.closed, path.points.count == o.path.points.count,
-              text == o.text, image == o.image, (textFrame == nil) == (o.textFrame == nil), fill == o.fill, fillGlobal == o.fillGlobal, opacity == o.opacity, isClipped == o.isClipped,
+              text == o.text, math == o.math, image == o.image, (layoutFrame == nil) == (o.layoutFrame == nil), fill == o.fill, fillGlobal == o.fillGlobal, opacity == o.opacity, isClipped == o.isClipped,
               isHidden == o.isHidden, isLocked == o.isLocked, group == o.group, transform == o.transform,
               (stroke == nil) == (o.stroke == nil), (gradient == nil) == (o.gradient == nil) else { return false }
         for (a, b) in zip(path.points, o.path.points) {
@@ -180,7 +200,7 @@ public struct VectorShape: Hashable, Sendable, Codable, Identifiable {
             s1.dashOffset = s2.dashOffset
             guard s1 == s2 else { return false }
         }
-        if let f1 = textFrame, let f2 = o.textFrame {
+        if let f1 = layoutFrame, let f2 = o.layoutFrame {
             guard f1.count == f2.count, zip(f1, f2).allSatisfy({ $0.isApproximately($1, tolerance: tolerance) }) else { return false }
         }
         if var g1 = gradient, let g2 = o.gradient {
@@ -210,8 +230,8 @@ public struct VectorShape: Hashable, Sendable, Codable, Identifiable {
     }
 
     private func contains(_ p: Vec2, tolerance: Double, polygon poly: [Vec2]) -> Bool {
-        // A text is picked anywhere in its box, between the letters too.
-        if let frame = textFrame ?? text.map({ TextShaping.layout($0).frame.corners }), frame.count >= 3 {
+        // A text or formula is picked anywhere in its box, between the letters too.
+        if let frame = layoutFrame ?? layoutBounds?.corners, frame.count >= 3 {
             if windingNumber(of: p, polygon: frame) != 0 { return true }
             for i in frame.indices where p.distance(toSegment: frame[i], frame[(i + 1) % frame.count]) <= tolerance {
                 return true
@@ -349,14 +369,18 @@ public struct Layer: Hashable, Sendable, Codable, Identifiable {
     /// True when any shape is text, whose glyphs are laid out to draw it.
     public var hasText: Bool { shapes.contains { $0.text != nil } }
 
-    /// True when the layer drawn differs from the layer itself: it has transforms or text.
-    var needsWorld: Bool { hasTransforms || hasText }
+    /// True when any shape is text or a formula, whose glyphs are laid out to draw it.
+    public var hasLaidOut: Bool { shapes.contains(where: \.isLaidOut) }
 
-    /// Shape `index` as it is drawn: in world space, with no transform, and a text
-    /// shape's glyphs in its path.
+    /// True when the layer drawn differs from the layer itself: it has transforms, text
+    /// or formulas.
+    var needsWorld: Bool { hasTransforms || hasLaidOut }
+
+    /// Shape `index` as it is drawn: in world space, with no transform, and a text's or
+    /// formula's glyphs in its path.
     public func worldShape(_ index: Int) -> VectorShape {
         let m = worldMatrix(ofShape: index)
-        return m == .identity ? shapes[index].resolvingText() : shapes[index].baked(m)
+        return m == .identity ? shapes[index].resolvingLayout() : shapes[index].baked(m)
     }
 
     /// Every shape as it is drawn (see `worldShape(_:)`).
@@ -373,10 +397,10 @@ public struct Layer: Hashable, Sendable, Codable, Identifiable {
         var shape = world
         shape.transform = shapes[index].transform
         shape.group = world.group
-        if world.textFrame != nil || shapes[index].text != nil {
-            // A text's glyphs are laid out, not kept: only its gradient comes back.
+        if world.layoutFrame != nil || shapes[index].isLaidOut {
+            // A text's or formula's glyphs are laid out, not kept: only its gradient comes back.
             shape.path = shapes[index].path
-            shape.textFrame = nil
+            shape.layoutFrame = nil
             if m != .identity {
                 guard let inverse = m.inverted else { return false }
                 shape.gradient?.apply(inverse)
@@ -431,7 +455,7 @@ public struct Layer: Hashable, Sendable, Codable, Identifiable {
             if out.transform.isIdentity { out.transform.pivot = .zero }
             return out
         }
-        return shape.bakedKeepingText(change * shape.transform.matrix)
+        return shape.bakedKeepingLayout(change * shape.transform.matrix)
     }
 
     /// Adds groups and shapes taken from another layer (see `TakenArt`) on top, so they
@@ -1119,7 +1143,7 @@ public struct Drawing: Hashable, Sendable, Codable {
         guard layer.hasTransforms else { return layer }
         var copy = layer
         copy.shapes = layer.shapes.indices.map { i in
-            layer.shapes[i].text != nil ? layer.shapes[i].bakedKeepingText(layer.worldMatrix(ofShape: i)) : layer.worldShape(i)
+            layer.shapes[i].isLaidOut ? layer.shapes[i].bakedKeepingLayout(layer.worldMatrix(ofShape: i)) : layer.worldShape(i)
         }
         copy.transform = Transform(pivot: layer.worldPivot)
         for g in layer.groups.indices { copy.groups[g].transform = .identity }

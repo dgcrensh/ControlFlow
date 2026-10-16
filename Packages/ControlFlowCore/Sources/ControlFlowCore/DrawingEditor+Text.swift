@@ -420,7 +420,7 @@ extension DrawingEditor {
                 var shape = original
                 shape.id = drawing.makeID()
                 shape.text = nil
-                shape.textFrame = nil
+                shape.layoutFrame = nil
                 shape.stroke = nil
                 shape.path = BezierPath.bridging(rings)
                 shape.group = group

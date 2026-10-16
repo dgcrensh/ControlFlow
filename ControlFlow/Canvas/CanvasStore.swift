@@ -515,7 +515,7 @@ final class CanvasStore {
         var out: [(ref: ShapeRef, frame: [Vec2])] = []
         for layer in drawing.layers {
             for (s, shape) in layer.shapes.enumerated() where shape.text != nil && layer.isEditable(s) {
-                guard let frame = layer.worldShape(s).textFrame else { continue }
+                guard let frame = layer.worldShape(s).layoutFrame else { continue }
                 out.append((ShapeRef(layer: layer.id, shape: shape.id), frame))
             }
         }

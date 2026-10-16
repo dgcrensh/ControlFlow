@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/dgcrensh/ControlFlow/Schema/controlflow-1.0.schema.json",
   "title": "ControlFlow presentation",
-  "description": "presentation.json inside a .controlflow package, format 1.2 (1.0 and 1.1 files are valid too): the opening scene in full, then sequences of keyframes, each the changes from the state before it. Units are points with the y-axis down, angles are degrees (clockwise on screen), and colors are sRGB hex with straight alpha. Every id is a positive whole number used once in the file. Readers should ignore keys they do not know. See Schema/README.md for the rules the schema can't express (which ids changes may name, and how transitions play).",
+  "description": "presentation.json inside a .controlflow package, format 1.3 (1.0, 1.1 and 1.2 files are valid too): the opening scene in full, then sequences of keyframes, each the changes from the state before it. Units are points with the y-axis down, angles are degrees (clockwise on screen), and colors are sRGB hex with straight alpha. Every id is a positive whole number used once in the file. Readers should ignore keys they do not know. See Schema/README.md for the rules the schema can't express (which ids changes may name, and how transitions play).",
   "type": "object",
   "required": ["formatVersion"],
   "properties": {
@@ -144,6 +144,7 @@
         "clipped": { "description": "The shape draws only where the nearest unclipped shape below it in the same layer (and group) draws. Defaults to false.", "type": "boolean" },
         "transform": { "description": "The shape's transform, in its group (or layer). Its points are before it.", "$ref": "#/$defs/transform" },
         "text": { "description": "Makes the shape a text (format 1.1): the words are laid out in the shape's space and drawn with the shape's fill, opacity, transform and clipping. Its points are empty, and a stroke on it is not drawn (outlines on text come later); readers that ignore text draw nothing for it.", "$ref": "#/$defs/text" },
+        "math": { "description": "Makes the shape a formula (format 1.3): LaTeX math typeset in the shape's space, its box's top-left at the origin, and drawn with the shape's fill, opacity, transform and clipping. Its points are empty, and a stroke on it is not drawn; readers that ignore formulas draw nothing for it. The typeset layouts are in the package's math.json (see math-1.0.schema.json).", "$ref": "#/$defs/math" },
         "image": { "description": "Makes the shape an image (format 1.2): the picture is stretched over the frame its points make, drawn with the shape's opacity, transform and clipping in place of a fill, under its stroke. Its four points are the frame's top-left, top-right, bottom-right and bottom-left corners, with straight edges; readers that ignore images draw the frame's fill and stroke, if any.", "$ref": "#/$defs/image" },
         "hidden": { "description": "Editor hint, not keyed. Defaults to false.", "type": "boolean" },
         "locked": { "description": "Editor hint, not keyed. Defaults to false.", "type": "boolean" },
@@ -168,6 +169,16 @@
         "width": { "description": "The box's width: lines wrap to it. Absent means one line per \\n, as wide as its words.", "type": "number", "exclusiveMinimum": 0 },
         "lineHeight": { "description": "Line spacing as a multiple of size. Defaults to 1.2.", "type": "number", "minimum": 0.1, "maximum": 10 },
         "tracking": { "description": "Extra space after each character but a line's last, in points. Defaults to 0.", "type": "number" }
+      }
+    },
+    "math": {
+      "description": "A formula's LaTeX and style. Every key but source is optional and written only when it differs from its default.",
+      "type": "object",
+      "required": ["source"],
+      "properties": {
+        "source": { "description": "LaTeX math, without $ or \\[ \\], as MathJax's TeX input reads it.", "type": "string" },
+        "size": { "description": "Points per em. Defaults to 72.", "type": "number", "exclusiveMinimum": 0, "maximum": 2000 },
+        "display": { "description": "Display style, as in \\[ \\] (true, the default), or inline style, as in $ $ (false: smaller fractions and limits).", "type": "boolean" }
       }
     },
     "image": {
@@ -288,10 +299,10 @@
           "properties": {
             "set": { "$ref": "#/$defs/id" },
             "props": {
-              "description": "Dotted keys into the object's JSON (transform.rotation, stroke.width, gradient.stops.1.color, text.string, image.src) and their new values. null removes a key that has no default (fill, stroke, gradient, group, text.width). Names, editor hints, ids and children can't be set.",
+              "description": "Dotted keys into the object's JSON (transform.rotation, stroke.width, gradient.stops.1.color, text.string, math.source, image.src) and their new values. null removes a key that has no default (fill, stroke, gradient, group, text.width). Names, editor hints, ids and children can't be set.",
               "type": "object",
               "propertyNames": {
-                "pattern": "^(transform|stroke|gradient|group|closed|fill|fillGlobal|opacity|clipped|text|image|p|in|out|w|smooth|symmetric|stroked|background|color)(\\.[A-Za-z0-9]+)*$"
+                "pattern": "^(transform|stroke|gradient|group|closed|fill|fillGlobal|opacity|clipped|text|math|image|p|in|out|w|smooth|symmetric|stroked|background|color)(\\.[A-Za-z0-9]+)*$"
               }
             }
           },

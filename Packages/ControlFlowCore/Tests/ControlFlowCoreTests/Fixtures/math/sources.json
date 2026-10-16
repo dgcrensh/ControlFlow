@@ -1,0 +1,14 @@
+[
+  { "source": "a + b = c" },
+  { "source": "a = c - b" },
+  { "source": "a^2+b^2=c^2" },
+  { "source": "\\frac{a}{b}" },
+  { "source": "\\sqrt{x}" },
+  { "source": "\\begin{pmatrix}1&2\\\\3&4\\end{pmatrix}" },
+  { "source": "\\left(\\begin{matrix}1\\\\3\\\\5\\\\7\\\\9\\end{matrix}\\right)" },
+  { "source": "\\class{lhs}{a+b}=c" },
+  { "source": "e^{i\\pi} + 1 = 0" },
+  { "source": "x < y \\text{ if } a \\& b" },
+  { "source": "\\sum_{k=1}^n k" },
+  { "source": "\\sum_{k=1}^n k", "display": false }
+]

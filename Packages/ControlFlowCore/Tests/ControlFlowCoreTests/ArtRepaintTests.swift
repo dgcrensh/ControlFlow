@@ -154,7 +154,7 @@ final class ArtRepaintTests: XCTestCase {
         let shape = VectorShape(id: 1, path: BezierPath(closed: true), fill: .black,
                                 stroke: StrokeStyle(color: .black, width: 1))
         XCTAssertEqual(Mirror(reflecting: shape).children.compactMap(\.label),
-                       ["id", "path", "text", "textFrame", "image", "fill", "gradient", "fillGlobal", "stroke", "opacity",
+                       ["id", "path", "text", "math", "layoutFrame", "image", "fill", "gradient", "fillGlobal", "stroke", "opacity",
                         "isClipped", "isHidden", "isLocked", "group", "transform"])
         XCTAssertEqual(Mirror(reflecting: shape.stroke!).children.compactMap(\.label),
                        ["color", "width", "cap", "join", "miterLimit", "dash", "dashOffset", "alignment", "global"])
@@ -170,6 +170,7 @@ final class ArtRepaintTests: XCTestCase {
         // Everything else:
         let changes: [(inout VectorShape) -> Void] = [
             { $0.id = 2 }, { $0.path.closed = false }, { $0.text = TextContent(string: "A", size: 10) },
+            { $0.math = MathContent(source: "x") },
             { $0.image = ShapeImage(src: "a.png") },
             { $0.gradient = ShapeGradient(kind: .linear, start: .zero, end: Vec2(1, 0), stops: []) },
             { $0.stroke = nil }, { $0.stroke?.width = 2 }, { $0.stroke?.cap = .butt }, { $0.stroke?.join = .bevel },

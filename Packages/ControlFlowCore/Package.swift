@@ -12,6 +12,7 @@ let package = Package(
     targets: [
         // Player/ is the HTML export's page and player, copied into each export.
         .target(name: "ControlFlowCore", resources: [.copy("Player")]),
-        .testTarget(name: "ControlFlowCoreTests", dependencies: ["ControlFlowCore"]),
+        // Fixtures/ holds files the tests read, such as MathJax's output for test formulas.
+        .testTarget(name: "ControlFlowCoreTests", dependencies: ["ControlFlowCore"], resources: [.copy("Fixtures")]),
     ]
 )
