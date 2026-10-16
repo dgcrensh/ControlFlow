@@ -1046,8 +1046,7 @@ final class CanvasStore {
 
     /// Adds a reference image under the art, fitted to the middle of the view.
     func importReference(data: Data, name: String) {
-        guard let image = UIImage(data: data), let cgImage = Self.normalized(image),
-              let encoded = Self.encoded(cgImage) else { return }
+        guard let cgImage = Self.normalized(data), let encoded = Self.encoded(cgImage) else { return }
         let size = Vec2(Double(cgImage.width), Double(cgImage.height))
         let view = viewSize.width > 0 ? Vec2(viewSize) : Vec2(1024, 768)
         let camera = session.camera
