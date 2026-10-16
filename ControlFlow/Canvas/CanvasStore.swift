@@ -1114,8 +1114,8 @@ final class CanvasStore {
 
     /// Made with ImageIO rather than UIKit, so it is safe off the main thread.
     nonisolated private static func prepared(_ data: Data) -> PreparedImage? {
-        guard let cgImage = normalized(data), let encoded = encoded(cgImage) else { return nil }
-        return PreparedImage(encoded: encoded, pixels: Vec2(Double(cgImage.width), Double(cgImage.height)))
+        guard let cgImage = Self.normalized(data), let bytes = Self.encoded(cgImage) else { return nil }
+        return PreparedImage(encoded: bytes, pixels: Vec2(Double(cgImage.width), Double(cgImage.height)))
     }
 
     /// Decodes the image with its orientation baked in and its size capped at 4096
