@@ -265,6 +265,9 @@ private struct ToolBar: View {
                     }
                 }
                 Button("Export Web Page", systemImage: "globe") { exportWebPage() }
+                #if DEBUG
+                Button("Time Formulas", systemImage: "stopwatch") { store.timeFormulas() }
+                #endif
                 Divider()
                 Button("Retypeset All Formulas", systemImage: "sum") { store.retypesetAllFormulas() }
                 Divider()

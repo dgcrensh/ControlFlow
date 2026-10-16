@@ -13,13 +13,17 @@ enum ThumbnailRenderer {
 
     /// The last thumbnail made, and what it was made from: a save with no change to the
     /// art since the last one reuses it. Comparing is cheap when nothing changed, since
-    /// the drawing's arrays then share storage.
-    private static let lastThumbnail = Mutex<(drawing: Drawing, size: Int, png: Data?)?>(nil)
+    /// the drawing's arrays then share storage. A formula's layout arriving since
+    /// (`MathTypesetting.generation`) draws it again.
+    private static let lastThumbnail = Mutex<(drawing: Drawing, size: Int, math: Int, png: Data?)?>(nil)
 
     static func png(for drawing: Drawing, size: Int = 512) -> Data? {
-        if let last = lastThumbnail.withLock({ $0 }), last.size == size, last.drawing == drawing { return last.png }
+        let math = drawing.hasMath ? MathTypesetting.generation : 0
+        if let last = lastThumbnail.withLock({ $0 }), last.size == size, last.math == math, last.drawing == drawing {
+            return last.png
+        }
         let png = Signposts.canvas.withIntervalSignpost("Thumbnail") { renderPNG(for: drawing, size: size) }
-        lastThumbnail.withLock { $0 = (drawing, size, png) }
+        lastThumbnail.withLock { $0 = (drawing, size, math, png) }
         return png
     }
 

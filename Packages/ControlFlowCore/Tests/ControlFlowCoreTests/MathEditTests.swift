@@ -47,6 +47,11 @@ final class MathEditTests: XCTestCase {
         XCTAssertEqual(e.drawing.shape(edit.ref)?.math?.source, "")
         XCTAssertEqual(e.selection, .shape(layer: edit.ref.layer, shape: edit.ref.shape))
         XCTAssertNil(e.mathDraftContent, "an empty draft has nothing to typeset")
+        let blank = e.drawing.shape(edit.ref)!.math!
+        let blankLayout = await MathTypesetting.typeset(blank)
+        XCTAssertNil(blankLayout, "a blank formula is never typeset")
+        XCTAssertEqual(e.drawing.frame(of: e.selection)?.corners[2].y ?? 0, 300 + blank.size / 2, accuracy: 1e-6,
+                       "so it shows as its placeholder box")
 
         e.setMathDraft("a + b = c")
         XCTAssertEqual(e.drawing.shape(edit.ref)?.math?.source, "", "the source waits for the draft to typeset")
