@@ -556,6 +556,7 @@ final class CanvasStore {
     func setTextFont(_ name: String) { edit { $0.editor.setTextFont(name) } }
     func setTextSize(_ size: Double) { edit { $0.editor.setTextSize(size) } }
     func setTextWeight(_ weight: Int) { edit { $0.editor.setTextWeight(weight) } }
+    func toggleTextBold() { edit { $0.editor.toggleTextBold() } }
     func setTextItalic(_ italic: Bool) { edit { $0.editor.setTextItalic(italic) } }
     func setTextAlignment(_ align: ControlFlowCore.TextAlignment) { edit { $0.editor.setTextAlignment(align) } }
     /// Slider ticks: continuous, so a drag is handed to the document once it goes quiet.

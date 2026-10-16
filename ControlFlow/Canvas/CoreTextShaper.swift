@@ -16,7 +16,14 @@ struct CoreTextShaper: TextShaper {
     func hasFont(_ name: String) -> Bool { cache.hasFont(name) }
 
     func layout(_ text: TextContent) -> TextLayout {
-        let font = font(for: text)
+        let font = font(for: text, weight: text.weight)
+        // Stretches in other weights (the system font only), each in its own face.
+        var runs: [(range: Range<Int>, font: CTFont)] = []
+        if text.isSystemFont {
+            for run in text.weightRuns where run.weight != text.weight {
+                runs.append((range: run.range, font: self.font(for: text, weight: run.weight)))
+            }
+        }
         let spacing = text.lineSpacing
         let ascent = Double(CTFontGetAscent(font)), descent = Double(CTFontGetDescent(font))
         let string = text.string as NSString
@@ -41,8 +48,14 @@ struct CoreTextShaper: TextShaper {
         var breaks = Set<Int>()
         for (p, paragraph) in paragraphs.enumerated() {
             let words = string.substring(with: paragraph) as NSString
-            let attributed = NSAttributedString(string: words as String,
-                                                attributes: [.font: font, .kern: NSNumber(value: text.tracking)])
+            let attributed = NSMutableAttributedString(string: words as String,
+                                                       attributes: [.font: font, .kern: NSNumber(value: text.tracking)])
+            let span = paragraph.location..<(paragraph.location + paragraph.length)
+            for run in runs where run.range.overlaps(span) {
+                let lower = max(run.range.lowerBound, span.lowerBound), upper = min(run.range.upperBound, span.upperBound)
+                attributed.addAttribute(.font, value: run.font,
+                                        range: NSRange(location: lower - span.lowerBound, length: upper - lower))
+            }
             let typesetter = CTTypesetterCreateWithAttributedString(attributed as CFAttributedString)
             let length = paragraph.length
             var lineStart = 0
@@ -88,14 +101,14 @@ struct CoreTextShaper: TextShaper {
         return TextLayout(glyphs: glyphs, lines: lines, carets: carets, boxWidth: boxWidth)
     }
 
-    /// The font `text` is set in: its named font, or the system font in its weight and
+    /// The font `text` is set in: its named font, or the system font in `weight` and its
     /// slant (also for a font that isn't installed).
-    private func font(for text: TextContent) -> CTFont {
+    private func font(for text: TextContent, weight: Int) -> CTFont {
         let size = CGFloat(text.size)
         if !text.isSystemFont, cache.hasFont(text.font) {
             return CTFontCreateWithName(text.font as CFString, size, nil)
         }
-        var font = UIFont.systemFont(ofSize: size, weight: Self.weight(text.weight))
+        var font = UIFont.systemFont(ofSize: size, weight: Self.weight(weight))
         if text.italic, let italic = font.fontDescriptor.withSymbolicTraits(.traitItalic) {
             font = UIFont(descriptor: italic, size: size)
         }

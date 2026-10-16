@@ -213,6 +213,8 @@ struct Node {
         try member(key, fast: { if case .number(let n) = $0 { Int(exactly: n) } else { nil } }, slow: { try $0.integer() })
     }
 
+    func requireInteger(_ key: String) throws -> Int { try required(key, integer) }
+
     func bool(_ key: String) throws -> Bool? {
         try member(key, fast: { if case .bool(let b) = $0 { b } else { nil } }, slow: { try $0.bool() })
     }

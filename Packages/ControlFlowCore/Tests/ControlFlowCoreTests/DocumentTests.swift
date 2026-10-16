@@ -335,7 +335,7 @@ final class PresentationFormatTests: XCTestCase {
         }
         XCTAssertNoThrow(try open("1.0"))
         XCTAssertNoThrow(try open("1.0.0"))
-        XCTAssertNoThrow(try open("1.3"), "a newer minor version only adds what this one can skip")
+        XCTAssertNoThrow(try open("1.5"), "a newer minor version only adds what this one can skip")
         XCTAssertThrowsError(try open("2.0")) { XCTAssertEqual($0 as? PresentationFileError, .newerVersion("2.0")) }
         XCTAssertThrowsError(try open("0.3.0")) { XCTAssertEqual($0 as? PresentationFileError, .unsupportedVersion("0.3.0")) }
         XCTAssertThrowsError(try open("one")) {

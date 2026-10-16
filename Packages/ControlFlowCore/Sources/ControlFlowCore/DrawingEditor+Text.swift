@@ -146,6 +146,9 @@ public struct TextEditState: Hashable, Sendable {
     /// Increments when the editor itself changes the words or the selection (a tap
     /// placing the caret, say), so the app copies them back into its text view.
     public internal(set) var revision = 0
+    /// The weight chosen with nothing selected, which what is typed next takes, until the
+    /// caret moves.
+    public internal(set) var typingWeight: Int?
     /// True when the session made the text, so it can center its pivot at the end.
     let isNew: Bool
 }
@@ -178,6 +181,15 @@ extension DrawingEditor {
         textEditCount += 1
         let editing = TextEditing(string: text.string, selection: range)
         textEdit = TextEditState(ref: ref, selection: editing.selection, session: textEditCount, revision: 1, isNew: isNew)
+        showEditedWeight()
+    }
+
+    /// While typing, the style controls show the weight at the caret or the selection
+    /// (its first character's when it mixes them).
+    private mutating func showEditedWeight() {
+        guard let edit = textEdit, let text = drawing.shape(edit.ref)?.text else { return }
+        let w = edit.typingWeight ?? text.uniformWeight(in: edit.selection) ?? text.weight(at: edit.selection.lowerBound)
+        if textStyle.weight != w { textStyle.weight = w }
     }
 
     /// Edits text `ref` from a tap at world point `p`: the caret goes where the tap was.
@@ -217,6 +229,8 @@ extension DrawingEditor {
         guard let edit = textEdit else { return }
         textEdit = nil
         guard let idx = drawing.indices(edit.ref), let text = drawing.layers[idx.0].shapes[idx.1].text else { return }
+        // The style controls show the text's own style again, not the weight at the caret.
+        textStyle = text.style
         let before = drawing
         if text.string.isEmpty {
             removeShape(edit.ref)
@@ -247,13 +261,16 @@ extension DrawingEditor {
     public mutating func setEditedText(_ string: String, selection range: Range<Int>) {
         guard var edit = textEdit, let idx = drawing.indices(edit.ref),
               let text = drawing.layers[idx.0].shapes[idx.1].text else { return }
+        let selection = TextEditing.clamped(range, in: string)
         if text.string != string {
             let before = drawing
-            drawing.layers[idx.0].shapes[idx.1].text!.string = string
+            drawing.layers[idx.0].shapes[idx.1].text!.replaceString(with: string, selection: edit.selection, newSelection: selection,
+                                                                    typing: edit.typingWeight)
             commit(from: before, key: textEditKey(edit.session))
         }
-        edit.selection = TextEditing.clamped(range, in: string)
+        edit.selection = selection
         textEdit = edit
+        showEditedWeight()
     }
 
     /// Sets the selection in the text being edited. `fromApp` is false for a change the
@@ -262,9 +279,11 @@ extension DrawingEditor {
         guard var edit = textEdit, let string = editedString else { return }
         let clamped = TextEditing.clamped(range, in: string)
         guard clamped != edit.selection || !fromApp else { return }
+        if clamped != edit.selection { edit.typingWeight = nil }
         edit.selection = clamped
         if !fromApp { edit.revision += 1 }
         textEdit = edit
+        showEditedWeight()
     }
 
     /// Applies a keyboard edit to the text being edited, as a hardware keyboard would.
@@ -363,6 +382,7 @@ extension DrawingEditor {
             out.weight = min(max(out.weight, TextContent.weightRange.lowerBound), TextContent.weightRange.upperBound)
             out.lineHeight = min(max(out.lineHeight, TextContent.lineHeightRange.lowerBound), TextContent.lineHeightRange.upperBound)
             if let width = out.width { out.width = max(width, 1) }
+            out.normalizeWeights()
             return out
         }
         textStyle = restyled(textStyle).style
@@ -374,7 +394,44 @@ extension DrawingEditor {
 
     public mutating func setTextFont(_ name: String) { setTextStyle(key: "font") { $0.font = name.isEmpty ? TextContent.systemFont : name } }
     public mutating func setTextSize(_ size: Double) { setTextStyle(key: "size") { $0.size = size } }
-    public mutating func setTextWeight(_ weight: Int) { setTextStyle(key: "weight") { $0.weight = weight } }
+    /// Sets the weight of the words selected in the text being typed into, or of what is
+    /// typed next when nothing is selected. Otherwise, of new text and of every selected
+    /// text, as a whole.
+    public mutating func setTextWeight(_ weight: Int) {
+        let weight = TextContent.clampedWeight(weight)
+        guard let edit = textEdit, let idx = drawing.indices(edit.ref), drawing.layers[idx.0].shapes[idx.1].text != nil else {
+            setTextStyle(key: "weight") {
+                $0.weight = weight
+                $0.weights = []
+            }
+            return
+        }
+        if edit.selection.isEmpty {
+            textEdit?.typingWeight = weight
+        } else {
+            // Part of the editing session's undo step.
+            let before = drawing
+            drawing.layers[idx.0].shapes[idx.1].text!.setWeight(weight, in: edit.selection)
+            commit(from: before, key: textEditKey(edit.session))
+        }
+        showEditedWeight()
+    }
+
+    /// Bold (700) or back to regular (400), as Command-B does: the words selected in the
+    /// text being typed into (regular if they are all 600 or more), what is typed next
+    /// when nothing is selected, or every selected text as a whole. Only the system font
+    /// has weights.
+    public mutating func toggleTextBold() {
+        if let edit = textEdit, let text = drawing.shape(edit.ref)?.text {
+            guard text.isSystemFont else { return }
+            let current = edit.selection.isEmpty ? (edit.typingWeight ?? text.insertionWeight(at: edit.selection))
+                : text.unitWeights[TextEditing.clamped(edit.selection, in: text.string)].min() ?? text.weight
+            setTextWeight(current >= 600 ? 400 : 700)
+        } else if let text = selectedText, text.isSystemFont {
+            let lightest = text.unitWeights.min() ?? text.weight
+            setTextWeight(lightest >= 600 ? 400 : 700)
+        }
+    }
     public mutating func setTextItalic(_ italic: Bool) { setTextStyle(key: "italic") { $0.italic = italic } }
     public mutating func setTextAlignment(_ align: TextAlignment) { setTextStyle(key: "align") { $0.align = align } }
     public mutating func setTextLineHeight(_ lineHeight: Double) { setTextStyle(key: "lineHeight") { $0.lineHeight = lineHeight } }

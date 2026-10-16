@@ -180,7 +180,7 @@ final class MathTests: XCTestCase {
             (key: "source", value: .string("e^{i\\pi} + 1 = 0")), (key: "size", value: 96), (key: "display", value: .bool(false)),
         ]))
         XCTAssertEqual(shape["points"], JSONValue.array([]))
-        XCTAssertEqual(json["formatVersion"], JSONValue.string("1.3"))
+        XCTAssertEqual(json["formatVersion"], JSONValue.string("1.4"))
         let back = try PresentationFormat.decode(JSONValue(parsing: json.formatted())).drawing
         XCTAssertEqual(back.shape(ref), d.shape(ref))
         let plain = PresentationFormat.encode(mathDrawing().0)

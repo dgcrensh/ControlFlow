@@ -1,4 +1,4 @@
-# Presentation file format 1.3
+# Presentation file format 1.4
 
 A ControlFlow document is a `.controlflow` package (a folder that Files shows as one document):
 
@@ -18,7 +18,7 @@ Character Studio's `.charstudio` files (formats 0.1 to 0.3), which ControlFlow s
 
 - Points, y-axis down. Angles in degrees, clockwise on screen. Colors are `#RRGGBBAA` sRGB with straight alpha.
 - Numbers are written with at most 4 decimal places. Keys are written in a fixed order, so saving twice gives the same file.
-- `formatVersion` is `MAJOR.MINOR`. Readers refuse a newer major version; a newer minor version only adds keys, which older readers ignore. Older files are upgraded on open by the steps in `PresentationFormat.migrations` (none yet). 1.1 added [text](#text), 1.2 [images](#images) and 1.3 [formulas](#math); a 1.0, 1.1 or 1.2 file is a valid 1.3 file.
+- `formatVersion` is `MAJOR.MINOR`. Readers refuse a newer major version; a newer minor version only adds keys, which older readers ignore. Older files are upgraded on open by the steps in `PresentationFormat.migrations` (none yet). 1.1 added [text](#text), 1.2 [images](#images), 1.3 [formulas](#math) and 1.4 [weights within a text](#text); a 1.0 to 1.3 file is a valid 1.4 file.
 - Readers should ignore keys they do not know.
 - **Ids** are positive whole numbers, each used once in the file: the viewport, global colors, layers, groups, shapes, vertices, sequences and keyframes all share one numbering. The one exception is an object created by a keyframe after an object with its id was deleted: a shape moved to another layer is deleted from one and created in the other with the same id, so it animates as one shape.
 
@@ -55,11 +55,12 @@ Every key here is optional and written only when it differs from its default.
 
 A shape with a `text` key is a text: its words are laid out in the shape's own space and filled with the shape's `fill` (and `fillGlobal`), `opacity`, `transform` and clipping, like any closed shape. A text has `"closed": true` and empty `points`, and a `stroke` on it is not drawn (outlines on text come later). Readers that don't know `text` (1.0 readers) see an empty shape and draw nothing.
 
-`text` is `{ "string", "font", "weight", "italic", "size", "align", "width", "lineHeight", "tracking" }`, with only `string` always written:
+`text` is `{ "string", "font", "weight", "weights", "italic", "size", "align", "width", "lineHeight", "tracking" }`, with only `string` always written:
 
 - `string`: the words; `\n` breaks a line.
 - `font`: a font's PostScript name, or `"system"` (the default) for the platform's system font. A reader without the font uses the system font (the app says so when it opens the file).
 - `weight` (100 to 900, default 400) and `italic` (default false).
+- `weights` (format 1.4): stretches of the words in another weight, such as one bold word, as `[{ "start", "length", "weight" }]` with `start` and `length` in UTF-16 code units. The app writes them in order, apart, inside the string, and leaves out empty runs and runs in the text's own `weight`; a reader cuts runs to the string and, where two overlap, lets the later one win. Like `weight`, they apply to the system font. Readers without them (1.3 and older) draw the whole text in `weight`.
 - `size`: in points, default 72.
 - `align`: `left` (default), `center` or `right`.
 - `width`: the box's width, which lines wrap to (before the word that would overflow it). Without it the text is one line per `\n` and the box is as wide as the widest line; the other lines align within it.
@@ -137,7 +138,7 @@ A transition into a keyframe animates from the scene before it to its own over `
 
 - **Numbers** (transform fields, opacity, outline width, miter limit, dash lengths and offset, per-point width, gradient points and stop offsets) and **points** (vertex positions and handle offsets) move linearly. Rotation is a plain number, so 0 to 720 turns twice.
 - **Colors** (fills, outlines, gradient stops, global colors, the viewport background) move componentwise in sRGB with straight alpha, as CSS does. Shapes following a global color follow it as it moves.
-- **Text**: `tracking` and `lineHeight` move like numbers, with lines broken as they will be at the end. Every other text key (`string`, `font`, `weight`, `italic`, `size`, `align`, `width`) takes its new value at the start.
+- **Text**: `tracking` and `lineHeight` move like numbers, with lines broken as they will be at the end. Every other text key (`string`, `font`, `weight`, `weights`, `italic`, `size`, `align`, `width`) takes its new value at the start.
 - **Images**: an image's `src` takes its new value at the start; its frame (points and transform) and opacity move like any shape's.
 - **Formulas**: a formula whose `source`, `size` or `display` changes **morphs** between its two layouts (from `math.json`). Glyphs are matched in reading order in three passes: glyphs whose innermost `\class` tag is in both formulas match only within that tag, the k-th of a key with the k-th of the same key; then the rest by key; then what is left by font and code point whatever the variant (the key's first and last `-` parts, so `NCM-N-28` matches `NCM-S3-28`). Rules match in order. A matched glyph's `place` (all six numbers) and a matched rule's `x, y, w, h` move like numbers; a matched glyph whose key changes draws its old outline while `p < 0.5` and its new one after. A glyph or rule only in the old formula scales by `1 - p`, and one only in the new by `p` (each kept in 0 to 1), about its center (a glyph's is the middle of its contours' anchors and handles, placed; one at scale 0 is not drawn). The frame is drawn as a static formula is, the glyphs in the new formula's order (new and matched ones), then the old one's leaving glyphs, then the rules likewise; at `p` = 0 and 1 it is exactly the old and the new formula. While either layout is missing, the formula takes its new value at the start.
 - **Everything else** takes its new value at the **start**: `closed`, handle modes, ends, corners, outline position, gradient kind, clipping, fill or outline turned on or off, stroked edges, group membership and draw order. Dash lists and gradient stops that change length snap too.

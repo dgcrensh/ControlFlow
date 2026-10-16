@@ -20,7 +20,14 @@ Draft 1, 2026-10-15. The text half of the "rotation lock and text" design; the d
 - A font the iPad doesn't have is named in a toast when the document opens.
 - Cut, Copy and Paste act on the words while a text is being typed into, and single-key shortcuts (tools, nudge, Delete, K, Escape for isolation) are off so the keys type.
 
-**Later** (phase 3): letter-by-letter morph, outlines on text, mixed styles within one text, SVG `<text>` import, a typewriter-style reveal.
+**Shipped later:**
+
+- **Weights within one text** (format 1.4): `TextContent.weights` holds runs of the words in another weight than the text's own, as `{ start, length, weight }` in UTF-16 offsets, written only when there are any. The whole-text `weight` stays the base, so older files and readers are unchanged, and a 1.3 reader draws the text in its base weight.
+  - Editing: while typing, the context bar's weight sets the selected words (part of the session's undo step), or with a caret the weight typed next (`TextEditState.typingWeight`, forgotten when the caret moves). Command-B toggles bold the same way. New words take the weight of the character before them. With a text selected but not being typed into, the weight sets the whole text and clears the runs, as before.
+  - `TextContent.replaceString` maps the runs through a change the text view reports as a whole new string: the change is taken to start no later than the old selection and the new caret, which settles which of two equal letters was typed or deleted, and characters that stayed the same at the ends of the changed stretch keep their weights (autocorrect).
+  - Runs snap at the start of a transition like `weight`. Only the system font has weights, as for `weight`; a named font draws in its own face throughout.
+
+**Later** (phase 3): letter-by-letter morph, outlines on text, other mixed styles within one text (italic, size, font, color), weights for named fonts, SVG `<text>` import, a typewriter-style reveal.
 
 ## Design
 

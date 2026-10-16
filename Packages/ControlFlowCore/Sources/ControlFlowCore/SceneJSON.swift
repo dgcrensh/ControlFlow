@@ -101,6 +101,15 @@ enum SceneJSON {
         var members: [(key: String, value: JSONValue)] = [(key: "string", value: .string(text.string))]
         if text.font != plain.font { members.append((key: "font", value: .string(text.font))) }
         if text.weight != plain.weight { members.append((key: "weight", value: .number(Double(text.weight)))) }
+        if !text.weights.isEmpty {
+            members.append((key: "weights", value: .array(text.weights.map { run in
+                .object([
+                    (key: "start", value: .number(Double(run.range.lowerBound))),
+                    (key: "length", value: .number(Double(run.range.count))),
+                    (key: "weight", value: .number(Double(run.weight))),
+                ])
+            })))
+        }
         if text.italic { members.append((key: "italic", value: .bool(true))) }
         if text.size != plain.size { members.append((key: "size", value: num(text.size))) }
         if text.align != plain.align { members.append((key: "align", value: .string(text.align.rawValue))) }
@@ -287,6 +296,16 @@ enum SceneJSON {
         if let weight = try node.integer("weight") {
             text.weight = min(max(weight, TextContent.weightRange.lowerBound), TextContent.weightRange.upperBound)
         }
+        if let weights = try node.field("weights") {
+            text.weights = try weights.array().map { run in
+                let start = try run.requireInteger("start"), length = try run.requireInteger("length")
+                guard start >= 0 else { throw PresentationFileError.invalid(path: run.childPath("start"), problem: "is negative") }
+                guard length >= 0 else { throw PresentationFileError.invalid(path: run.childPath("length"), problem: "is negative") }
+                // Runs past the string are cut to it, so a huge number can't overflow.
+                let lower = min(start, 1 << 40)
+                return TextWeightRun(lower..<(lower + min(length, 1 << 40)), weight: try run.requireInteger("weight"))
+            }
+        }
         text.italic = try node.bool("italic") ?? false
         if let size = try node.number("size") {
             guard size > 0 else { throw PresentationFileError.invalid(path: node.childPath("size"), problem: "is not positive") }
@@ -301,6 +320,7 @@ enum SceneJSON {
             text.lineHeight = min(max(lineHeight, TextContent.lineHeightRange.lowerBound), TextContent.lineHeightRange.upperBound)
         }
         text.tracking = try node.number("tracking") ?? 0
+        text.normalizeWeights()
         return text
     }
 
@@ -403,7 +423,7 @@ enum PropertyPath {
         "stroke.cap": .string("round"), "stroke.join": .string("round"), "stroke.miterLimit": 4,
         "stroke.dash": .array([]), "stroke.dashOffset": 0, "stroke.align": .string("center"),
         "w": 1, "smooth": .bool(true), "symmetric": .bool(false), "stroked": .bool(true),
-        "text.font": .string(TextContent.systemFont), "text.weight": 400, "text.italic": .bool(false), "text.size": 72,
+        "text.font": .string(TextContent.systemFont), "text.weight": 400, "text.weights": .array([]), "text.italic": .bool(false), "text.size": 72,
         "text.align": .string("left"), "text.lineHeight": 1.2, "text.tracking": 0,
         "math.size": 72, "math.display": .bool(true),
     ]

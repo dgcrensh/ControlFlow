@@ -70,6 +70,7 @@ final class MetalCanvasView: UIView {
         }
         textInput.delegate = self
         textInput.onEscape = { [weak store] in store?.endTextEdit() }
+        textInput.onToggleBold = { [weak store] in store?.toggleTextBold() }
         addSubview(textInput)
         // Scribble: writing into a text with the Pencil while the text tool is chosen.
         addInteraction(UIIndirectScribbleInteraction(delegate: self))
@@ -420,9 +421,10 @@ extension MetalCanvasView: UITextViewDelegate {
 }
 
 /// The canvas's invisible text view (see `MetalCanvasView.textInput`). Escape ends the
-/// edit.
+/// edit, and Command-B bolds the selected words.
 final class TextInputView: UITextView {
     var onEscape: (() -> Void)?
+    var onToggleBold: (() -> Void)?
 
     init() {
         super.init(frame: CGRect(x: 0, y: 0, width: 2, height: 20), textContainer: nil)
@@ -439,6 +441,16 @@ final class TextInputView: UITextView {
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    // The words are plain text here; the editor keeps their weights.
+    override func toggleBoldface(_ sender: Any?) {
+        onToggleBold?()
+    }
+
+    override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
+        if action == #selector(toggleBoldface(_:)) { return onToggleBold != nil }
+        return super.canPerformAction(action, withSender: sender)
+    }
 
     override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
         if presses.contains(where: { $0.key?.keyCode == .keyboardEscape }) {

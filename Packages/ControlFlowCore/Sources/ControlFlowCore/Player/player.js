@@ -1,4 +1,4 @@
-// ControlFlow player: plays a ControlFlow presentation (format 1.3, see Schema/README.md)
+// ControlFlow player: plays a ControlFlow presentation (format 1.4, see Schema/README.md)
 // in a browser, as the app's presentation mode does. It reads presentation.json next to
 // the page (and text.json, the glyph outlines of its text, when there is one, math.json,
 // the layouts of its formulas, when there is one, and the pictures of image shapes under
@@ -177,6 +177,7 @@
     text.font = typeof o.font === 'string' && o.font ? o.font : 'system';
     const weight = integer(o, 'weight');
     text.weight = weight === null ? 400 : Math.min(Math.max(weight, 100), 900);
+    text.weights = present(o, 'weights') ? readWeights(o.weights, text) : [];
     text.italic = bool(o, 'italic', false);
     const size = number(o, 'size', 72);
     if (!(size > 0)) fail('a text size is not positive');
@@ -191,6 +192,31 @@
     text.tracking = number(o, 'tracking', 0);
     text.held = null;
     return text;
+  }
+
+  /// The `weights` runs of `text`, normalized as TextContent.normalizeWeights does: in
+  /// order within the string, apart, none empty or in the text's own weight, the later
+  /// of two that overlap winning.
+  function readWeights(list, text) {
+    if (!Array.isArray(list)) fail('a text\'s weights are not a list');
+    const n = text.string.length;
+    const clamp = (w) => Math.min(Math.max(w, 100), 900);
+    const units = new Array(n).fill(text.weight);
+    for (const run of list) {
+      if (!isObject(run)) fail('a text weight run is not an object');
+      const start = integer(run, 'start'), length = integer(run, 'length'), weight = integer(run, 'weight');
+      if (start === null || length === null || weight === null) fail('a text weight run is missing start, length or weight');
+      if (start < 0 || length < 0) fail('a text weight run is negative');
+      for (let i = Math.min(start, n); i < Math.min(start + length, n); i++) units[i] = clamp(weight);
+    }
+    const out = [];
+    for (let i = 0; i < n;) {
+      let j = i + 1;
+      while (j < n && units[j] === units[i]) j++;
+      if (units[i] !== text.weight) out.push({ start: i, length: j - i, weight: units[i] });
+      i = j;
+    }
+    return out;
   }
 
   function readVertexProps(o, point) {
@@ -337,6 +363,7 @@
     const out = { string: text.string };
     if (text.font !== 'system') out.font = text.font;
     if (text.weight !== 400) out.weight = text.weight;
+    if (text.weights.length) out.weights = text.weights.map((r) => ({ start: r.start, length: r.length, weight: r.weight }));
     if (text.italic) out.italic = true;
     if (text.size !== 72) out.size = text.size;
     if (text.align !== 'left') out.align = text.align;

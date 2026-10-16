@@ -26,7 +26,21 @@ public struct TextMetrics: Hashable, Sendable, Codable {
     }
 }
 
-/// What a text shape says and how it is set: one style for the whole text. A
+/// A stretch of a text set in another weight than the text's own.
+public struct TextWeightRun: Hashable, Sendable, Codable {
+    /// UTF-16 offsets into the text's string.
+    public var range: Range<Int>
+    /// 100 to 900.
+    public var weight: Int
+
+    public init(_ range: Range<Int>, weight: Int) {
+        self.range = range
+        self.weight = weight
+    }
+}
+
+/// What a text shape says and how it is set: one style for the whole text but its
+/// weight, which can change from one stretch of the words to the next (`weights`). A
 /// `VectorShape` with this payload draws its glyph outlines, laid out by
 /// `TextShaping`, in place of its (empty) path. Its origin is the top-left of the
 /// first line's box, in the shape's own space.
@@ -39,6 +53,11 @@ public struct TextContent: Hashable, Sendable, Codable {
     public var font: String
     /// 100 to 900; only for the system font.
     public var weight: Int
+    /// The stretches of `string` set in another weight than `weight`: in order, apart,
+    /// within the string, and none empty or in `weight` itself. Only for the system font.
+    /// The mutating methods below keep them so; after setting `string` or `weight`
+    /// directly, call `normalizeWeights`.
+    public var weights: [TextWeightRun] = []
     /// Only for the system font.
     public var italic: Bool
     /// The type size in points.
@@ -58,7 +77,7 @@ public struct TextContent: Hashable, Sendable, Codable {
 
     public init(string: String = "", font: String = TextContent.systemFont, weight: Int = 400, italic: Bool = false,
                 size: Double = 72, align: TextAlignment = .left, width: Double? = nil, lineHeight: Double = 1.2,
-                tracking: Double = 0) {
+                tracking: Double = 0, weights: [TextWeightRun] = []) {
         self.string = string
         self.font = font
         self.weight = weight
@@ -68,6 +87,8 @@ public struct TextContent: Hashable, Sendable, Codable {
         self.width = width
         self.lineHeight = lineHeight
         self.tracking = tracking
+        self.weights = weights
+        normalizeWeights()
     }
 
     public var isSystemFont: Bool { font == Self.systemFont }
@@ -76,8 +97,142 @@ public struct TextContent: Hashable, Sendable, Codable {
     public var style: TextContent {
         var copy = self
         copy.string = ""
+        copy.weights = []
         copy.held = nil
         return copy
+    }
+
+    // MARK: Weights
+
+    /// The weight of each of the string's UTF-16 units.
+    public var unitWeights: [Int] {
+        var out = [Int](repeating: weight, count: string.utf16.count)
+        for run in weights {
+            let lower = min(max(run.range.lowerBound, 0), out.count), upper = min(max(run.range.upperBound, lower), out.count)
+            for i in lower..<upper { out[i] = run.weight }
+        }
+        return out
+    }
+
+    /// Sets `weights` from each UTF-16 unit's weight (`units` as long as the string).
+    public mutating func setUnitWeights(_ units: [Int]) {
+        var runs: [TextWeightRun] = []
+        var i = 0
+        while i < units.count {
+            let w = Self.clampedWeight(units[i])
+            var j = i + 1
+            while j < units.count, Self.clampedWeight(units[j]) == w { j += 1 }
+            if w != weight { runs.append(TextWeightRun(i..<j, weight: w)) }
+            i = j
+        }
+        weights = runs
+    }
+
+    /// Puts `weights` in order within the string, as `weights` says they are kept: where
+    /// two overlap, the later one wins. The player does the same (`player.js`, `readText`).
+    public mutating func normalizeWeights() {
+        weight = Self.clampedWeight(weight)
+        guard !weights.isEmpty else { return }
+        setUnitWeights(unitWeights)
+    }
+
+    /// The stretches of the string with their weights, in order, covering it (none for an
+    /// empty string): what a shaper sets.
+    public var weightRuns: [TextWeightRun] {
+        let n = string.utf16.count
+        var out: [TextWeightRun] = []
+        var at = 0
+        for run in weights {
+            let lower = min(max(run.range.lowerBound, at), n), upper = min(max(run.range.upperBound, lower), n)
+            guard lower < upper else { continue }
+            if at < lower { out.append(TextWeightRun(at..<lower, weight: weight)) }
+            out.append(TextWeightRun(lower..<upper, weight: run.weight))
+            at = upper
+        }
+        if at < n { out.append(TextWeightRun(at..<n, weight: weight)) }
+        return out
+    }
+
+    /// The weight of the character at UTF-16 offset `offset`: the last one's past the end,
+    /// and `weight` for an empty string.
+    public func weight(at offset: Int) -> Int {
+        let n = string.utf16.count
+        guard n > 0 else { return weight }
+        let i = min(max(offset, 0), n - 1)
+        return weights.first { $0.range.contains(i) }?.weight ?? weight
+    }
+
+    /// The weight new words typed at `range` take: the character's before it, or after it
+    /// at the start.
+    public func insertionWeight(at range: Range<Int>) -> Int {
+        range.lowerBound > 0 ? weight(at: range.lowerBound - 1) : weight(at: range.upperBound)
+    }
+
+    /// The weight every character in `range` has, or nil when they differ. For an empty
+    /// range, the weight typing there takes.
+    public func uniformWeight(in range: Range<Int>) -> Int? {
+        let n = string.utf16.count
+        let lower = min(max(range.lowerBound, 0), n), upper = min(max(range.upperBound, lower), n)
+        guard lower < upper else { return insertionWeight(at: lower..<lower) }
+        let units = unitWeights[lower..<upper]
+        let first = units.first!
+        return units.allSatisfy { $0 == first } ? first : nil
+    }
+
+    /// Sets the characters in UTF-16 range `range` in `weight`.
+    public mutating func setWeight(_ weight: Int, in range: Range<Int>) {
+        var units = unitWeights
+        let lower = min(max(range.lowerBound, 0), units.count), upper = min(max(range.upperBound, lower), units.count)
+        guard lower < upper else { return }
+        for i in lower..<upper { units[i] = Self.clampedWeight(weight) }
+        setUnitWeights(units)
+    }
+
+    /// Changes the string to `new`, as a keyboard did with the selection `selection`
+    /// before the change, keeping every character's weight and setting what was typed in
+    /// `typing` (or the weight of the character before it, see `insertionWeight`).
+    ///
+    /// The change is taken to be one stretch replaced, starting no later than the
+    /// selection and the caret after it (`newSelection`): typing "l" after the "l" of
+    /// "Hel" in "Hello" adds it there, not after the next "l". Characters at either end of
+    /// the stretch that didn't change keep their weights.
+    public mutating func replaceString(with new: String, selection: Range<Int>, newSelection: Range<Int>, typing: Int? = nil) {
+        guard new != string else { return }
+        let old = Array(string.utf16), now = Array(new.utf16)
+        guard !weights.isEmpty || (typing != nil && typing != weight) else {
+            string = new
+            return
+        }
+        let units = unitWeights
+        var prefix = 0
+        while prefix < min(old.count, now.count), old[prefix] == now[prefix] { prefix += 1 }
+        let a = max(min(prefix, selection.lowerBound, newSelection.lowerBound), 0)
+        var suffix = 0
+        while suffix < min(old.count, now.count) - a, old[old.count - 1 - suffix] == now[now.count - 1 - suffix] { suffix += 1 }
+        let b = old.count - suffix, c = now.count - suffix
+        let typed = typing.map(Self.clampedWeight) ?? insertionWeight(at: a..<b)
+        // Within the replaced stretch, the characters that stayed the same at its ends.
+        var keepStart = 0
+        while keepStart < min(b - a, c - a), old[a + keepStart] == now[a + keepStart] { keepStart += 1 }
+        var keepEnd = 0
+        while keepEnd < min(b - a, c - a) - keepStart, old[b - 1 - keepEnd] == now[c - 1 - keepEnd] { keepEnd += 1 }
+        var out = Array(units[..<a])
+        for k in 0..<(c - a) {
+            if k < keepStart {
+                out.append(units[a + k])
+            } else if k >= c - a - keepEnd {
+                out.append(units[b - (c - a - k)])
+            } else {
+                out.append(typed)
+            }
+        }
+        out += units[b...]
+        string = new
+        setUnitWeights(out)
+    }
+
+    static func clampedWeight(_ weight: Int) -> Int {
+        min(max(weight, weightRange.lowerBound), weightRange.upperBound)
     }
 
     /// The distance between baselines, in points.
