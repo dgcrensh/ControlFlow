@@ -111,6 +111,9 @@ final class CanvasGPU {
 
     // MARK: Image shapes
 
+    /// The pictures that are ready, by `src`. A copy, for encoding a frame's art.
+    var readyImages: [String: any MTLTexture] { imageTextures }
+
     /// The texture for `src` if it is ready. Otherwise starts decoding and uploading it
     /// off the main thread, unless that is under way or the library hasn't got it, and
     /// calls `renderer.imagesLoaded()` when it is done; meanwhile the art paints the

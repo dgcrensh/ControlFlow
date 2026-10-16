@@ -1,6 +1,7 @@
 /// Metal shaders, compiled at launch from source so the project needs no .metal
 /// build step. Struct layouts must match `CanvasUniforms` and `PaintUniforms`
-/// (CanvasRenderer.swift), `CapsuleTessellator` and `ArtBatch` (ControlFlowCore).
+/// (CanvasRenderer.swift), `CapsuleTessellator`, `ArtBatch` and `ArtPaint.appendGPUFloats`
+/// (ControlFlowCore).
 enum ShaderSource {
     static let metal = """
     #include <metal_stdlib>
@@ -88,12 +89,13 @@ enum ShaderSource {
         float2 world;
     };
 
+    // `toClip` alone, not the whole Uniforms: the art sets it for every new place.
     vertex FillOut fill_vertex(uint vid [[vertex_id]],
                                const device packed_float2 *positions [[buffer(0)]],
-                               constant Uniforms &u [[buffer(1)]]) {
+                               constant float4x4 &toClip [[buffer(1)]]) {
         float2 world = float2(positions[vid]);
         FillOut out;
-        out.position = u.worldToClip * float4(world, 0.0, 1.0);
+        out.position = toClip * float4(world, 0.0, 1.0);
         out.world = world;
         return out;
     }
@@ -102,7 +104,8 @@ enum ShaderSource {
         return float4(0.0); // color writes are off
     }
 
-    // A solid color or a gradient, in straight alpha. See PaintUniforms.
+    // A solid color or a gradient, in straight alpha. See PaintUniforms and
+    // ArtPaint.appendGPUFloats.
     struct Paint {
         float4 color;
         float4 points;      // start.xy, end.xy (in the vertices' space)
