@@ -85,8 +85,9 @@ final class LiveTransformTests: XCTestCase {
     }
 }
 
-/// When a live drag ends, `ArtBuilder.carry` moves the dragged shapes' tessellations
-/// instead of dropping them (performance-next.md, recommendation 3).
+/// When a live drag ends, `ArtBuilder.carry` keeps the dragged shapes' tessellations
+/// instead of dropping them (performance-next.md, recommendation 3). A drag changes
+/// transforms, which the art draws through, so the triangles stay as they are.
 final class CarryTessellationTests: XCTestCase {
     private let base = StressDrawing.make(layers: 4, shapesPerLayer: 6)
     private let tolerance = 0.5
@@ -109,7 +110,7 @@ final class CarryTessellationTests: XCTestCase {
         var builder = ArtBuilder()
         _ = builder.build(live.base, isolatedLayer: nil, tolerance: tolerance, moving: live.shapes)
         let count = builder.tessellationCount
-        let carry = builder.carry(live, to: after)
+        let carry = builder.carry(live, to: after, tolerance: tolerance)
         let batch = builder.build(after, isolatedLayer: nil, tolerance: tolerance, reusingOtherTolerances: reusing)
         return (builder, carry, batch, builder.tessellationCount - count)
     }
@@ -167,7 +168,7 @@ final class CarryTessellationTests: XCTestCase {
         XCTAssertEqual(result.carry.coarse, grow.shapes.count)
         XCTAssertEqual(result.tessellated, 0, "a build reusing other tolerances keeps the coarse triangles")
         let id = try XCTUnwrap(grow.shapes.first)
-        XCTAssertEqual(result.builder.tessellations.tolerances(of: id), [tolerance * 1.5])
+        XCTAssertEqual(result.builder.tessellations.tolerances(of: id), [tolerance], "kept as they were flattened")
         // A refine at the art's tolerance picks up exactly the enlarged shapes.
         let plan = result.builder.tessellations.refinePlan(for: after, tolerance: tolerance, viewRect: nil)
         XCTAssertEqual(Set(plan.rest.map(\.id)), grow.shapes)
@@ -188,26 +189,30 @@ final class CarryTessellationTests: XCTestCase {
     func testAShapeTheLiftChangedIsTessellatedAgain() throws {
         let live = drag(.translation(Vec2(10, 0)))
         var after = moved(live)
-        after.layers[1].shapes[2].fill = RGBAColor(r: 0, g: 0, b: 1)
+        after.layers[1].shapes[2].path.points[0].position.x += 1
         let (_, carry, batch, tessellated) = carryAndBuild(live, to: after)
         XCTAssertEqual(carry.carried, live.shapes.count - 1)
         XCTAssertEqual(tessellated, 1)
         assertMatchesColdBuild(batch, of: after, slack: 1e-3)
     }
 
-    func testRepeatedCarriesFlattenAgainAfterTheLimit() {
+    /// The triangles are never moved, so drags can follow one another without rounding
+    /// adding up: nothing is flattened again however many there are.
+    func testRepeatedDragsNeverFlattenAgain() {
         var builder = ArtBuilder()
         var drawing = base
         _ = builder.build(drawing, isolatedLayer: nil, tolerance: tolerance)
+        let count = builder.tessellationCount
         var carried: [Int] = []
-        for _ in 0...ArtBuilder.maximumCarries {
+        for _ in 0..<12 {
             let live = drag(.translation(Vec2(3, 1)), from: drawing)
             drawing = moved(live)
-            carried.append(builder.carry(live, to: drawing).carried)
+            carried.append(builder.carry(live, to: drawing, tolerance: tolerance).carried)
             _ = builder.build(drawing, isolatedLayer: nil, tolerance: tolerance)
         }
         let n = drag(.identity).shapes.count
-        XCTAssertEqual(carried, Array(repeating: n, count: ArtBuilder.maximumCarries) + [0])
+        XCTAssertEqual(carried, Array(repeating: n, count: 12))
+        XCTAssertEqual(builder.tessellationCount, count)
     }
 
     private func assertBoundsMatch(_ a: ArtBatch, _ b: ArtBatch, slack: Double,

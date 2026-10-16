@@ -199,7 +199,7 @@ final class ArtLayerCacheTests: XCTestCase {
         _ = warm.build(base, isolatedLayer: nil, tolerance: 0.25, reusingOtherTolerances: true)
         XCTAssertEqual(warm.tessellationCount, tessellated, "nothing is flattened again while the refine runs")
 
-        let shapes = base.layers.flatMap(\.shapes)
+        let shapes = base.layers.flatMap { ArtBuilder.artShapes(of: $0, tolerance: 0.25).shapes }
         guard let refined = TessellationCache.tessellate(shapes, tolerance: 0.25, isCancelled: { false }) else {
             return XCTFail("not cancelled")
         }

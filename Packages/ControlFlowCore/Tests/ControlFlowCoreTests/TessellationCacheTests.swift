@@ -91,7 +91,7 @@ final class TessellationCacheTests: XCTestCase {
 
     func testACancelledJobReturnsNothing() {
         let drawing = Self.row()
-        let shapes = drawing.layers.flatMap(\.shapes)
+        let shapes = drawing.layers.flatMap { ArtBuilder.artShapes(of: $0, tolerance: 0.1).shapes }
         var calls = 0
         XCTAssertNil(TessellationCache.tessellate(shapes, tolerance: 0.1) {
             calls += 1
@@ -373,7 +373,10 @@ final class TessellationCacheTests: XCTestCase {
         var builder = ArtBuilder()
         _ = builder.build(drawing, isolatedLayer: nil, tolerance: 0.5)
         var moved = drawing
-        for l in moved.layers.indices { moved.layers[l].transform.position = Vec2(30, 0) }
+        // Moved by their points, as a morph does: moving a transform flattens nothing.
+        for l in moved.layers.indices {
+            for s in moved.layers[l].shapes.indices { moved.layers[l].shapes[s].path.apply(.translation(Vec2(30, 0))) }
+        }
         var preview = builder
         preview.tessellationCount = 0
         _ = preview.build(moved, isolatedLayer: nil, tolerance: 0.5)

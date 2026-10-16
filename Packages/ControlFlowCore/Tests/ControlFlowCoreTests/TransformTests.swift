@@ -359,7 +359,18 @@ final class ObjectTransformTests: XCTestCase {
         var flatBuilder = ArtBuilder()
         let art = builder.build(e.drawing, isolatedLayer: nil, tolerance: 0.25)
         let flat = flatBuilder.build(e.drawing.world, isolatedLayer: nil, tolerance: 0.25)
-        XCTAssertEqual(art.vertices, flat.vertices)
+        // The art keeps the layer's own points and draws them through its transform.
+        var untransformed = e.drawing
+        untransformed.layers[0].transform = .identity
+        var plainBuilder = ArtBuilder()
+        XCTAssertEqual(art.vertices, plainBuilder.build(untransformed, isolatedLayer: nil, tolerance: 0.25).vertices)
+        XCTAssertEqual(art.segments[0].transform, e.drawing.layers[0].transform.matrix)
+        for x in stride(from: 480.0, through: 620, by: 3.7) {
+            for y in stride(from: -20.0, through: 120, by: 3.3) {
+                let p = Vec2(x, y)
+                XCTAssertEqual(StencilSimulator.run(art, at: p).isWhite, StencilSimulator.run(flat, at: p).isWhite, "\(p)")
+            }
+        }
         XCTAssertEqual(SVGWriter.document(for: e.drawing), SVGWriter.document(for: e.drawing.world))
     }
 }

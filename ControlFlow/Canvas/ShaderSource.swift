@@ -83,6 +83,8 @@ enum ShaderSource {
     // stencil, then a cover rectangle paints where the stencil test passes.
     struct FillOut {
         float4 position [[position]];
+        // The vertex as the art gives it, before its place, layer and drag transforms:
+        // gradients and pictures are in this space, so they move with the shape.
         float2 world;
     };
 
@@ -103,7 +105,7 @@ enum ShaderSource {
     // A solid color or a gradient, in straight alpha. See PaintUniforms.
     struct Paint {
         float4 color;
-        float4 points;      // start.xy, end.xy (world)
+        float4 points;      // start.xy, end.xy (in the vertices' space)
         float4 info;        // kind (0 solid, 1 linear, 2 radial), stop count, opacity
         float4 stopColors[8];
         float4 stopOffsets[2];

@@ -73,6 +73,7 @@ final class ScalingTests: XCTestCase {
         case .stencilView: "stencilView"
         case .veil: "veil"
         case .moving(let on): "moving \(on)"
+        case .place(let m): "place \(m)"
         }
     }
 

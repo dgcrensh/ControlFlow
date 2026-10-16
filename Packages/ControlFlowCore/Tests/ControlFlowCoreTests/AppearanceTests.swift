@@ -166,41 +166,48 @@ struct StencilSimulator {
     var color = (r: 1.0, g: 1.0, b: 1.0, a: 1.0)
 
     /// `moving` is the live transform for the steps between `.moving` marks: the GPU
-    /// draws their vertices through it, and gradients see the untransformed point.
+    /// draws their vertices through it. Each segment's vertices go through its
+    /// `transform` and the current `place` too, and gradients and images see the point
+    /// in the vertices' own space.
     static func run(_ batch: ArtBatch, at point: Vec2, moving: Affine2D = .identity) -> StencilSimulator {
         var sim = StencilSimulator()
         let v = stride(from: 0, to: batch.vertices.count, by: 2).map {
             Vec2(Double(batch.vertices[$0]), Double(batch.vertices[$0 + 1]))
         }
-        let back = moving.inverted ?? .identity
         var transformed = false
-        for step in batch.steps {
-            // Testing the untransformed point against untransformed triangles is the same
-            // as testing the point against the transformed ones.
-            let p = transformed ? back.apply(point) : point
-            switch step {
-            case .stencil(let range, let state, let reference):
-                for i in stride(from: range.lowerBound, to: range.upperBound, by: 3) {
-                    let a = v[i], b = v[i + 1], c = v[i + 2]
-                    guard inside(p, a, b, c) else { continue }
-                    var front = (b - a).cross(c - a) > 0
-                    if transformed, moving.determinant < 0 { front.toggle() }
-                    sim.apply(state, reference: reference, front: front)
+        for segment in batch.segments {
+            var place = Affine2D.identity
+            for step in batch.steps[segment.steps] {
+                // Testing the point taken back into the vertices' space against the triangles
+                // as they are is the same as testing it against the transformed triangles.
+                let m = (transformed ? moving : .identity) * segment.transform * place
+                let p = m == .identity ? point : (m.inverted ?? .identity).apply(point)
+                switch step {
+                case .stencil(let range, let state, let reference):
+                    for i in stride(from: range.lowerBound, to: range.upperBound, by: 3) {
+                        let a = v[i], b = v[i + 1], c = v[i + 2]
+                        guard inside(p, a, b, c) else { continue }
+                        var front = (b - a).cross(c - a) > 0
+                        if m.determinant < 0 { front.toggle() }
+                        sim.apply(state, reference: reference, front: front)
+                    }
+                case .cover(let range, let paint, let state, let reference):
+                    let rect = Rect(points: v[range])
+                    guard rect.contains(p) else { continue }
+                    if sim.apply(state, reference: reference, front: true) {
+                        let c = paint.color(at: p)
+                        sim.color = (c.r * c.a + sim.color.r * (1 - c.a), c.g * c.a + sim.color.g * (1 - c.a),
+                                     c.b * c.a + sim.color.b * (1 - c.a), c.a + sim.color.a * (1 - c.a))
+                    }
+                case .stencilView(let state, let reference):
+                    sim.apply(state, reference: reference, front: true)
+                case .veil:
+                    break
+                case .moving(let on):
+                    transformed = on
+                case .place(let matrix):
+                    place = matrix
                 }
-            case .cover(let range, let paint, let state, let reference):
-                let rect = Rect(points: v[range])
-                guard rect.contains(p) else { continue }
-                if sim.apply(state, reference: reference, front: true) {
-                    let c = paint.color(at: p)
-                    sim.color = (c.r * c.a + sim.color.r * (1 - c.a), c.g * c.a + sim.color.g * (1 - c.a),
-                                 c.b * c.a + sim.color.b * (1 - c.a), c.a + sim.color.a * (1 - c.a))
-                }
-            case .stencilView(let state, let reference):
-                sim.apply(state, reference: reference, front: true)
-            case .veil:
-                break
-            case .moving(let on):
-                transformed = on
             }
         }
         return sim
