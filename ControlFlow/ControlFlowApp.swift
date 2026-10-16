@@ -9,6 +9,8 @@ struct ControlFlowApp: App {
     init() {
         // Text is laid out with CoreText (the core's stand-in has no fonts).
         TextShaping.shaper = CoreTextShaper()
+        // Formulas are typeset with MathJax, loaded when the first one needs it.
+        MathTypesetting.typesetter = MathJaxTypesetter()
     }
 
     var body: some Scene {

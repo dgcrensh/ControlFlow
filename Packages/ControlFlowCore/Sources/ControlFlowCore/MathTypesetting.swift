@@ -40,6 +40,8 @@ public enum MathTypesetting {
         var errors: [MathContent: MathError] = [:]
         /// Formulas being typeset, with what to call when each is done.
         var waiting: [MathContent: [@Sendable () -> Void]] = [:]
+        /// Bumped whenever a layout or an error is stored or forgotten.
+        var generation = 0
     }
 
     private static let state = State()
@@ -55,6 +57,10 @@ public enum MathTypesetting {
         get { locked { $0.typesetter } }
         set { locked { $0.typesetter = newValue } }
     }
+
+    /// Bumped whenever layouts or errors are stored or forgotten, so a renderer that drew
+    /// a formula without its layout knows to draw it again (see `ArtBuilder`).
+    public static var generation: Int { locked { $0.generation } }
 
     /// The layout of `math` if it is known; never typesets.
     public static func layout(_ math: MathContent) -> MathLayout? {
@@ -98,10 +104,30 @@ public enum MathTypesetting {
                 case .success(let layout): s.entries[math] = Entry(layout: layout, engine: typesetter.engine)
                 case .failure(let error): s.errors[math] = error
                 }
+                s.generation += 1
                 return s.waiting.removeValue(forKey: math) ?? []
             }
             for callback in callbacks { callback() }
         }
+    }
+
+    /// Requests each formula in `drawing` that has no layout yet, hasn't failed and isn't
+    /// being typeset already, so a renderer can ask on every build without piling up
+    /// callbacks; `done` runs as each one arrives. Nothing happens without a typesetter.
+    /// Returns how many it requested.
+    @discardableResult
+    public static func requestMissing(in drawing: Drawing, done: @Sendable @escaping () -> Void) -> Int {
+        var maths = Set<MathContent>()
+        for layer in drawing.layers {
+            for shape in layer.shapes { if let math = shape.math { maths.insert(math) } }
+        }
+        guard !maths.isEmpty else { return 0 }
+        let missing: [MathContent] = locked { s in
+            guard s.typesetter != nil else { return [] }
+            return maths.filter { s.entries[$0] == nil && s.errors[$0] == nil && s.waiting[$0] == nil }
+        }
+        for math in missing { request(math, done: done) }
+        return missing.count
     }
 
     /// Typesets `math` and waits for it: the layout, or nil when it failed or there is no
@@ -131,6 +157,7 @@ public enum MathTypesetting {
                 s.entries[math] = Entry(layout: layout, engine: engine)
                 s.errors[math] = nil
             }
+            s.generation += 1
         }
     }
 
@@ -140,6 +167,7 @@ public enum MathTypesetting {
                 s.entries[math] = entry
                 s.errors[math] = nil
             }
+            s.generation += 1
         }
     }
 
@@ -151,6 +179,7 @@ public enum MathTypesetting {
                 s.entries[math] = nil
                 s.errors[math] = nil
             }
+            s.generation += 1
         }
     }
 
@@ -159,6 +188,7 @@ public enum MathTypesetting {
         locked { s in
             s.entries = [:]
             s.errors = [:]
+            s.generation += 1
         }
     }
 }

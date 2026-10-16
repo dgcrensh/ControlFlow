@@ -33,6 +33,14 @@ app() {
     -destination 'generic/platform=iOS Simulator' \
     CODE_SIGNING_ALLOWED=NO \
     -quiet
+  echo "==> MathJax is in the app"
+  local app
+  app=$(xcodebuild -showBuildSettings \
+    -project ControlFlow.xcodeproj \
+    -scheme ControlFlow \
+    -destination 'generic/platform=iOS Simulator' \
+    CODE_SIGNING_ALLOWED=NO | awk '$1 == "CODESIGNING_FOLDER_PATH" { print $3 }')
+  test -f "$app/cf-mathjax.js" || { echo "cf-mathjax.js is not in $app" >&2; exit 1; }
 }
 
 if [ $# -eq 0 ]; then
