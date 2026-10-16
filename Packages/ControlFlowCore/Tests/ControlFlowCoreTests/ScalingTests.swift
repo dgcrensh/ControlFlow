@@ -40,14 +40,15 @@ final class ScalingTests: XCTestCase {
         }
         for layers in Self.layerCounts {
             let drawing = StressDrawing.make(layers: layers, shapesPerLayer: Self.shapesPerLayer)
-            var builder = ArtBuilder()
+            var builder = ArtBuilder.likeRenderer()
             let batch = builder.build(drawing, isolatedLayer: nil, tolerance: 0.5)
+            let floats = batch.segments.reduce(0) { $0 + $1.floats.count }
             var edited = drawing
             edited.layers[0].shapes[0].fill = RGBAColor(r: 1, g: 0, b: 0)
             let after = builder.build(edited, isolatedLayer: nil, tolerance: 0.5)
             let uploaded = after.segmentsToUpload(resident: batch.residentIDs).reduce(0) { $0 + $1.floats.count }
-            lines.append("| \(drawing.shapeCount) | \(batch.vertexCount) | \(megabytes(batch.vertices.count)) | \(megabytes(uploaded)) | \(batch.steps.count) |")
-            XCTAssertGreaterThan(batch.vertexCount, 0)
+            lines.append("| \(drawing.shapeCount) | \(floats / 2) | \(megabytes(floats)) | \(megabytes(uploaded)) | \(batch.steps.count) |")
+            XCTAssertGreaterThan(floats, 0)
             XCTAssertEqual(uploaded, after.segments[0].floats.count)
         }
         print(lines.joined(separator: "\n"))

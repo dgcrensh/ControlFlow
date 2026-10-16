@@ -79,6 +79,54 @@ enum StressDrawing {
         return timeline
     }
 
+    /// A presentation of `drawing` like `presentation(_:keyframes:)` whose keyframes each
+    /// also swap the first two shapes of a layer (an `order` change), as a deck that
+    /// brings shapes forward would.
+    static func reorderingPresentation(_ drawing: Drawing, keyframes: Int) -> Presentation {
+        var timeline = Timeline(Presentation(opening: drawing))
+        var state = drawing
+        let count = state.layers.count
+        for k in 1...keyframes {
+            _ = timeline.insertKeyframe(after: k - 1)
+            state.layers[k % count].transform.position = Vec2(Double(k) * 3, 0)
+            state.layers[(k * 3) % count].shapes.swapAt(0, 1)
+            timeline.record(state, at: k)
+        }
+        return timeline.presentation
+    }
+
+    /// `drawing` with every layer's shapes grouped in pairs (its own groups and clips
+    /// dropped), as an imported or carefully organised deck would be.
+    static func pairGrouped(_ drawing: Drawing) -> Drawing {
+        var d = drawing
+        for l in d.layers.indices {
+            d.layers[l].groups = []
+            for s in d.layers[l].shapes.indices {
+                d.layers[l].shapes[s].group = nil
+                d.layers[l].shapes[s].isClipped = false
+            }
+            for s in stride(from: 0, to: d.layers[l].shapes.count - 1, by: 2) {
+                let group = ShapeGroup(id: d.makeID(), name: "Pair \(s / 2 + 1)")
+                d.layers[l].groups.append(group)
+                d.layers[l].shapes[s].group = group.id
+                d.layers[l].shapes[s + 1].group = group.id
+            }
+        }
+        return d
+    }
+
+    /// `drawing` with a text shape on top of every layer.
+    static func withText(_ drawing: Drawing) -> Drawing {
+        var d = drawing
+        for l in d.layers.indices {
+            let text = TextContent(string: "Title text \(l + 1) with a few words", size: 24, width: 200)
+            d.layers[l].shapes.append(VectorShape(id: d.makeID(), text: text,
+                                                  transform: Transform(position: d.layers[l].pivot)))
+        }
+        d.assignVertexIDs()
+        return d
+    }
+
     /// The middle of the layer grid's bounds, on top of plenty of shapes.
     static func busyPoint(layers: Int = layers) -> Vec2 { Vec2(cell * 2, cell * Double(max(layers / columns - 1, 0)) / 2) }
 

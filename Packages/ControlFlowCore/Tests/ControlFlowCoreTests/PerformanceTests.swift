@@ -6,7 +6,8 @@ import XCTest
 /// `StressDrawing`. They have no baselines, so they never fail on speed: read the
 /// numbers in the test log (`swift test --filter PerformanceTests`, or Xcode's test
 /// report) and compare them before and after a change. `swift test` builds in debug,
-/// so use `-c release` for numbers that are closer to the app's.
+/// so use `-c release` for numbers that are closer to the app's. Art builds use
+/// `ArtBuilder.likeRenderer()`, the renderer's settings.
 final class PerformanceTests: XCTestCase {
     /// Made once: the stress drawing takes a moment to build in a debug build.
     private static let drawing = StressDrawing.make()
@@ -30,7 +31,7 @@ final class PerformanceTests: XCTestCase {
     func testArtBuildCold() {
         let drawing = drawing
         measure {
-            var builder = ArtBuilder()
+            var builder = ArtBuilder.likeRenderer()
             _ = builder.build(drawing, isolatedLayer: nil, tolerance: 0.5)
         }
     }
@@ -38,7 +39,7 @@ final class PerformanceTests: XCTestCase {
     /// A rebuild with nothing changed takes every shape from the cache.
     func testArtBuildWarm() {
         let drawing = drawing
-        var builder = ArtBuilder()
+        var builder = ArtBuilder.likeRenderer()
         _ = builder.build(drawing, isolatedLayer: nil, tolerance: 0.5)
         measure {
             _ = builder.build(drawing, isolatedLayer: nil, tolerance: 0.5)
@@ -54,7 +55,7 @@ final class PerformanceTests: XCTestCase {
         for i in layer.shapes.indices where i % 3 == 2 { layer.shapes[i].isClipped = true }
         var drawing = Drawing()
         drawing.layers = [layer]
-        var builder = ArtBuilder()
+        var builder = ArtBuilder.likeRenderer()
         _ = builder.build(drawing, isolatedLayer: nil, tolerance: 0.5)
         measure {
             _ = builder.build(drawing, isolatedLayer: nil, tolerance: 0.5)
@@ -77,7 +78,7 @@ final class PerformanceTests: XCTestCase {
         // A third of the way in, clear of the pivot and the handles.
         let frame = try! XCTUnwrap(drawing.geometryBounds(of: everything))
         let grab = frame.minPoint + Vec2(frame.width, frame.height) / 3
-        var warm = ArtBuilder()
+        var warm = ArtBuilder.likeRenderer()
         _ = warm.build(drawing, isolatedLayer: nil, tolerance: 0.5)
         measure {
             var editor = start
@@ -142,8 +143,14 @@ final class PerformanceTests: XCTestCase {
         }
     }
 
-    /// What one refresh reads from the editor beyond plain flags.
+    /// The editor queries `CanvasStore.refresh()` reads at keyframe 10 of 20, where the
+    /// keyed properties have changes to look at (10 refreshes).
+    func testRefreshQueriesAtKeyframe() { measure(.refreshQueriesAtKeyframe, calls: 10) }
+
+    /// What one refresh reads from the editor beyond plain flags: everything
+    /// `CanvasStore.refresh()` reads after an edit, in the select tool.
     static func readRefreshQueries(_ editor: DrawingEditor) {
+        var editor = editor
         var n = 0
         func read<T>(_ value: T) { withExtendedLifetime(value) { n += 1 } }
         read(editor.canJoinSelection)
@@ -164,7 +171,31 @@ final class PerformanceTests: XCTestCase {
         read(editor.canDuplicateMirrored)
         read(editor.drawing.exportArea())
         read(LayerTree(drawing: editor.drawing))
-        XCTAssertEqual(n, 18)
+        read(editor.canAlign)
+        read(editor.canDistribute)
+        read(editor.alignsToViewportOnly)
+        read(editor.canApplyTransform)
+        read(editor.isolatedGroupInfo)
+        read(editor.selectionCrumbs)
+        read(editor.canSelectParent)
+        read(editor.canSelectAllInLayer)
+        read(editor.canInvertSelection)
+        read(editor.canSelectSame)
+        read(editor.selectedLayers)
+        read(editor.timelineStrip)
+        read(editor.keyedProperties())
+        read(editor.selectionHasText)
+        read(editor.selectionHasImage)
+        read(editor.canConvertToOutlines)
+        XCTAssertEqual(n, 34)
+    }
+
+    /// What `CanvasStore.refreshStyle()` reads after each tick of a color or opacity
+    /// control.
+    static func readStyleRefreshQueries(_ editor: DrawingEditor) {
+        var editor = editor
+        withExtendedLifetime(editor.selectionAppearance) {}
+        withExtendedLifetime(editor.keyedProperties()) {}
     }
 
     // MARK: Live stroke
@@ -376,7 +407,7 @@ final class PerformanceTests: XCTestCase {
         timeline.record(end, at: 1)
         XCTAssertEqual(timeline.presentation.keyframe(keyframe)?.changes.isEmpty, false)
         var presenter = Presenter(presentation: timeline.presentation)
-        var builder = ArtBuilder()
+        var builder = ArtBuilder.likeRenderer()
         _ = builder.build(presenter.scene(at: 0), isolatedLayer: nil, tolerance: 0.5)
         presenter.advance()
         _ = presenter.scene(at: 0)
@@ -436,6 +467,49 @@ final class PerformanceTests: XCTestCase {
 
     /// 10 frames of one layer fading.
     func testPlaybackFrameOneLayerFades() { measure(.playbackFrameOneLayerFades, calls: 10) }
+
+    /// 10 frames of a text per layer tweening its tracking.
+    func testPlaybackFrameTextTracking() { measure(.playbackFrameTextTracking, calls: 10) }
+
+    /// What each played frame uploads, printed per transition. A slide only moves layers,
+    /// so it uploads nothing; a change of paint uploads its layers' triangles again.
+    func testPlaybackUploadPerFrame() {
+        var lines = ["Floats uploaded per playback frame", ""]
+        var slide = 0
+        for (name, end) in [("Every layer slides", Workload.everyLayerSlid(drawing)),
+                            ("Every fill changes", Workload.everyFillChanged(drawing)),
+                            ("One layer fades", Workload.firstLayerFaded(drawing))] {
+            var frames = PlaybackFrames(StressDrawing.transition(from: drawing, to: end))
+            frames.next()
+            frames.next()
+            let kilobytes = Double(frames.uploadedFloats * MemoryLayout<Float>.size) / 1024
+            lines.append("\(name): \(frames.uploadedFloats) floats (" + String(format: "%.1f", kilobytes) + " KB)")
+            if name == "Every layer slides" { slide = frames.uploadedFloats }
+        }
+        print(lines.joined(separator: "\n"))
+        XCTAssertEqual(slide, 0)
+    }
+
+    func testOnionSkinBuild() { measure(.onionSkinBuild) }
+
+    /// 4 nudges at a keyframe that keys every shape.
+    func testNudgeAtKeyframeKeyingEverything() { measure(.nudgeAtKeyframeKeyingEverything, calls: 4) }
+
+    /// 2 deletes and undos at keyframe 1 of 20 in a deck whose keyframes reorder shapes.
+    func testDeleteAndUndoWithReorders() { measure(.deleteAndUndoWithReorders, calls: 2) }
+
+    // MARK: Big selections
+
+    /// 10 hover frames with everything selected.
+    func testHoverFrameEverythingSelected() { measure(.hoverFrameEverythingSelected, calls: 10) }
+
+    /// 4 nudges of everything.
+    func testNudgeEverything() { measure(.nudgeEverything, calls: 4) }
+
+    /// 4 color picker ticks on everything at keyframe 10 of 20.
+    func testColorTickEverythingAtKeyframe() { measure(.colorTickEverythingAtKeyframe, calls: 4) }
+
+    func testMarqueeOverGroupedArt() { measure(.marqueeOverGroupedArt) }
 
     func testFrameAfterPlayback() { measure(.frameAfterPlayback) }
 
