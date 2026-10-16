@@ -12,7 +12,9 @@ import Foundation
 /// A tessellation is reused for any shape with the same id, path and outline geometry
 /// (see `Tessellation.matches`): fill, gradient, opacity and outline color are paint,
 /// which the art's steps carry, so a color or opacity change, or a transition that
-/// tweens one, flattens nothing.
+/// tweens one, flattens nothing. Shapes are cached as the art draws them (see
+/// `ArtShape`): in their own space, so a transform or a transform tween flattens nothing
+/// either.
 ///
 /// Each entry has a second tier: the last tessellation of the same shape at another
 /// tolerance. A pinch that settles back and forth across one bucket boundary then
@@ -140,9 +142,11 @@ public struct TessellationCache: Sendable {
     /// are left out. With no `viewRect`, every shape is in `rest`. With `wholeLayers`, a
     /// layer with any shape in view puts all of its shapes in `visible`, so a build
     /// `leavingOutUncached` can show it once the first batch is merged.
+    /// Each shape comes at its own tolerance, `tolerance` divided by how much its
+    /// transforms enlarge it (see `ArtBuilder.artShape`).
     public struct RefinePlan: Sendable {
-        public var visible: [VectorShape] = []
-        public var rest: [VectorShape] = []
+        public var visible: [ArtShape] = []
+        public var rest: [ArtShape] = []
         public var isEmpty: Bool { visible.isEmpty && rest.isEmpty }
     }
 
@@ -150,15 +154,18 @@ public struct TessellationCache: Sendable {
                            wholeLayers: Bool = false) -> RefinePlan {
         var plan = RefinePlan()
         let view = viewRect.map { $0.outset(by: max($0.width, $0.height) / 4) }
-        for layer in drawing.world.layers {
+        for layer in drawing.layers {
             let start = (visible: plan.visible.count, rest: plan.rest.count)
+            let placement = ArtBuilder.placement(of: layer)
             for index in layer.shapes.indices where layer.isShown(index) {
-                let shape = layer.shapes[index]
-                guard tessellation(of: shape, tolerance: tolerance) == nil else { continue }
-                if let view, shape.hitBounds.intersects(view) {
-                    plan.visible.append(shape)
+                let art = ArtBuilder.artShape(index, of: layer, placement: placement, tolerance: tolerance)
+                guard tessellation(of: art.shape, tolerance: art.tolerance) == nil else { continue }
+                let m = placement.segment * art.place
+                let bounds = m == .identity ? art.shape.hitBounds : Rect(points: art.shape.hitBounds.corners.map(m.apply))
+                if let view, bounds.intersects(view) {
+                    plan.visible.append(art)
                 } else {
-                    plan.rest.append(shape)
+                    plan.rest.append(art)
                 }
             }
             if wholeLayers, plan.visible.count > start.visible, plan.rest.count > start.rest {
@@ -169,15 +176,16 @@ public struct TessellationCache: Sendable {
         return plan
     }
 
-    /// Tessellates `shapes` at `tolerance`. Pure, so it can run off the main thread;
-    /// returns nil as soon as `isCancelled` says so (checked between shapes).
-    public static func tessellate(_ shapes: [VectorShape], tolerance: Double,
+    /// Tessellates `shapes`, each at its own tolerance, for a refine to the art
+    /// tolerance `tolerance`. Pure, so it can run off the main thread; returns nil as soon
+    /// as `isCancelled` says so (checked between shapes).
+    public static func tessellate(_ shapes: [ArtShape], tolerance: Double,
                                   isCancelled: () -> Bool = { false }) -> Refinement? {
         var made: [Tessellation] = []
         made.reserveCapacity(shapes.count)
-        for shape in shapes {
+        for art in shapes {
             if isCancelled() { return nil }
-            made.append(ArtBuilder.tessellate(shape, tolerance: tolerance))
+            made.append(ArtBuilder.tessellate(art.shape, tolerance: art.tolerance))
         }
         return Refinement(tolerance: tolerance, tessellations: made)
     }
@@ -192,9 +200,12 @@ public struct TessellationCache: Sendable {
         made.reserveCapacity(refinement.tessellations.count)
         for t in refinement.tessellations { made[t.shape.id] = t }
         var kept = 0
-        for layer in drawing.world.layers {
-            for shape in layer.shapes {
-                guard let t = made[shape.id], t.matches(shape) else { continue }
+        for layer in drawing.layers {
+            let placement = ArtBuilder.placement(of: layer)
+            for index in layer.shapes.indices {
+                guard let t = made[layer.shapes[index].id],
+                      t.matches(ArtBuilder.artShape(index, of: layer, placement: placement, tolerance: refinement.tolerance).shape)
+                else { continue }
                 store(t)
                 kept += 1
             }

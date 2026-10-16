@@ -273,3 +273,24 @@ Before and after, full size, `-c release`, per call, on one cloud container:
 | `changedObjectsAtKeyframe` | < 0.1 ms | < 0.3 ms (noise) |
 | `open` | 228 ms | 243 ms (noise; unchanged code) |
 
+
+### Step 4: local-space tessellation (shipped)
+
+- **Shapes are tessellated in their own space.** `ArtBuilder` no longer builds from `drawing.world`. Each shape is cached as `ArtBuilder.artShape` gives it: its own points (text laid out), with its group and shape transforms as a `place` step (`ArtStep.place`), at the art's tolerance divided by how much its transforms enlarge it, rounded up to a power of two (`ArtBuilder.detail(of:)`). The layer's transform goes on its segment (`ArtSegment.transform`), outside the layer's cache key, so a layer whose transform alone changed reuses its steps, its vertices and (in the renderer) its buffer.
+- **The renderer applies the matrices.** `CanvasRenderer.drawArt` draws each segment through `segment.transform · place` (and the drag's transform for `.moving` shapes) before the camera. Gradients and pictures are in the vertices' own space, so they move with the shape.
+- **What is still baked.** A stretch or skew of a shape with an outline or a gradient is baked into its points, so outlines keep an even width and gradient bands stay square to their axis, as the file and the exports draw them. A stretched layer with such shapes bakes its transform into all of them.
+- **Drags.** A drag changes transforms, not points, so `carry` no longer moves triangles: it keeps each moved shape's tessellation, relabelling a shrunk one at its coarser tolerance and counting an enlarged one as coarse. The carry limit is gone, since nothing is rounded again.
+- **#6** goes with it: an edit no longer re-bakes the transformed and text layers. Tests: `LocalSpaceArtTests` paints transformed layers, groups, shapes, clipping, gradients and outlines with `StencilSimulator` (now aware of `place` and segment transforms) and compares them with the world drawing.
+
+Before and after, full size, `-c release`, per call, on one cloud container:
+
+| Workload | Before | After |
+| --- | --- | --- |
+| `playbackFrameAllLayersSlide` | 88 ms | 7.4 ms |
+| `frameAfterPlayback` | 12 ms | 7 ms |
+| `testPlaybackFrames` (per frame) | 1.9 ms | 1.3 ms |
+| `testDragWithLiveTransform` (one 20-sample drag and lift) | 208 ms | 176 ms |
+| `playbackFrameEveryFillChanges` | 19 ms | 22 ms (noise) |
+| `artRebuildAfterOneEdit` | 7.6 ms | 7.6 ms |
+
+What is left of the slide frame is interpolating the scene and comparing each layer's shapes for its cache key; nothing is flattened or rebuilt. The app can't be built here, so the renderer change is checked by CI's app build only; an on-device check of a whole-stage slide, a dragged shape with a gradient and a scaled outlined layer is worth doing.

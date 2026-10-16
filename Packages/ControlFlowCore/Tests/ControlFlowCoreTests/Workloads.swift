@@ -266,7 +266,7 @@ struct Workload: @unchecked Sendable {
         _ = during.build(drawing, isolatedLayer: nil, tolerance: 0.5, moving: live.shapes)
         return {
             var builder = during
-            builder.carry(live, to: after)
+            builder.carry(live, to: after, tolerance: 0.5)
             _ = builder.build(after, isolatedLayer: nil, tolerance: 0.5)
         }
     }

@@ -90,3 +90,14 @@ public struct Affine2D: Hashable, Sendable, Codable {
             abs(tx - o.tx) <= tolerance && abs(ty - o.ty) <= tolerance
     }
 }
+
+extension Affine2D {
+    /// True when the transform keeps shapes' proportions: a rotation, a uniform scale or a
+    /// reflection, and a translation (its columns have equal lengths at right angles, to
+    /// within rounding). An outline drawn through one keeps an even width.
+    public var isSimilarity: Bool {
+        let x = a * a + b * b, y = c * c + d * d
+        guard x > 1e-18 else { return false }
+        return abs(x - y) <= 1e-6 * x && abs(a * c + b * d) <= 1e-6 * x
+    }
+}

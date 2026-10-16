@@ -95,7 +95,8 @@ public struct ArtPaint: Hashable, Sendable {
     /// What an image shape shows where its pixels are missing.
     public static let missingImage = RGBAColor(r: 0.5, g: 0.5, b: 0.5, a: 0.25)
 
-    /// The straight-alpha color at world point `p`, opacity applied.
+    /// The straight-alpha color at `p`, opacity applied. Like the GPU, the gradient sees
+    /// the point in the space the step's vertices are in (see `ArtStep.place`).
     public func color(at p: Vec2) -> RGBAColor {
         var c = gradient.map { $0.color(at: $0.parameter(at: p)) } ?? color
         c.a *= min(max(opacity, 0), 1)
@@ -106,8 +107,8 @@ public struct ArtPaint: Hashable, Sendable {
 /// An image painted by a cover step: its pixels' `src` and where they go.
 public struct ArtImage: Hashable, Sendable {
     public var src: String
-    /// Maps a world point to the image's unit square (x across, y down, 0...1), the
-    /// texture coordinate to sample there.
+    /// Maps a point in the space of the step's vertices (see `ArtStep.place`) to the
+    /// image's unit square (x across, y down, 0...1), the texture coordinate to sample there.
     public var worldToImage: Affine2D
 
     public init(src: String, worldToImage: Affine2D) {
@@ -116,7 +117,8 @@ public struct ArtImage: Hashable, Sendable {
     }
 }
 
-/// One draw in the art pass. Vertex ranges index `ArtBatch.vertices` (in points).
+/// One draw in the art pass. Vertex ranges index `ArtBatch.vertices` (in points), which
+/// are in the space `place` and the segment's `transform` map to the world.
 public enum ArtStep: Hashable, Sendable {
     /// Triangles that only change the stencil.
     case stencil(vertices: Range<Int>, state: StencilState, reference: UInt8)
@@ -131,9 +133,15 @@ public enum ArtStep: Hashable, Sendable {
     /// moving (true) or not (false): the renderer applies the transform to them, so a
     /// drag needs no rebuild. See `DrawingEditor.liveTransform`.
     case moving(Bool)
+    /// The `stencil` and `cover` steps that follow, until the next `place`, have their
+    /// vertices (and their paint's gradient and image) in a space this matrix maps into
+    /// the segment's space: a shape tessellated in its own space, placed by its group and
+    /// shape transforms. Each segment starts with the identity.
+    case place(Affine2D)
 }
 
-/// The art ready for the GPU: world-space triangles and the steps that draw them.
+/// The art ready for the GPU: triangles and the steps that draw them. Each segment's
+/// triangles are in its layer's space, which `ArtSegment.transform` maps to the world.
 public struct ArtBatch: Hashable, Sendable {
     /// Two floats (x, y) per vertex. Empty when the builder doesn't concatenate them
     /// (`ArtBuilder.concatenatesVertices`); the segments still hold every layer's floats.
@@ -161,6 +169,9 @@ public struct ArtSegment: Hashable, Sendable {
     public var steps: Range<Int>
     /// The layer's vertices, two floats each (shared with the builder's cache, not copied).
     public var floats: [Float]
+    /// Maps the layer's vertices (and its `place` steps' spaces) to the world: the layer's
+    /// transform, which moving the layer changes without changing `id` or `floats`.
+    public var transform: Affine2D = .identity
 
     /// `range` (from one of this segment's steps) counted from the segment's first vertex,
     /// for drawing from a buffer that holds only `floats`.
@@ -191,16 +202,48 @@ extension ArtStep {
         case .cover(let range, let paint, let state, let reference):
             .cover(vertices: (range.lowerBound + offset)..<(range.upperBound + offset), paint: paint, state: state,
                    reference: reference)
-        case .stencilView, .veil, .moving:
+        case .stencilView, .veil, .moving, .place:
             self
         }
     }
+}
+
+/// A shape as the art draws it (see `ArtBuilder.artShape(_:of:placement:tolerance:)`):
+/// `shape` in the space its triangles are made in, usually its own; `place`, which maps
+/// that space to its layer's segment space; and the tolerance it is flattened at there.
+public struct ArtShape: Sendable {
+    public var shape: VectorShape
+    public var place: Affine2D
+    public var tolerance: Double
+
+    public var id: Int { shape.id }
+}
+
+/// How a layer's art reaches the world (see `ArtBuilder.placement(of:)`).
+struct LayerPlacement: Sendable {
+    /// Maps the layer's vertices to the world: `ArtSegment.transform`.
+    var segment: Affine2D
+    /// The layer's transform, when its shapes take it into their points instead: one that
+    /// would stretch the layer's outlines unevenly.
+    var baked: Affine2D?
+    /// How much `segment` enlarges the art, as a power of two (see `ArtBuilder.detail(of:)`).
+    var detail: Double
 }
 
 /// Builds the art pass for a drawing and keeps each shape's triangles until that
 /// shape (or the flattening tolerance) changes, so an edit re-tessellates only the
 /// shapes it touches. It also keeps each layer's finished steps and vertices, so an edit
 /// rebuilds only the layers it touches and the rest are copied as they are.
+///
+/// Each shape is tessellated in its own space and drawn through its group and shape
+/// transforms (`ArtStep.place`) and its layer's (`ArtSegment.transform`), which the GPU
+/// applies. So moving, turning or scaling a shape, a group or a layer flattens nothing
+/// again, and a transition that slides the whole stage draws every frame from the same
+/// triangles: a layer whose transform alone changed reuses its steps and its buffer.
+/// Only a transform that would stretch an outline unevenly (a stretch or a skew of a
+/// shape with an outline) is baked into the points instead. A shape is flattened at the
+/// art's tolerance divided by how much its transforms enlarge it, rounded up to a power
+/// of two, so a scale tween flattens it again only once per doubling.
 ///
 /// Each fill is drawn with stencil-then-cover: its fan marks winding numbers, then a
 /// rectangle over it paints where the winding is non-zero, which fills any outline
@@ -221,9 +264,6 @@ public struct ArtBuilder: Sendable {
         /// Outline triangles, two floats per vertex, and their bounds.
         var outline: [Float]
         var outlineBounds: Rect
-        /// How many drags have carried these triangles since they were flattened (see
-        /// `carry(_:to:)`), each rounding them to floats again.
-        var carries = 0
 
         /// What the cache counts against its second-tier limit.
         var vertexCount: Int { (fan.count + outline.count) / 2 }
@@ -231,6 +271,7 @@ public struct ArtBuilder: Sendable {
         /// The triangles are those of `shape` too: it has the same id and path, and its
         /// outline has the same geometry. Paint (fill, gradient, opacity, image and outline
         /// color) plays no part in them; `tessellate` reads only the path and the outline.
+        /// Nor does the shape's transform, which places the triangles (see `ArtShape`).
         func matches(_ shape: VectorShape) -> Bool {
             self.shape.id == shape.id && self.shape.path == shape.path && Self.sameOutline(self.shape.stroke, shape.stroke)
         }
@@ -240,45 +281,13 @@ public struct ArtBuilder: Sendable {
             return a.width == b.width && a.cap == b.cap && a.join == b.join && a.miterLimit == b.miterLimit &&
                 a.dash == b.dash && a.dashOffset == b.dashOffset && a.alignment == b.alignment
         }
-
-        /// The same triangles taken through `t`, stored for `shape` at `tolerance`.
-        func applying(_ t: Affine2D, as shape: VectorShape, tolerance: Double) -> Tessellation {
-            let (fan, movedFanBounds) = Self.apply(t, to: self.fan)
-            let (outline, outlineBounds) = Self.apply(t, to: self.outline)
-            // An open path has no fan but keeps its flattened bounds, which nothing reads.
-            let fanBounds = fan.isEmpty && !self.fanBounds.isNull ? Rect(points: self.fanBounds.corners.map(t.apply))
-                : movedFanBounds
-            return Tessellation(shape: shape, tolerance: tolerance, fan: fan, fanBounds: fanBounds, outline: outline,
-                                outlineBounds: outlineBounds, carries: carries + 1)
-        }
-
-        /// `floats` (x, y pairs) through `t`, and the bounds of the result.
-        private static func apply(_ t: Affine2D, to floats: [Float]) -> ([Float], Rect) {
-            guard !floats.isEmpty else { return ([], .null) }
-            var minX = Double.infinity, minY = Double.infinity, maxX = -Double.infinity, maxY = -Double.infinity
-            let moved = [Float](unsafeUninitializedCapacity: floats.count) { out, count in
-                floats.withUnsafeBufferPointer { src in
-                    var i = 0
-                    while i + 1 < src.count {
-                        let x = Double(src[i]), y = Double(src[i + 1])
-                        let px = Float(t.a * x + t.c * y + t.tx), py = Float(t.b * x + t.d * y + t.ty)
-                        out[i] = px
-                        out[i + 1] = py
-                        // The bounds of the rounded points, as a fresh tessellation's are of its own.
-                        minX = min(minX, Double(px)); maxX = max(maxX, Double(px))
-                        minY = min(minY, Double(py)); maxY = max(maxY, Double(py))
-                        i += 2
-                    }
-                }
-                count = floats.count
-            }
-            return (moved, Rect(minPoint: Vec2(minX, minY), maxPoint: Vec2(maxX, maxY)))
-        }
     }
 
     /// What one layer's steps and vertices depend on besides its shapes' tessellations:
     /// a layer whose key is unchanged reuses its `LayerBatch`. Comparing the shapes is a
     /// pointer compare for an untouched layer, whose array shares storage with the last one.
+    /// The layer's own transform is not in it, only what it does to the build: moving the
+    /// layer changes only its segment's `transform`.
     struct LayerKey: Equatable, Sendable {
         var shapes: [VectorShape]
         var groups: [ShapeGroup]
@@ -290,14 +299,17 @@ public struct ArtBuilder: Sendable {
         /// The ghost focus and the moving set, restricted to this layer's shapes.
         var ghostFocus: Set<Int>?
         var moving: Set<Int>
+        /// `LayerPlacement.baked` and `detail`.
+        var bakedLayer: Affine2D?
+        var detail: Double
     }
 
     /// One layer's steps, with vertex ranges counted from the start of its own `vertices`.
-    /// Each starts and ends with `moving` off.
+    /// Each starts and ends with `moving` off, and starts with `place` the identity.
     struct LayerBatch: Sendable {
         var key: LayerKey
         var id: Int
-        /// Every shape was drawn at `key.tolerance`. A layer built while a refine was under
+        /// Every shape was drawn at its tolerance. A layer built while a refine was under
         /// way may hold shapes at an older tolerance; it is rebuilt rather than reused, so
         /// it picks up the refined shapes once they are merged.
         var isExact: Bool
@@ -328,9 +340,11 @@ public struct ArtBuilder: Sendable {
     /// Concatenates every layer's floats into `ArtBatch.vertices`. A renderer that uploads
     /// the segments one by one turns it off and skips the copy.
     public var concatenatesVertices = true
-    /// While building a layer: the shapes to mark as moving, and whether the last mark was on.
+    /// While building a layer: the shapes to mark as moving, and whether the last mark was
+    /// on; and the last `place`.
     private var moving: Set<Int> = []
     private var isMoving = false
+    private var place = Affine2D.identity
 
     /// How strongly the ghost view draws the shapes outside its focus.
     public static let ghostOpacity = 0.25
@@ -343,8 +357,8 @@ public struct ArtBuilder: Sendable {
     /// The shapes in `moving` are bracketed by `.moving` steps.
     ///
     /// With `reusingOtherTolerances`, an unchanged shape cached at another tolerance
-    /// keeps that tessellation; only new and edited shapes are tessellated, at
-    /// `tolerance`. The renderer builds that way while a background refine is under way.
+    /// keeps that tessellation; only new and edited shapes are tessellated, at their
+    /// tolerance. The renderer builds that way while a background refine is under way.
     ///
     /// With `leavingOutUncached`, a layer with a shown shape that has no tessellation at
     /// any tolerance is left out rather than tessellated, and counted in `layersLeftOut`.
@@ -358,7 +372,7 @@ public struct ArtBuilder: Sendable {
         var batch = ArtBatch()
         reusesOtherTolerances = reusingOtherTolerances
         defer { reusesOtherTolerances = false }
-        var layers = drawing.world.layers
+        var layers = drawing.layers
         if let isolatedLayer {
             layers = layers.filter { $0.id != isolatedLayer } + layers.filter { $0.id == isolatedLayer }
         }
@@ -369,9 +383,10 @@ public struct ArtBuilder: Sendable {
         for layer in layers {
             let slot = layer.id
             seen.insert(slot)
+            let placement = Self.placement(of: layer)
             // Left out before its cache is looked at, so a layer built earlier and edited
             // since keeps its cache entry (and its shapes' tessellations) for when it is ready.
-            if leavingOutUncached, !isTessellated(layer) {
+            if leavingOutUncached, !isTessellated(layer, placement: placement, tolerance: tolerance) {
                 batch.layersLeftOut += 1
                 continue
             }
@@ -380,16 +395,17 @@ public struct ArtBuilder: Sendable {
                               isIsolated: isolated,
                               isolatedGroup: isolated ? isolatedGroup.flatMap { layer.group($0) == nil ? nil : $0 } : nil,
                               ghostFocus: ghostFocus.map { Self.restrict($0, to: layer) },
-                              moving: Self.restrict(moving, to: layer))
+                              moving: Self.restrict(moving, to: layer),
+                              bakedLayer: placement.baked, detail: placement.detail)
             if let cached = layerCache[slot], cached.isExact, cached.key == key {
-                batch.append(cached, layer: layer.id, concatenating: concatenatesVertices)
+                batch.append(cached, layer: layer.id, transform: placement.segment, concatenating: concatenatesVertices)
                 continue
             }
             if let old = layerCache[slot] { retired.formUnion(old.key.shapes.lazy.map(\.id)) }
             fresh.formUnion(layer.shapes.lazy.map(\.id))
-            let built = buildLayer(layer, key: key)
+            let built = buildLayer(layer, key: key, placement: placement)
             layerCache[slot] = built
-            batch.append(built, layer: layer.id, concatenating: concatenatesVertices)
+            batch.append(built, layer: layer.id, transform: placement.segment, concatenating: concatenatesVertices)
         }
         for slot in Array(layerCache.keys) where !seen.contains(slot) {
             if let old = layerCache.removeValue(forKey: slot) { retired.formUnion(old.key.shapes.lazy.map(\.id)) }
@@ -398,9 +414,79 @@ public struct ArtBuilder: Sendable {
         return batch
     }
 
+    // MARK: Placing shapes
+
+    /// How `layer`'s art reaches the world. Its transform goes on the segment, applied by
+    /// the GPU, unless it isn't a similarity and the layer has a shape that a stretch
+    /// draws differently from its baked points (see `stretches(_:)`); then the shapes
+    /// take it into their points.
+    static func placement(of layer: Layer) -> LayerPlacement {
+        guard !layer.transform.isIdentity else { return LayerPlacement(segment: .identity, baked: nil, detail: 1) }
+        let m = layer.transform.matrix
+        if m.isSimilarity || !layer.shapes.contains(where: stretchesUnlikeItsPoints) {
+            return LayerPlacement(segment: m, baked: nil, detail: detail(of: m))
+        }
+        return LayerPlacement(segment: .identity, baked: m, detail: 1)
+    }
+
+    /// Shape `index` of `layer` as the art draws it, with `layer` placed by `placement`:
+    /// in its own space, with its group and shape transforms as its `place`, or, where
+    /// drawing it through them would differ from baking them (see
+    /// `stretchesUnlikeItsPoints`), with them baked into its points. A text
+    /// shape's glyphs are laid out (see `VectorShape.resolvingText()`). `tolerance` is the
+    /// art's, in the world; the result's is in the shape's space.
+    static func artShape(_ index: Int, of layer: Layer, placement: LayerPlacement, tolerance: Double) -> ArtShape {
+        let shape = layer.shapes[index]
+        var inner = Affine2D.identity
+        if let id = shape.group, let group = layer.group(id), !group.transform.isIdentity { inner = group.transform.matrix }
+        if !shape.transform.isIdentity { inner = inner * shape.transform.matrix }
+        let r = placement.baked.map { $0 * inner } ?? inner
+        if r == .identity {
+            return ArtShape(shape: shape.resolvingText(), place: .identity, tolerance: tolerance / placement.detail)
+        }
+        if r.isSimilarity || !stretchesUnlikeItsPoints(shape) {
+            return ArtShape(shape: shape.resolvingText(), place: r, tolerance: tolerance / detail(of: placement.segment * r))
+        }
+        return ArtShape(shape: shape.baked(r), place: .identity, tolerance: tolerance / placement.detail)
+    }
+
+    /// Every shape of `layer` as the art draws it at `tolerance` (see `artShape`), and
+    /// the layer's segment transform.
+    static func artShapes(of layer: Layer, tolerance: Double) -> (segment: Affine2D, shapes: [ArtShape]) {
+        let placement = placement(of: layer)
+        return (placement.segment,
+                layer.shapes.indices.map { artShape($0, of: layer, placement: placement, tolerance: tolerance) })
+    }
+
+    /// True when drawing `shape` through a stretch or a skew looks different from baking
+    /// it into the points, as the file and the exports do: an outline would widen
+    /// unevenly (baking scales its width by the area), and a gradient's bands would lean
+    /// (baking keeps them square to its axis, and a radial one round). Text has neither:
+    /// its glyphs are filled only.
+    private static func stretchesUnlikeItsPoints(_ shape: VectorShape) -> Bool {
+        if shape.gradient != nil { return true }
+        guard shape.text == nil, let stroke = shape.stroke else { return false }
+        return stroke.width > 0
+    }
+
+    /// How much `m` enlarges what it maps at most (its larger singular value), rounded up
+    /// to a power of two: a shape drawn through `m` is flattened at the art's tolerance
+    /// divided by this, so it looks as smooth as it would flattened in place, and a scale
+    /// that changes within one power of two keeps its triangles. 1 for a collapsed `m`.
+    static func detail(of m: Affine2D) -> Double {
+        let e = m.a * m.a + m.b * m.b + m.c * m.c + m.d * m.d, det = m.determinant
+        let stretch = ((e + max(e * e - 4 * det * det, 0).squareRoot()) / 2).squareRoot()
+        guard stretch > 1e-6, stretch.isFinite else { return 1 }
+        // Slack, so a scale of 1 that rounding made 1.0000000001 stays 1.
+        return pow(2, (log2(stretch) - 1e-9).rounded(.up))
+    }
+
     /// True when every shown shape of `layer` has a cached tessellation, at any tolerance.
-    private func isTessellated(_ layer: Layer) -> Bool {
-        layer.shapes.indices.allSatisfy { !layer.isShown($0) || tessellations.anyTessellation(of: layer.shapes[$0]) != nil }
+    private func isTessellated(_ layer: Layer, placement: LayerPlacement, tolerance: Double) -> Bool {
+        layer.shapes.indices.allSatisfy {
+            !layer.isShown($0) ||
+                tessellations.anyTessellation(of: Self.artShape($0, of: layer, placement: placement, tolerance: tolerance).shape) != nil
+        }
     }
 
     /// The ids in `set` that are shapes of `layer`.
@@ -411,38 +497,42 @@ public struct ArtBuilder: Sendable {
         return result
     }
 
+    // MARK: Building a layer
+
     /// Draws one layer from scratch (its shapes' tessellations still come from the cache).
-    private mutating func buildLayer(_ layer: Layer, key: LayerKey) -> LayerBatch {
+    private mutating func buildLayer(_ layer: Layer, key: LayerKey, placement: LayerPlacement) -> LayerBatch {
         layerBuilds += 1
         var batch = ArtBatch()
         moving = key.moving
         isMoving = false
+        place = .identity
         usedOtherTolerance = false
+        let arts = layer.shapes.indices.map { Self.artShape($0, of: layer, placement: placement, tolerance: key.tolerance) }
         let all = Array(layer.shapes.indices)
         if let group = key.isolatedGroup {
             let inGroup = all.filter { layer.shapes[$0].group == group }
-            appendShapes(all.filter { layer.shapes[$0].group != group }, of: layer, skippingBases: Set(inGroup),
-                         tolerance: key.tolerance, ghostFocus: key.ghostFocus, to: &batch)
+            appendShapes(all.filter { layer.shapes[$0].group != group }, of: layer, arts: arts, skippingBases: Set(inGroup),
+                         ghostFocus: key.ghostFocus, to: &batch)
             batch.steps.append(.veil)
-            appendShapes(inGroup, of: layer, skippingBases: [], tolerance: key.tolerance, ghostFocus: key.ghostFocus,
-                         to: &batch)
+            appendShapes(inGroup, of: layer, arts: arts, skippingBases: [], ghostFocus: key.ghostFocus, to: &batch)
         } else {
             if key.isIsolated { batch.steps.append(.veil) }
-            appendShapes(all, of: layer, skippingBases: [], tolerance: key.tolerance, ghostFocus: key.ghostFocus,
-                         to: &batch)
+            appendShapes(all, of: layer, arts: arts, skippingBases: [], ghostFocus: key.ghostFocus, to: &batch)
         }
         if isMoving { batch.steps.append(.moving(false)) }
         moving = []
         isMoving = false
+        place = .identity
         defer { nextLayerBatchID += 1 }
         return LayerBatch(key: key, id: nextLayerBatchID, isExact: !usedOtherTolerance, vertices: batch.vertices,
                          steps: batch.steps)
     }
 
-    /// Adds the shapes at `indices` of `layer`, leaving out clipped shapes and clipped
-    /// groups whose base is in `skippingBases` (drawn in another pass, so there is nothing
-    /// to clip to here). A clipped group whose base isn't in `indices` draws unclipped.
-    private mutating func appendShapes(_ indices: [Int], of layer: Layer, skippingBases: Set<Int>, tolerance: Double,
+    /// Adds the shapes at `indices` of `layer` (drawn as `arts`), leaving out clipped
+    /// shapes and clipped groups whose base is in `skippingBases` (drawn in another pass,
+    /// so there is nothing to clip to here). A clipped group whose base isn't in
+    /// `indices` draws unclipped.
+    private mutating func appendShapes(_ indices: [Int], of layer: Layer, arts: [ArtShape], skippingBases: Set<Int>,
                                        ghostFocus: Set<Int>?, to batch: inout ArtBatch) {
         let drawn = Set(indices)
         let clips = layer.clipPlan()
@@ -474,95 +564,94 @@ public struct ArtBuilder: Sendable {
                 // A base whose clipped shapes draw in another pass needn't mark the clip.
                 role = clips.isBase(index) && drawn.contains(index + 1) ? .base : .none
             }
-            let geometry = tessellation(of: shape, tolerance: tolerance)
+            let geometry = tessellation(of: arts[index])
             let fade = ghostFocus.map { $0.contains(shape.id) ? 1 : Self.ghostOpacity } ?? 1
-            let clear = role == .base ? clipArea(of: index, in: layer, clips: clips, drawn: drawn, tolerance: tolerance) : nil
+            let clear = role == .base ? clipArea(of: index, in: layer, arts: arts, clips: clips, drawn: drawn) : nil
             // A clipped shape in the group needs no mask: its base only drew inside it.
-            append(shape, geometry, role: role, clipArea: clear, masked: mask != nil && role != .clipped, fade: fade,
+            append(arts[index], geometry, role: role, clipArea: clear, masked: mask != nil && role != .clipped, fade: fade,
                    to: &batch)
         }
         if masking != nil { batch.steps.append(.stencilView(state: ArtStencil.restoreClip, reference: ArtStencil.clipBit)) }
     }
 
-    /// Where clearing the clip for base `index` matters: the union of the cover
-    /// rectangles of the shapes it clips, and of every shape in a clipped group on it,
-    /// which test the clip (or the group mask copied from it) only inside them. Other
-    /// shapes never read the clip bit, so a stale bit elsewhere does no harm. Nil while
-    /// a live transform moves the base or a shape it clips, since the rectangle would
-    /// have to move with some of them and not others; the clear then covers the view.
-    private mutating func clipArea(of index: Int, in layer: Layer, clips: ClipPlan, drawn: Set<Int>,
-                                   tolerance: Double) -> Rect? {
+    /// Where clearing the clip for base `index` matters, in the layer's space: the union
+    /// of the cover rectangles of the shapes it clips, and of every shape in a clipped
+    /// group on it, which test the clip (or the group mask copied from it) only inside
+    /// them. Other shapes never read the clip bit, so a stale bit elsewhere does no harm.
+    /// Nil while a live transform moves the base or a shape it clips, since the rectangle
+    /// would have to move with some of them and not others; the clear then covers the view.
+    private mutating func clipArea(of index: Int, in layer: Layer, arts: [ArtShape], clips: ClipPlan,
+                                   drawn: Set<Int>) -> Rect? {
         guard !moving.contains(layer.shapes[index].id) else { return nil }
         var area = Rect.null
+        func add(_ rect: Rect, through place: Affine2D) {
+            area = area.union(place == .identity ? rect : Rect(points: rect.corners.map(place.apply)))
+        }
         var j = index + 1
         while j < layer.shapes.count, clips.base(of: j) == index || clips.groupBase(of: j) == index {
             defer { j += 1 }
-            let shape = layer.shapes[j]
+            let art = arts[j]
             guard layer.isShown(j), drawn.contains(j) else { continue }
-            if moving.contains(shape.id) { return nil }
-            let geometry = tessellation(of: shape, tolerance: tolerance)
-            if shape.visibleFill != nil || shape.image != nil, !geometry.fan.isEmpty { area = area.union(geometry.fanBounds) }
-            if shape.stroke != nil, !geometry.outline.isEmpty { area = area.union(geometry.outlineBounds) }
+            if moving.contains(art.id) { return nil }
+            let geometry = tessellation(of: art)
+            if art.shape.visibleFill != nil || art.shape.image != nil, !geometry.fan.isEmpty {
+                add(geometry.fanBounds, through: art.place)
+            }
+            if art.shape.stroke != nil, !geometry.outline.isEmpty { add(geometry.outlineBounds, through: art.place) }
         }
         return area
     }
 
-    private mutating func tessellation(of shape: VectorShape, tolerance: Double) -> Tessellation {
-        if let cached = tessellations.use(shape, tolerance: tolerance) { return cached }
-        if reusesOtherTolerances, let cached = tessellations.anyTessellation(of: shape) {
+    private mutating func tessellation(of art: ArtShape) -> Tessellation {
+        if let cached = tessellations.use(art.shape, tolerance: art.tolerance) { return cached }
+        if reusesOtherTolerances, let cached = tessellations.anyTessellation(of: art.shape) {
             usedOtherTolerance = true
             return cached
         }
-        let result = Self.tessellate(shape, tolerance: tolerance)
+        let result = Self.tessellate(art.shape, tolerance: art.tolerance)
         tessellationCount += 1
         tessellations.store(result)
         return result
     }
 
-    /// What `carry(_:to:)` did.
+    /// What `carry(_:to:tolerance:)` did.
     public struct Carry: Equatable, Sendable {
-        /// Moved shapes whose tessellation was carried rather than dropped.
+        /// Moved shapes that kept their tessellation.
         public var carried = 0
         /// Of those, the ones the drag enlarged, now coarser than the art's tolerance.
         public var coarse = 0
     }
 
-    /// After this many carries a shape is flattened again, so float rounding can't add up.
-    static let maximumCarries = 8
-
-    /// When a drag drawn through `live` ends: takes each moved shape's cached
-    /// tessellation through `live.transform` and stores it under the shape as it is in
-    /// `drawing`, so the next build draws the moved shapes without flattening them again
-    /// (see `LiveTransform.movesTessellation`). A shape is carried only when transforming
-    /// it as it was in `live.base` gives exactly the shape in `drawing`, so anything the
-    /// lift changed is tessellated by the next build as usual.
-    ///
-    /// Enlarging leaves the triangles coarser than they were flattened, as they looked
-    /// during the drag. Those are stored at the tolerance they now have and counted as
-    /// `coarse`: a build reusing other tolerances keeps them, and a refine replaces them.
+    /// When a drag drawn through `live` ends, keeps the moved shapes' triangles for the
+    /// art of `drawing` at `tolerance`. A drag changes transforms, not points, so a moved
+    /// shape's triangles still fit it; only the tolerance it wants can change, when the
+    /// drag scaled it across a power of two (see `detail(of:)`). A shrunk shape's finer
+    /// triangles are stored at its new tolerance, so the next build draws it without
+    /// flattening it again. An enlarged shape's are left coarser than it wants, as they
+    /// looked during the drag, and counted as `coarse`: a build reusing other tolerances
+    /// keeps them, and a refine replaces them. A shape whose drag was baked into its
+    /// points (a stretched outline), or that the lift changed, is tessellated by the next
+    /// build as usual.
     @discardableResult
-    public mutating func carry(_ live: LiveTransform, to drawing: Drawing) -> Carry {
+    public mutating func carry(_ live: LiveTransform, to drawing: Drawing, tolerance: Double) -> Carry {
         var result = Carry()
         guard live.movesTessellation else { return result }
-        let t = live.transform
-        let scale = (t.a * t.a + t.b * t.b).squareRoot()
-        let enlarges = scale > 1 + 1e-9
-        var before: [Int: VectorShape] = [:]
-        for layer in live.base.world.layers {
-            for shape in layer.shapes where live.shapes.contains(shape.id) { before[shape.id] = shape }
-        }
-        for layer in drawing.world.layers {
-            for shape in layer.shapes {
-                guard let old = before[shape.id], shape != old, let cached = tessellations.anyTessellation(of: old),
-                      cached.carries < Self.maximumCarries else { continue }
-                var moved = old
-                moved.apply(t)
-                // Moving a transform rather than the points rounds a little differently.
-                guard moved.isApproximately(shape) else { continue }
-                let tolerance = enlarges ? cached.tolerance * scale : cached.tolerance
-                tessellations.store(cached.applying(t, as: shape, tolerance: tolerance))
+        for layer in drawing.layers where layer.shapes.contains(where: { live.shapes.contains($0.id) }) {
+            let placement = Self.placement(of: layer)
+            for index in layer.shapes.indices where live.shapes.contains(layer.shapes[index].id) {
+                let art = Self.artShape(index, of: layer, placement: placement, tolerance: tolerance)
+                if tessellations.tessellation(of: art.shape, tolerance: art.tolerance) != nil {
+                    result.carried += 1
+                    continue
+                }
+                guard var kept = tessellations.anyTessellation(of: art.shape) else { continue }
                 result.carried += 1
-                if enlarges { result.coarse += 1 }
+                if kept.tolerance <= art.tolerance {
+                    kept.tolerance = art.tolerance
+                    tessellations.store(kept)
+                } else {
+                    result.coarse += 1
+                }
             }
         }
         return result
@@ -598,9 +687,11 @@ public struct ArtBuilder: Sendable {
         return result
     }
 
-    /// `clipArea` bounds the clip clear before a base (see `clipArea(of:in:clips:drawn:tolerance:)`).
-    private mutating func append(_ shape: VectorShape, _ geometry: Tessellation, role: ClipRole, clipArea: Rect?,
+    /// `clipArea` bounds the clip clear before a base (see `clipArea(of:in:arts:clips:drawn:)`),
+    /// in the layer's space.
+    private mutating func append(_ art: ArtShape, _ geometry: Tessellation, role: ClipRole, clipArea: Rect?,
                                  masked: Bool, fade: Double, to batch: inout ArtBatch) {
+        let shape = art.shape
         let moves = moving.contains(shape.id)
         if moves != isMoving {
             batch.steps.append(.moving(moves))
@@ -610,12 +701,14 @@ public struct ArtBuilder: Sendable {
             if let clipArea {
                 // Nothing clipped draws: no clip to clear.
                 if !clipArea.isNull {
+                    setPlace(.identity, in: &batch)
                     batch.steps.append(.stencil(vertices: addRect(to: &batch, clipArea), state: ArtStencil.clearClip, reference: 0))
                 }
             } else {
                 batch.steps.append(.stencilView(state: ArtStencil.clearClip, reference: 0))
             }
         }
+        setPlace(art.place, in: &batch)
 
         if let image = shape.image, !geometry.fan.isEmpty {
             // Stencilled like a fill, then covered with the picture.
@@ -651,6 +744,13 @@ public struct ArtBuilder: Sendable {
                 batch.steps.append(.stencil(vertices: cover, state: ArtStencil.cleanUp, reference: 0))
             }
         }
+    }
+
+    /// Adds a `place` step when the shapes that follow are placed by another matrix.
+    private mutating func setPlace(_ matrix: Affine2D, in batch: inout ArtBatch) {
+        guard matrix != place else { return }
+        batch.steps.append(.place(matrix))
+        place = matrix
     }
 
     private func add(to batch: inout ArtBatch, _ points: [Float]) -> Range<Int> {
@@ -735,10 +835,11 @@ public struct ArtBuilder: Sendable {
 }
 
 extension ArtBatch {
-    /// Appends a layer's batch as the next segment, moving its vertex ranges past the
-    /// vertices so far. A `moving(false)` ending the last layer and a `moving(true)`
-    /// starting this one cancel out, as they would in one walk across both layers.
-    mutating func append(_ layer: ArtBuilder.LayerBatch, layer id: Int, concatenating: Bool) {
+    /// Appends a layer's batch as the next segment, placed in the world by `transform`,
+    /// moving its vertex ranges past the vertices so far. A `moving(false)` ending the
+    /// last layer and a `moving(true)` starting this one cancel out, as they would in one
+    /// walk across both layers.
+    mutating func append(_ layer: ArtBuilder.LayerBatch, layer id: Int, transform: Affine2D, concatenating: Bool) {
         let base = segments.last?.vertices.upperBound ?? 0
         var layerSteps = layer.steps[...]
         if case .moving(true)? = layerSteps.first, case .moving(false)? = steps.last, let last = segments.indices.last {
@@ -755,7 +856,7 @@ extension ArtBatch {
         }
         if concatenating { vertices.append(contentsOf: layer.vertices) }
         segments.append(ArtSegment(id: layer.id, layer: id, vertices: base..<(base + layer.vertices.count / 2),
-                                   steps: firstStep..<steps.count, floats: layer.vertices))
+                                   steps: firstStep..<steps.count, floats: layer.vertices, transform: transform))
     }
 
     mutating func add(_ points: [Float]) -> Range<Int> {

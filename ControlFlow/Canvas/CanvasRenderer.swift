@@ -85,11 +85,14 @@ private struct ImagePaintUniforms {
 /// steps: fills, outlines (from the stroker, with caps, joins, dashes and varying
 /// width), gradients and clipping all mark the stencil and then paint a rectangle
 /// where the test passes, and multisampling anti-aliases the edges. Each shape's
-/// triangles are cached and rebuilt only when that shape changes. A select-tool drag
+/// triangles are made in its own space, cached, and rebuilt only when its path or outline
+/// changes: the vertex shader draws them through the shape's group and shape transforms
+/// (`ArtStep.place`) and its layer's (`ArtSegment.transform`), so moving, turning or
+/// scaling anything, in an edit or a transition, flattens nothing. A select-tool drag
 /// keeps the art built from the drawing as it began and draws the moved shapes through
-/// the drag's transform, so it re-tessellates nothing until the Pencil lifts (see
-/// `LiveTransform`). Vertices are in world space and the camera is applied in the vertex shader, so navigation never re-tessellates in a
-/// frame: when zoom crosses a power of two, the shapes are re-flattened in a background
+/// the drag's transform too, so it rebuilds nothing until the Pencil lifts (see
+/// `LiveTransform`). The camera is applied in the vertex shader, so navigation never
+/// re-tessellates in a frame: when zoom crosses a power of two, the shapes are re-flattened in a background
 /// job, visible ones first, while the current art keeps drawing (see `updateArt`). The
 /// first build after opening is such a job too, so the first frame never waits for it.
 @MainActor
@@ -485,11 +488,11 @@ final class CanvasRenderer {
         let previewsApart = !presenting
         let drawing = live?.base ?? (previewsApart ? editor.drawing : editor.shownDrawing)
         let revision = previewsApart ? editor.revision : editor.displayRevision
-        // A live drag just ended: carry the moved shapes' triangles to where they landed
+        // A live drag just ended: keep the moved shapes' triangles where they landed
         // rather than flattening them again. Enlarged ones are coarse until a refine.
         if live == nil, let ended = lastLive {
             let carry = Signposts.canvas.withIntervalSignpost("Art carry", "\(ended.shapes.count) shapes") {
-                artBuilder.carry(ended, to: editor.drawing)
+                artBuilder.carry(ended, to: editor.drawing, tolerance: artTolerance)
             }
             if carry.coarse > 0 {
                 cancelRefine()
@@ -707,21 +710,24 @@ final class CanvasRenderer {
             view.append(Float(corners[i].x))
             view.append(Float(corners[i].y))
         }
-        // Shapes a drag moves draw through its transform, applied before the camera.
-        var moved = uniforms
-        moved.worldToClip = uniforms.worldToClip * liveTransform.matrix4x4
+        // Each layer's vertices are in its own space, and each shape's in the space its
+        // `place` step names: the vertex shader takes them through the place, the layer's
+        // transform and, for shapes a drag moves, the drag's transform, before the camera.
+        // Gradients and pictures are in the vertices' own space, so they move with them.
         var moving = false
+        var place = Affine2D.identity
+        var placed = uniforms
+        var segmentTransform = Affine2D.identity
         enum Bound { case none, stencil, cover, imageCover }
         var bound = Bound.none
         var layerBuffer: (any MTLBuffer)?
         func bind(_ pipeline: any MTLRenderPipelineState, as kind: Bound) {
             guard bound != kind else { return }
             encoder.setRenderPipelineState(pipeline)
-            if moving {
-                encoder.setVertexBytes(&moved, length: MemoryLayout<CanvasUniforms>.stride, index: 1)
-            } else {
-                encoder.setVertexBytes(&uniforms, length: MemoryLayout<CanvasUniforms>.stride, index: 1)
-            }
+            var toWorld = segmentTransform * place
+            if moving { toWorld = liveTransform * toWorld }
+            placed.worldToClip = toWorld == .identity ? uniforms.worldToClip : uniforms.worldToClip * toWorld.matrix4x4
+            encoder.setVertexBytes(&placed, length: MemoryLayout<CanvasUniforms>.stride, index: 1)
             if let layerBuffer { encoder.setVertexBuffer(layerBuffer, offset: 0, index: 0) }
             bound = kind
         }
@@ -729,6 +735,8 @@ final class CanvasRenderer {
         for segment in segments {
             // Each layer's ranges count from the start of its own buffer.
             layerBuffer = buffers[segment.id]
+            segmentTransform = segment.transform
+            place = .identity
             bound = .none
             for step in steps[segment.steps] {
                 switch step {
@@ -781,6 +789,10 @@ final class CanvasRenderer {
 
                 case .moving(let on):
                     moving = on
+                    bound = .none
+
+                case .place(let matrix):
+                    place = matrix
                     bound = .none
                 }
             }

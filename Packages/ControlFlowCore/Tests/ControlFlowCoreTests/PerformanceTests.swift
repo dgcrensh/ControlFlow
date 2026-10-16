@@ -111,7 +111,7 @@ final class PerformanceTests: XCTestCase {
                 _ = builder.build(live.base, isolatedLayer: nil, tolerance: 0.5, moving: live.shapes)
             } else {
                 built = nil
-                if let ended = last { builder.carry(ended, to: editor.drawing) }
+                if let ended = last { builder.carry(ended, to: editor.drawing, tolerance: 0.5) }
                 last = nil
                 _ = builder.build(editor.drawing, isolatedLayer: nil, tolerance: 0.5)
             }
