@@ -10,7 +10,7 @@ import Foundation
 public struct Timeline: Sendable {
     public private(set) var presentation: Presentation
     /// Resolved states by chain index; nil until asked for.
-    private var states: [Drawing?]
+    private(set) var states: [Drawing?]
     /// The transition the next new keyframe gets: the one last set on a keyframe.
     public var lastTransition = Transition.standard
 
@@ -33,8 +33,10 @@ public struct Timeline: Sendable {
         while states[known] == nil { known -= 1 }
         if known < index {
             var state = states[known]!
+            // One lookup for the whole run, kept up to date as each keyframe applies.
+            var lookup = SceneLookup(state, indexingVertices: false)
             for i in (known + 1)...index {
-                if let keyframe = presentation.keyframe(atChainIndex: i) { state.apply(keyframe.changes) }
+                if let keyframe = presentation.keyframe(atChainIndex: i) { state.apply(keyframe.changes, lookup: &lookup) }
                 states[i] = state
             }
         }
@@ -46,6 +48,21 @@ public struct Timeline: Sendable {
     /// The scene at keyframe `id`, or the opening state for nil.
     public mutating func state(atKeyframe id: Int?) -> Drawing {
         state(at: presentation.chainIndex(of: id) ?? 0)
+    }
+
+    /// Takes the states `other` has resolved that still hold here: those before the first
+    /// keyframe whose changes differ, when the opening states match. Undo and redo use
+    /// this so a state is rebuilt only from the keyframe the step changed.
+    public mutating func reuseStates(of other: Timeline) {
+        let opening = presentation.opening
+        guard other.presentation.opening.withNextID(opening.nextID) == opening else { return }
+        var a = presentation.sequences.lazy.flatMap(\.keyframes).makeIterator()
+        var b = other.presentation.sequences.lazy.flatMap(\.keyframes).makeIterator()
+        for i in 1..<min(states.count, other.states.count) {
+            guard let mine = a.next(), let theirs = b.next(), mine.changes == theirs.changes,
+                  let state = other.states[i] else { return }
+            states[i] = state
+        }
     }
 
     private mutating func invalidate(after index: Int) {
@@ -103,6 +120,7 @@ public struct Timeline: Sendable {
     private mutating func prune(after index: Int) {
         guard index + 1 < states.count else { return }
         var state = self.state(at: index)
+        var lookup = SceneLookup(state, indexingVertices: false)
         for i in (index + 1)..<states.count {
             guard let keyframe = presentation.keyframe(atChainIndex: i) else { continue }
             var changes = keyframe.changes
@@ -113,7 +131,7 @@ public struct Timeline: Sendable {
                     if case .order(let parent, let order) = change { .order(parent: parent, ids: order.filter(ids.contains)) } else { change }
                 }
             }
-            let failed = Set(state.apply(changes))
+            let failed = Set(state.apply(changes, lookup: &lookup))
             if !failed.isEmpty || changes != keyframe.changes {
                 let kept = changes.indices.filter { !failed.contains($0) }.map { changes[$0] }
                 presentation.updateKeyframe(atChainIndex: i) { $0.changes = kept }

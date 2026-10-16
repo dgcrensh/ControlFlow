@@ -2,14 +2,23 @@ import Foundation
 
 /// Where each object of a scene is, by id, so a keyframe's changes can find what they
 /// refer to. Entries can go stale as objects are removed; `Drawing`'s lookups check them.
+///
+/// Vertices outnumber everything else, so a lookup made with `indexingVertices: false`
+/// leaves them out until a change looks up an id it doesn't know (see `prepare`): most
+/// keyframes only set layer and shape properties. Ids are unique across a scene (the
+/// file format and the editor both make sure), so until then a create checks only that
+/// its layers, groups and shapes aren't there yet.
 struct SceneLookup {
     enum Kind { case viewport, globalColor, layer, group, shape, vertex }
 
     private(set) var kinds: [Int: Kind] = [:]
     /// A group's or shape's layer, a vertex's shape.
     private(set) var parents: [Int: Int] = [:]
+    /// Whether `kinds` and `parents` hold vertices.
+    private(set) var hasVertices: Bool
 
-    init(_ drawing: Drawing) {
+    init(_ drawing: Drawing, indexingVertices: Bool = true) {
+        hasVertices = indexingVertices
         kinds[drawing.viewport.id] = .viewport
         for global in drawing.globalColors { kinds[global.id] = .globalColor }
         for layer in drawing.layers { add(.layer(layer), parent: nil) }
@@ -26,12 +35,29 @@ struct SceneLookup {
             kinds[group.id] = .group
         case .shape(let shape):
             kinds[shape.id] = .shape
+            guard hasVertices else { return }
             for point in shape.path.points {
                 kinds[point.id] = .vertex
                 parents[point.id] = shape.id
             }
         case .vertex(let point):
+            guard hasVertices else { return }
             kinds[point.id] = .vertex
+        }
+    }
+
+    /// Indexes the vertices of `drawing`, the scene as it is now, when `id` is one the
+    /// lookup doesn't know and they aren't indexed yet.
+    mutating func prepare(for id: Int?, in drawing: Drawing) {
+        guard !hasVertices, let id, kinds[id] == nil else { return }
+        hasVertices = true
+        for layer in drawing.layers {
+            for shape in layer.shapes {
+                for point in shape.path.points {
+                    kinds[point.id] = .vertex
+                    parents[point.id] = shape.id
+                }
+            }
         }
     }
 }
@@ -126,6 +152,11 @@ extension Drawing {
     /// Applies one change. Returns false, changing nothing, when it refers to an object
     /// that isn't there (or creates one that is), or its properties don't read.
     mutating func apply(_ change: SceneChange, lookup: inout SceneLookup) -> Bool {
+        switch change {
+        case .set(let id, _), .delete(let id, _): lookup.prepare(for: id, in: self)
+        case .order(let parent, _): lookup.prepare(for: parent, in: self)
+        case .create(_, let parent, _, _, _): lookup.prepare(for: parent, in: self)
+        }
         switch change {
         case .set(let id, let props):
             guard let kind = lookup.kinds[id], exists(id, lookup) else { return false }
@@ -254,13 +285,25 @@ extension Drawing {
     @discardableResult
     mutating func apply(_ changes: [SceneChange]) -> [Int] {
         guard !changes.isEmpty else { return [] }
-        var lookup = SceneLookup(self)
+        var lookup = SceneLookup(self, indexingVertices: false)
+        return apply(changes, lookup: &lookup)
+    }
+
+    /// `apply(_:)` with a lookup of this scene, kept up to date, so applying keyframe
+    /// after keyframe indexes the scene once.
+    @discardableResult
+    mutating func apply(_ changes: [SceneChange], lookup: inout SceneLookup) -> [Int] {
+        guard !changes.isEmpty else { return [] }
         var failed: [Int] = []
         for (i, change) in changes.enumerated() where !apply(change, lookup: &lookup) {
             failed.append(i)
         }
         syncGlobalColors()
-        if !groupsAreValid { repairGroups() }
+        if !groupsAreValid {
+            // Repairing can give groups new ids.
+            repairGroups()
+            lookup = SceneLookup(self, indexingVertices: lookup.hasVertices)
+        }
         return failed
     }
 

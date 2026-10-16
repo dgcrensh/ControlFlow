@@ -442,6 +442,9 @@ final class PerformanceTests: XCTestCase {
     /// 4 undo-redo pairs at keyframe 10 of 20.
     func testUndoRedoAtKeyframe() { measure(.undoRedoAtKeyframe, calls: 4) }
 
+    /// 4 cold resolves of keyframe 20 of 20.
+    func testResolveLastKeyframeCold() { measure(.resolveLastKeyframeCold, calls: 4) }
+
     /// 4 reads of the changed marks at keyframe 10 of 20.
     func testChangedObjectsAtKeyframe() { measure(.changedObjectsAtKeyframe, calls: 4) }
 }

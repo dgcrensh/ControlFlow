@@ -291,6 +291,63 @@ final class KeyframeEditorTests: XCTestCase {
         XCTAssertEqual(e.drawing.shape(square)?.opacity, 0.25)
     }
 
+    func testUndoAtAKeyframeKeepsTheStatesBeforeIt() {
+        let (d, layer, square, _) = scene()
+        var e = DrawingEditor(drawing: d)
+        for k in 1...4 {
+            e.setKeyframe()
+            e.selection = .layer(layer)
+            e.rotateSelection(byDegrees: 10)
+            e.selection = .shape(layer: layer, shape: square)
+            e.setOpacity(1 - Double(k) / 10)
+        }
+        let third = e.presentation.keyframe(atChainIndex: 3)!.id
+        e.selectKeyframe(third)
+        e.setOpacity(0.05)
+        e.undo()
+        XCTAssertEqual(e.drawing.shape(square)?.opacity ?? 0, 0.7, accuracy: 1e-9)
+        XCTAssertNotNil(e.timeline.states[2], "states before the undone step are kept")
+        var fresh = Timeline(e.presentation)
+        var live = e.timeline
+        for i in 0..<fresh.count {
+            // Kept states hold the edits as made; resolved ones, what the file stores.
+            XCTAssertEqual(SceneDiff.changes(from: live.state(at: i), to: fresh.state(at: i)), [], "state \(i)")
+        }
+        e.redo()
+        XCTAssertEqual(e.drawing.shape(square)?.opacity ?? 0, 0.05, accuracy: 1e-9)
+        fresh = Timeline(e.presentation)
+        live = e.timeline
+        for i in 0..<fresh.count {
+            // Kept states hold the edits as made; resolved ones, what the file stores.
+            XCTAssertEqual(SceneDiff.changes(from: live.state(at: i), to: fresh.state(at: i)), [], "state \(i)")
+        }
+    }
+
+    func testReusedStatesStopAtTheFirstChangedKeyframe() {
+        let (d, layer, _, _) = scene()
+        var t = Timeline(Presentation(opening: d))
+        for k in 1...3 {
+            t.insertKeyframe(after: k - 1)
+            t.edit(k) { $0.layers[0].transform.rotation = Double(k) * 10 }
+        }
+        _ = t.state(at: 3)
+        var p = t.presentation
+        p.updateKeyframe(atChainIndex: 2) { $0.changes = [.set(id: layer, props: [PropertyChange("transform.rotation", 45)])] }
+        var reused = Timeline(p)
+        reused.reuseStates(of: t)
+        XCTAssertNotNil(reused.states[1])
+        XCTAssertNil(reused.states[2], "the changed keyframe and those after it resolve again")
+        XCTAssertNil(reused.states[3])
+        var fresh = Timeline(p)
+        for i in 0..<fresh.count { XCTAssertEqual(reused.state(at: i), fresh.state(at: i), "state \(i)") }
+
+        var opening = t.presentation
+        opening.opening.layers[0].name = "Other"
+        var other = Timeline(opening)
+        other.reuseStates(of: t)
+        XCTAssertNil(other.states[1], "nothing is reused when the opening state differs")
+    }
+
     func testTimelineCommandsAreOneUndoStepEach() {
         let (d, layer, _, _) = scene()
         var e = DrawingEditor(drawing: d)
@@ -390,6 +447,30 @@ final class SceneDiffTests: XCTestCase {
         b.assignVertexIDs()
         assertRoundTrip(a, b)
         assertRoundTrip(b, a)
+    }
+
+    func testALazyLookupIndexesVerticesOnlyWhenAChangeNeedsThem() {
+        let (d, layer, square, _) = scene()
+        var state = d
+        var lookup = SceneLookup(state, indexingVertices: false)
+        state.apply([.set(id: layer, props: [PropertyChange("transform.rotation", 30)])], lookup: &lookup)
+        XCTAssertFalse(lookup.hasVertices, "a layer change needs no vertices")
+        XCTAssertEqual(state.layers[0].transform.rotation, 30)
+
+        // A vertex created under a shape is found by a later change in the same run.
+        var point = PathPoint(Vec2(200, 50))
+        point.id = state.makeID()
+        let first = state.shape(square)!.path.points[0].id
+        state.apply([.create(.vertex(point), parent: square, after: first)], lookup: &lookup)
+        XCTAssertFalse(lookup.hasVertices)
+        XCTAssertEqual(state.shape(square)?.path.points[1].id, point.id)
+        state.apply([.set(id: point.id, props: [PropertyChange("p", .array([.number(210), .number(60)]))])], lookup: &lookup)
+        XCTAssertTrue(lookup.hasVertices, "setting a vertex indexes them")
+        XCTAssertEqual(state.shape(square)?.path.points[1].position, Vec2(210, 60))
+        state.apply([.set(id: first, props: [PropertyChange("p", .array([.number(90), .number(90)]))])], lookup: &lookup)
+        XCTAssertEqual(state.shape(square)?.path.points[0].position, Vec2(90, 90))
+        XCTAssertEqual(state.apply([.set(id: 999_999, props: [PropertyChange("p", .array([.number(0), .number(0)]))])], lookup: &lookup), [0],
+                       "an id that isn't there still fails")
     }
 
     func testGroupsAndGlobalColorsRoundTrip() {

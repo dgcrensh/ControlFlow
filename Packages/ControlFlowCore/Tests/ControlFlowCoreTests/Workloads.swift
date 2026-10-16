@@ -386,6 +386,16 @@ struct Workload: @unchecked Sendable {
         }
     }
 
+    /// Showing keyframe 20 of 20 with no state resolved yet, as after opening the file:
+    /// every keyframe's changes applied in turn from the opening state.
+    static let resolveLastKeyframeCold = Workload(name: "Resolve keyframe 20 of 20, cold") { drawing in
+        let presentation = StressDrawing.presentation(drawing, keyframes: 20)
+        return {
+            var timeline = Timeline(presentation)
+            precondition(!timeline.state(at: 20).layers.isEmpty)
+        }
+    }
+
     /// The Layers panel's "changed" marks at keyframe 10 of 20, with every state resolved:
     /// what `CanvasStore.refresh()` reads after each edit or switch at a keyframe. The
     /// editor keeps the last result, so this times working them out, from the timeline.
@@ -480,7 +490,7 @@ struct Workload: @unchecked Sendable {
          dragEndEverything, undoRedo, twoFingerNavigation, refreshQueries, layerTree, save, open, openParse,
          openDecode, openFirstFrame, openFirstArtInView, svgExport, svgImport, playbackFrameAllLayersSlide,
          playbackFrameEveryFillChanges, playbackFrameOneLayerFades, frameAfterPlayback, undoRedoAtKeyframe,
-         changedObjectsAtKeyframe]
+         resolveLastKeyframeCold, changedObjectsAtKeyframe]
     }
 
     static func everything(in drawing: Drawing) -> Selection {
