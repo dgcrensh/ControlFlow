@@ -323,12 +323,15 @@ public enum TextShaping {
         var outlines = TextCache<BezierPath>(limit: TextShaping.cacheLimit)
         var heldLayouts = TextCache<TextLayout>(limit: TextShaping.heldCacheLimit)
         var heldOutlines = TextCache<BezierPath>(limit: TextShaping.heldCacheLimit)
+        /// By the text a tween holds its lines at: its glyphs' outlines flattened.
+        var flatGlyphs = TextCache<FlatGlyphs>(limit: TextShaping.heldCacheLimit)
 
         func clear() {
             layouts.removeAll()
             outlines.removeAll()
             heldLayouts.removeAll()
             heldOutlines.removeAll()
+            flatGlyphs.removeAll()
         }
     }
 
@@ -402,6 +405,54 @@ public enum TextShaping {
         }
         state.lock.unlock()
         return path
+    }
+
+    /// Each glyph's closed outlines flattened at `tolerance`, relative to the glyph's
+    /// origin, each ring back at its first point: one ring per outline that `outline`
+    /// draws, with the index of its glyph.
+    struct FlatGlyphs {
+        var tolerance: Double
+        var rings: [(glyph: Int, points: [Vec2])]
+    }
+
+    /// `outline(text).flattened(tolerance:)`. For a text partway through a tracking or
+    /// line-height tween (one with `held` metrics), whose glyphs only move from frame to
+    /// frame (see `TextLayout.adjusted`), each glyph's outlines are flattened once, at
+    /// the held metrics, and moved where this frame puts the glyph. The result follows
+    /// `BezierPath.bridging`: each ring back to its first point, and every ring after the
+    /// first followed by the first ring's first point, which the bridges pass through.
+    public static func flattenedOutline(_ text: TextContent, tolerance: Double) -> [Vec2] {
+        guard let held = text.held else { return outline(text).flattened(tolerance: tolerance) }
+        var base = text
+        base.held = nil
+        base.tracking = held.tracking
+        base.lineHeight = held.lineHeight
+        state.lock.lock()
+        var flat = state.flatGlyphs.value(for: base)
+        state.lock.unlock()
+        if flat?.tolerance != tolerance {
+            var rings: [(glyph: Int, points: [Vec2])] = []
+            for (g, glyph) in layout(base).glyphs.enumerated() {
+                for contour in glyph.contours where contour.points.count >= 2 {
+                    var ring = contour
+                    ring.closed = true
+                    rings.append((g, ring.flattened(tolerance: tolerance) + [ring.points[0].position]))
+                }
+            }
+            flat = FlatGlyphs(tolerance: tolerance, rings: rings)
+            state.lock.lock()
+            state.flatGlyphs.set(flat!, for: base)
+            state.lock.unlock()
+        }
+        let glyphs = layout(text).glyphs
+        var out: [Vec2] = []
+        out.reserveCapacity(flat!.rings.reduce(0) { $0 + $1.points.count + 1 })
+        for (k, ring) in flat!.rings.enumerated() {
+            let origin = glyphs[ring.glyph].origin
+            for p in ring.points { out.append(p + origin) }
+            if k > 0 { out.append(out[0]) }
+        }
+        return out
     }
 
     /// How many texts the caches hold, for tests: static layouts and tweened ones.

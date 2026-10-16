@@ -288,10 +288,11 @@ public enum PresentationFormat {
             }
         }
 
-        mutating func claim(_ id: Int, at path: String, created: Bool = false) throws {
-            try check(id, at: path)
+        /// `path` is made only for an error: claiming every id of a big file is a hot loop.
+        mutating func claim(_ id: Int, at path: @autoclosure () -> String, created: Bool = false) throws {
+            try check(id, at: path())
             guard !timeline.contains(id), objects.insert(id).inserted || created else {
-                throw PresentationFileError.invalid(path: path, problem: "repeats id \(id)")
+                throw PresentationFileError.invalid(path: path(), problem: "repeats id \(id)")
             }
         }
 
@@ -300,10 +301,11 @@ public enum PresentationFormat {
         mutating func claimTree(_ node: Node, created: Bool) throws {
             var inside = Set<Int>()
             func visit(_ node: Node) throws {
-                let path = node.childPath("id")
                 let id = try node.require("id").integer()
-                try claim(id, at: path, created: created)
-                guard inside.insert(id).inserted else { throw PresentationFileError.invalid(path: path, problem: "repeats id \(id)") }
+                try claim(id, at: node.childPath("id"), created: created)
+                guard inside.insert(id).inserted else {
+                    throw PresentationFileError.invalid(path: node.childPath("id"), problem: "repeats id \(id)")
+                }
                 for key in ["groups", "shapes", "points"] {
                     for child in try node.field(key)?.array() ?? [] { try visit(child) }
                 }
@@ -311,8 +313,8 @@ public enum PresentationFormat {
             try visit(node)
         }
 
-        private func check(_ id: Int, at path: String) throws {
-            guard id > 0 else { throw PresentationFileError.invalid(path: path, problem: "is not a positive id") }
+        private func check(_ id: Int, at path: @autoclosure () -> String) throws {
+            guard id > 0 else { throw PresentationFileError.invalid(path: path(), problem: "is not a positive id") }
         }
     }
 

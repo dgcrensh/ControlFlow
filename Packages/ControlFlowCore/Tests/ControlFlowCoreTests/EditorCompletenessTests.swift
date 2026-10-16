@@ -560,6 +560,36 @@ final class DuplicateAndClipboardTests: XCTestCase {
         XCTAssertNotNil(e.cutSelection())
         XCTAssertEqual(e.drawing.layers.count, 1)
     }
+
+    /// The app pastes its own copy as it is, without writing and reading its JSON: that
+    /// pastes the same art, to the file's precision.
+    func testPastingACopyEqualsPastingItsText() throws {
+        var d = StressDrawing.make(layers: 3, shapesPerLayer: 5)
+        d.globalColors = [GlobalColor(id: d.makeID(), name: "Ink", color: RGBAColor(r: 0.2, g: 0.1, b: 0.4))]
+        d.layers[1].shapes[2].fillGlobal = d.globalColors[0].id
+        let base = DrawingEditor(drawing: StressDrawing.withText(d))
+        let layers = base.drawing.layers
+        let selections: [Selection] = [
+            .layer(layers[1].id),
+            .covering([ShapeRef(layer: layers[0].id, shape: layers[0].shapes[1].id),
+                       ShapeRef(layer: layers[2].id, shape: layers[2].shapes.last!.id)]),
+            .covering(Set(layers[1].shapes.map { ShapeRef(layer: layers[1].id, shape: $0.id) })),
+        ]
+        for selection in selections {
+            var e = base
+            e.selection = selection
+            let clip = try XCTUnwrap(e.clipboard())
+            XCTAssertEqual(DrawingEditor.Clipboard(text: clip.text)?.shapesOnly, clip.shapesOnly)
+            for target in [nil, layers[2].id] {
+                var a = e, b = e
+                if let target { a.selection = .layer(target); b.selection = .layer(target) }
+                XCTAssertTrue(a.paste(clip))
+                XCTAssertTrue(b.paste(clip.text))
+                XCTAssertEqual(PresentationFormat.encode(a.drawing).formatted(), PresentationFormat.encode(b.drawing).formatted())
+                XCTAssertEqual(a.selection, b.selection)
+            }
+        }
+    }
 }
 
 final class PencilControlTests: XCTestCase {

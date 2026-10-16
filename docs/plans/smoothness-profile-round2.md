@@ -329,7 +329,26 @@ Copying everything encodes JSON on the main thread: **298 ms**. Pasting it back 
    | Color picker tick, everything selected, keyframe 10 | 35-39 ms | 30-34 ms |
 
    A colour tick on everything changes every layer, so it still diffs all of them; that and a whole-selection nudge are the commit's own work now (`assignVertexIDs` and the diff of each changed shape). What is left of the first hover is the nudge itself and the index's grid, which is rebuilt over every entry.
-6. **#13 and #16 (M).**
+6. **#13 and #16 (shipped).**
+
+   What shipped:
+   - **#13:** the profile's guess was off: a held text already moved its laid-out glyphs (`TextLayout.adjusted`), and laying out, outlining and tessellating the 40 texts cost about 3 ms of the frame. The rest was their layers: a text whose points changed rebuilt its whole layer, every frame, and the layer's vertices were uploaded again. Now `LayerKey.change(to:)` sorts a layer's change in one walk into nothing, paint alone (`repaint`, as before) or points too, and for points `ArtBuilder.patch` keeps the layer's steps and writes the reshaped shapes' triangles over their old ones, in place, when each has as many vertices as before (`VectorShape.hasSameSteps(as:)` decides that the steps stay; each shape's vertex ranges are kept in `LayerBatch.shapeVertices`). When the same shapes are reshaped a second time in a row, as on every frame of a transition, the layer is built once more with them in chunks of their own (`LayerBatch.chunks`, one `ArtSegment` each), so later frames copy and upload only those chunks. A clipped shape (whose bounds decide its base's clip clear) or a new vertex count builds the layer, as before. A tweened text's fan comes from each glyph's outlines flattened once at the held metrics and moved where the frame puts the glyph (`TextShaping.flattenedOutline`), so with CoreText a frame flattens no curves. The same patch serves a morph whose flattening keeps its vertex count. `ArtPatchTests` checks that the warm builds draw what cold ones do, frame by frame, under a live drag too, and what each frame uploads.
+   - **Segments stand alone:** `ArtBatch.append` used to merge one layer's closing `moving(false)` with the next one's opening `moving(true)`, from before the encoder walked segments; the encoder starts every segment with `moving` off, so a drag of shapes in two neighbouring layers drew the second layer's first moved shapes unmoved. The merge is gone.
+   - **#16:** copying keeps the copied art as a `DrawingEditor.Clipboard` (a drawing, about 1 ms for everything) and puts an `NSItemProvider` on the pasteboard that writes its JSON only when something reads it, off the main thread. A paste while the pasteboard still holds the app's own copy (same `changeCount`) pastes the art as it is, with no JSON written or read; another app's copy, or the app's own after a relaunch, is read on a background task and then pasted. Pasting the copy itself and pasting its JSON give the same document (`testPastingACopyEqualsPastingItsText`). Writing and reading the JSON also got faster, which saving and opening share: the writer checks whether a value can go on one line before writing it and stops once the line runs over (it wrote every candidate whole and counted its characters; `testOneLineValuesBreakWhereTheyDid` checks it breaks where it did), and claiming ids builds the error path only for an error.
+
+   Measured in this container against `main` before the change (release, full stress drawing, median per call):
+
+   | Workload | Before | After |
+   |---|---|---|
+   | Playback frame, a text per layer tweens tracking | 33 ms | 14 ms |
+   | Copy everything, on the main thread | 416 ms | 1.1 ms |
+   | Paste everything copied in the app, and undo | 386 ms | 19 ms |
+   | Copy everything, as file JSON (off the main thread) | 416 ms | 306 ms |
+   | Paste everything: read its JSON (off the main thread) | 326 ms | 232 ms |
+   | Save: encode and format | 469 ms | 336 ms |
+   | Open: parse and decode | 335 ms | 223 ms |
+
+   What is left of a tracking-tween frame is the scene's interpolation (about 3.5 ms: every shape of a layer whose text changed is copied into the frame's drawing), the per-layer key compare and the texts' own layout and outline (about 1 ms). On a device the remaining question is CoreText's cost, below.
 
 ## On-device follow-up
 
@@ -338,5 +357,5 @@ Round 1's signposts cover most of this. The new questions for an Instruments pas
 - **How much CPU `drawArt` encoding takes per frame** on the stress drawing while hovering and while drawing a stroke. This decides how far #1 goes.
 - **The GPU time** of 8k stencil-and-cover draws at 4× MSAA on a 12.9" screen.
 - **Pool fallbacks (#3):** the `Pool fallback` events during a preview that rebuilds many layers per frame. A fade no longer re-uploads its triangles.
-- **CoreText cost of a tracking tween (#13).**
+- **CoreText cost of a tracking tween (#13):** a frame now lays out and outlines each tweened text (an adjusted layout, no shaping) and flattens nothing; check with the `Frame` signpost that a tween of a few real texts stays well inside the frame.
 - **Whether typing hands off per keystroke (#14).**

@@ -97,6 +97,94 @@ final class JSONValueTests: XCTestCase {
         let value = PresentationFormat.encode(editorDrawing())
         XCTAssertEqual(try json(value.formatted()), value)
     }
+
+    /// The writer stops a one-line value as soon as it runs over the line's budget; it
+    /// must still choose one line exactly where writing the whole line and counting its
+    /// characters did, whatever the characters.
+    func testOneLineValuesBreakWhereTheyDid() {
+        let words = ["a", "é", "e\u{301}", "😀", "👩‍👩‍👧", "\u{301}x", "tab\t", "quote\"", "日本語"]
+        var values: [JSONValue] = []
+        for length in [0, 1, 5, 20, 40, 41, 60, 110, 117, 118, 119, 120, 121, 200] {
+            for word in words {
+                let text = String(repeating: word, count: max(length / max(word.count, 1), 0))
+                values.append(.object([(key: "name", value: .string(text)), (key: "p", value: .array([1, 2.5]))]))
+                values.append(.array([.string(text), .number(Double(length)), .null]))
+                values.append(.array([.array([.number(1), .string(text)]), .array([])]))
+            }
+            values.append(.array((0..<length).map { .number(Double($0) / 3) }))
+        }
+        for indent in [0, 2, 10] {
+            let nested = JSONValue.array(values.map { indent == 0 ? $0 : .object([(key: String(repeating: "k", count: indent), value: $0)]) })
+            XCTAssertEqual(nested.formatted(), Self.wholeLineFormatted(nested))
+        }
+    }
+
+    /// The writer as it was: each one-line candidate written out whole, then counted.
+    private static func wholeLineFormatted(_ value: JSONValue) -> String {
+        func scalar(_ v: JSONValue) -> String? {
+            switch v {
+            case .null: "null"
+            case .bool(let b): b ? "true" : "false"
+            case .number(let n): JSONValue.numberText(n)
+            case .string(let s): JSONValue.quoted(s)
+            case .array, .object: nil
+            }
+        }
+        func isScalarArray(_ v: JSONValue) -> Bool {
+            if case .array(let items) = v { return items.allSatisfy { scalar($0) != nil } }
+            return false
+        }
+        func inline(_ v: JSONValue) -> String? {
+            switch v {
+            case .null, .bool, .number, .string: return scalar(v)
+            case .array(let items):
+                if items.allSatisfy({ scalar($0) != nil }) { return "[" + items.map { scalar($0)! }.joined(separator: ", ") + "]" }
+                guard items.allSatisfy(isScalarArray) else { return nil }
+                return "[" + items.map { inline($0)! }.joined(separator: ", ") + "]"
+            case .object(let members):
+                var parts: [String] = []
+                for member in members {
+                    switch member.value {
+                    case .object: return nil
+                    case .array(let items) where !items.allSatisfy({ scalar($0) != nil }) && !items.allSatisfy(isScalarArray):
+                        return nil
+                    default: parts.append(JSONValue.quoted(member.key) + ": " + inline(member.value)!)
+                    }
+                }
+                return "{ " + parts.joined(separator: ", ") + " }"
+            }
+        }
+        func write(_ v: JSONValue, _ out: inout String, _ indent: Int) {
+            switch v {
+            case .null, .bool, .number, .string:
+                out.append(scalar(v)!)
+            case .array(let items):
+                if items.isEmpty { out.append("[]"); return }
+                if let line = inline(v), line.count + indent <= 120 { out.append(line); return }
+                out.append("[\n")
+                for (i, item) in items.enumerated() {
+                    out.append(String(repeating: " ", count: indent + 2))
+                    write(item, &out, indent + 2)
+                    out.append(i == items.count - 1 ? "\n" : ",\n")
+                }
+                out.append(String(repeating: " ", count: indent) + "]")
+            case .object(let members):
+                if members.isEmpty { out.append("{}"); return }
+                if let line = inline(v), line.count + indent <= 120 { out.append(line); return }
+                out.append("{\n")
+                for (i, member) in members.enumerated() {
+                    out.append(String(repeating: " ", count: indent + 2))
+                    out.append(JSONValue.quoted(member.key) + ": ")
+                    write(member.value, &out, indent + 2)
+                    out.append(i == members.count - 1 ? "\n" : ",\n")
+                }
+                out.append(String(repeating: " ", count: indent) + "}")
+            }
+        }
+        var out = ""
+        write(value, &out, 0)
+        return out + "\n"
+    }
 }
 
 final class PresentationFormatTests: XCTestCase {

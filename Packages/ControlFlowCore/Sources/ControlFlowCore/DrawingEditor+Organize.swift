@@ -430,19 +430,57 @@ extension DrawingEditor {
     /// The pasteboard type for copied art: file JSON holding the copied layers.
     public static let clipboardType = "com.dgcrensh.controlflow.art"
 
+    /// Copied art: the layers or shapes copied, with the global colors they follow, as a
+    /// drawing. Making one is quick; writing it as file JSON for the pasteboard (`text`)
+    /// and reading that back (`init(text:)`) take a while for a big selection, and are
+    /// pure, so the app does them off the main thread, or not at all when it pastes its
+    /// own copy.
+    public struct Clipboard: Sendable, Equatable {
+        public var drawing: Drawing
+        /// Shapes were copied, to join a layer, rather than whole layers.
+        public var shapesOnly: Bool
+
+        /// File JSON holding the copied layers, marked with what was copied, so it
+        /// pastes into any document.
+        public var text: String {
+            guard case .object(var members) = PresentationFormat.encode(drawing) else { return "" }
+            members.append((key: "clipboard", value: .string(shapesOnly ? "shapes" : "layers")))
+            return JSONValue.object(members).formatted()
+        }
+
+        /// The art in file JSON (from `text`, or a whole `presentation.json`). Nil when
+        /// `text` isn't a document.
+        public init?(text: String) {
+            guard let json = try? JSONValue(parsing: text), let decoded = try? PresentationFormat.decode(json) else { return nil }
+            drawing = decoded.drawing
+            shapesOnly = json["clipboard"] == JSONValue.string("shapes")
+        }
+
+        init(drawing: Drawing, shapesOnly: Bool) {
+            self.drawing = drawing
+            self.shapesOnly = shapesOnly
+        }
+    }
+
     /// The selection as file JSON (only the layers and shapes copied), for the
     /// pasteboard, so it pastes into any document. Nil when nothing is selected.
     public func copySelection() -> String? {
+        clipboard()?.text
+    }
+
+    /// The selection as copied art (only the layers and shapes copied). Nil when
+    /// nothing is selected.
+    public func clipboard() -> Clipboard? {
         var clip = Drawing()
         clip.name = drawing.name
-        let kind: String
+        let shapesOnly: Bool
         if case .layer(let id) = selection, isolatedLayer == nil {
             guard let i = drawing.layerIndex(id) else { return nil }
             clip.layers = [drawing.layers[i]]
-            kind = "layers"
+            shapesOnly = false
         } else if case .layers(let ids) = selection, isolatedLayer == nil {
             clip.layers = drawing.layers.filter { ids.contains($0.id) }
-            kind = "layers"
+            shapesOnly = false
         } else {
             let refs = Set(drawing.shapeRefs(in: selection))
             for layer in drawing.layers {
@@ -450,21 +488,22 @@ extension DrawingEditor {
                 copy.shapes = layer.shapes.filter { refs.contains(ShapeRef(layer: layer.id, shape: $0.id)) }
                 if !copy.shapes.isEmpty { clip.layers.append(copy) }
             }
-            kind = "shapes"
+            shapesOnly = true
         }
         // The global colors the copied shapes follow travel with them, by name.
         let used = Set(clip.layers.flatMap { $0.shapes.flatMap { [$0.fillGlobal, $0.stroke?.global].compactMap { $0 } } })
         clip.globalColors = drawing.globalColors.filter { used.contains($0.id) }
-        guard !clip.layers.isEmpty, case .object(var members) = PresentationFormat.encode(clip) else { return nil }
-        members.append((key: "clipboard", value: .string(kind)))
-        return JSONValue.object(members).formatted()
+        guard !clip.layers.isEmpty else { return nil }
+        // As reading the copy's file JSON would: groups none of the copied shapes are in go.
+        if !clip.groupsAreValid { clip.repairGroups() }
+        return Clipboard(drawing: clip, shapesOnly: shapesOnly)
     }
 
     /// Copies the selection, then deletes it.
-    public mutating func cutSelection() -> String? {
-        guard let text = copySelection() else { return nil }
+    public mutating func cutSelection() -> Clipboard? {
+        guard let clip = clipboard() else { return nil }
         deleteSelection()
-        return text
+        return clip
     }
 
     /// Pastes file JSON (from `copySelection`, or a whole `presentation.json`).
@@ -473,16 +512,22 @@ extension DrawingEditor {
     /// points down and right. The pasted art is selected. False when `text` holds no art.
     @discardableResult
     public mutating func paste(_ text: String) -> Bool {
-        guard let json = try? JSONValue(parsing: text), let decoded = try? PresentationFormat.decode(json) else { return false }
-        let layers = decoded.drawing.layers.filter { !$0.shapes.isEmpty }
+        guard let clip = Clipboard(text: text) else { return false }
+        return paste(clip)
+    }
+
+    /// Pastes copied art, as `paste(_:)` with its text does.
+    @discardableResult
+    public mutating func paste(_ clip: Clipboard) -> Bool {
+        let layers = clip.drawing.layers.filter { !$0.shapes.isEmpty }
         guard !layers.isEmpty else { return false }
         cancelGesture()
         let before = drawing
 
         let offset = pasteOffset(for: layers[0].worldShape(0).path)
         let shift = Affine2D.translation(offset)
-        let shapesOnly = json["clipboard"] == JSONValue.string("shapes")
-        let globals = adoptGlobalColors(decoded.drawing.globalColors)
+        let shapesOnly = clip.shapesOnly
+        let globals = adoptGlobalColors(clip.drawing.globalColors)
         var refs: Set<ShapeRef> = []
         if let target = shapesOnly ? selectedLayerID : isolatedLayer, let p = drawing.layerIndex(target) {
             // Shapes joining a layer arrive as they were drawn, then take its transform.

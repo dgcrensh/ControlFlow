@@ -890,15 +890,21 @@ final class CanvasStore {
 
     // MARK: Clipboard
 
+    /// The art this app last put on the pasteboard, and the pasteboard's change count
+    /// then. A paste while the pasteboard still holds it pastes it as it is: no JSON is
+    /// written or read, which takes hundreds of milliseconds for a big selection.
+    private static var lastCopy: (clip: DrawingEditor.Clipboard, changeCount: Int)?
+
     /// Puts the selection on the pasteboard as document JSON, under the app's own type
-    /// and as plain JSON, so it pastes into any document (and reads anywhere).
+    /// and as plain JSON, so it pastes into any document (and reads anywhere). The JSON
+    /// is written only when something reads it, off the main thread (see `provider`).
     func copy() {
         if session.editor.textEdit != nil {
             if let words = selectedWords { UIPasteboard.general.string = words }
             return
         }
-        guard let text = session.editor.copySelection() else { return }
-        Self.putOnPasteboard(text)
+        guard let clip = session.editor.clipboard() else { return }
+        Self.putOnPasteboard(clip)
     }
 
     func cut() {
@@ -908,9 +914,9 @@ final class CanvasStore {
             edit { $0.editor.typeText("") }
             return
         }
-        var text: String?
-        edit { text = $0.editor.cutSelection() }
-        if let text { Self.putOnPasteboard(text) }
+        var clip: DrawingEditor.Clipboard?
+        edit { clip = $0.editor.cutSelection() }
+        if let clip { Self.putOnPasteboard(clip) }
     }
 
     /// The words selected in the text being typed into, if any.
@@ -929,15 +935,39 @@ final class CanvasStore {
             if let words = board.string { edit { $0.editor.typeText(words) } }
             return
         }
+        if let last = Self.lastCopy, last.changeCount == board.changeCount {
+            edit { _ = $0.editor.paste(last.clip) }
+            return
+        }
         let data = board.data(forPasteboardType: DrawingEditor.clipboardType)
             ?? board.data(forPasteboardType: UTType.json.identifier)
         guard let text = data.flatMap({ String(data: $0, encoding: .utf8) }) ?? board.string else { return }
-        edit { _ = $0.editor.paste(text) }
+        // Someone else's copy, or this app's from before it last launched: read off the
+        // main thread, then pasted.
+        Task {
+            let clip = await Task.detached(priority: .userInitiated) { DrawingEditor.Clipboard(text: text) }.value
+            guard let clip else { return }
+            edit { _ = $0.editor.paste(clip) }
+        }
     }
 
-    private static func putOnPasteboard(_ text: String) {
-        let data = Data(text.utf8)
-        UIPasteboard.general.setItems([[DrawingEditor.clipboardType: data, UTType.json.identifier: data]])
+    private static func putOnPasteboard(_ clip: DrawingEditor.Clipboard) {
+        UIPasteboard.general.setItemProviders([provider(for: clip)], localOnly: false, expirationDate: nil)
+        lastCopy = (clip, UIPasteboard.general.changeCount)
+    }
+
+    /// An item that writes `clip`'s JSON only when something asks for it. Made outside
+    /// the main actor, so its load handler isn't bound to the main thread: the system
+    /// calls it from a background queue when another app pastes.
+    nonisolated private static func provider(for clip: DrawingEditor.Clipboard) -> NSItemProvider {
+        let provider = NSItemProvider()
+        for type in [DrawingEditor.clipboardType, UTType.json.identifier] {
+            provider.registerDataRepresentation(forTypeIdentifier: type, visibility: .all) { completion in
+                completion(Data(clip.text.utf8), nil)
+                return nil
+            }
+        }
+        return provider
     }
 
     // MARK: Pencil palette
