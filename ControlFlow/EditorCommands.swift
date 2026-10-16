@@ -12,8 +12,9 @@ extension FocusedValues {
 struct EditorCommands: Commands {
     @FocusedValue(\.canvasStore) private var store
 
-    /// While a text is being typed into, single keys are typing, not commands.
-    private var typing: Bool { store?.ui.isEditingText == true }
+    /// While a text or a formula's source is being typed into, single keys are typing,
+    /// not commands.
+    private var typing: Bool { store?.ui.isTyping == true }
 
     var body: some Commands {
         CommandGroup(replacing: .undoRedo) {
@@ -180,6 +181,7 @@ struct EditorCommands: Commands {
                 tool(.pencil, "Pencil", key: "n")
                 tool(.shape, "Shapes", key: "m")
                 tool(.text, "Text", key: "t")
+                tool(.math, "Math", key: "l")
                 tool(.eraser, "Eraser", key: "e")
                 tool(.scissors, "Scissors", key: "c")
             }

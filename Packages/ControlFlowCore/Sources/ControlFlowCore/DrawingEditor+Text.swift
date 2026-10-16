@@ -382,49 +382,68 @@ extension DrawingEditor {
 
     // MARK: Convert to Outlines
 
-    /// True when the selection holds a text that has something to draw or is empty.
-    public var canConvertToOutlines: Bool { selectionHasText }
+    /// True when the selection holds a text, or a formula that is typeset.
+    public var canConvertToOutlines: Bool {
+        selectionHasText || drawing.shapeIndices(in: selection).contains { idx in
+            drawing.layers[idx.0].shapes[idx.1].math.flatMap(MathTypesetting.layout) != nil
+        }
+    }
 
-    /// Turns each selected text into ordinary shapes, one per glyph with its holes,
-    /// grouped (or in the text's own group), looking the same. One undo step.
+    /// Turns each selected text and formula into ordinary shapes, one per glyph with its
+    /// holes (and one per rule of a formula), grouped (or in the original's own group),
+    /// looking the same. One undo step.
     public mutating func convertTextToOutlines() {
         guard canConvertToOutlines else { return }
         endTextEdit()
+        endMathEdit()
         cancelGesture()
         let before = drawing
         var made: Set<ShapeRef> = []
         let targets = drawing.shapeRefs(in: selection)
         for ref in targets.reversed() {
-            guard let idx = drawing.indices(ref), let text = drawing.layers[idx.0].shapes[idx.1].text else {
-                if drawing.indices(ref) != nil { made.insert(ref) }
+            guard let idx = drawing.indices(ref) else { continue }
+            let original = drawing.layers[idx.0].shapes[idx.1]
+            let text = original.text
+            let math = original.math.flatMap { MathTypesetting.layout($0) != nil ? $0 : nil }
+            guard text != nil || math != nil else {
+                made.insert(ref)
                 continue
             }
-            let original = drawing.layers[idx.0].shapes[idx.1]
-            let layout = TextShaping.layout(text)
             var group = original.group
             if group == nil {
                 let id = drawing.makeID()
-                let words = text.string.split(whereSeparator: \.isNewline).joined(separator: " ")
-                let name = drawing.layers[idx.0].uniqueGroupName(words.isEmpty ? "Text" : String(words.prefix(24)))
+                let label: String
+                if let text {
+                    let words = text.string.split(whereSeparator: \.isNewline).joined(separator: " ")
+                    label = words.isEmpty ? "Text" : String(words.prefix(24))
+                } else {
+                    label = mathGroupName(math!)
+                }
+                let name = drawing.layers[idx.0].uniqueGroupName(label)
                 drawing.layers[idx.0].groups.append(ShapeGroup(id: id, name: name))
                 group = id
             }
             var glyphs: [VectorShape] = []
-            for glyph in layout.glyphs where !glyph.contours.isEmpty {
-                let rings = glyph.contours.map { contour -> BezierPath in
-                    var ring = contour
-                    ring.apply(.translation(glyph.origin))
-                    ring.closed = true
-                    return ring
+            if let text {
+                let layout = TextShaping.layout(text)
+                for glyph in layout.glyphs where !glyph.contours.isEmpty {
+                    let rings = glyph.contours.map { contour -> BezierPath in
+                        var ring = contour
+                        ring.apply(.translation(glyph.origin))
+                        ring.closed = true
+                        return ring
+                    }
+                    var shape = original
+                    shape.id = drawing.makeID()
+                    shape.text = nil
+                    shape.layoutFrame = nil
+                    shape.stroke = nil
+                    shape.path = BezierPath.bridging(rings)
+                    shape.group = group
+                    glyphs.append(shape)
                 }
-                var shape = original
-                shape.id = drawing.makeID()
-                shape.text = nil
-                shape.layoutFrame = nil
-                shape.stroke = nil
-                shape.path = BezierPath.bridging(rings)
-                shape.group = group
-                glyphs.append(shape)
+            } else if let math {
+                glyphs = mathOutlineShapes(math, like: original, group: group)
             }
             drawing.layers[idx.0].shapes.replaceSubrange(idx.1...idx.1, with: glyphs)
             for shape in glyphs { made.insert(ShapeRef(layer: ref.layer, shape: shape.id)) }

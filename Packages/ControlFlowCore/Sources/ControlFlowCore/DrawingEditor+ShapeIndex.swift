@@ -4,7 +4,7 @@ extension Tool {
     /// The tools whose hover or touch looks for shapes near the Pencil.
     var usesShapeIndex: Bool {
         switch self {
-        case .select, .directSelect, .eraser, .scissors, .text: true
+        case .select, .directSelect, .eraser, .scissors, .text, .math: true
         case .pencil, .pen, .shape: false
         }
     }

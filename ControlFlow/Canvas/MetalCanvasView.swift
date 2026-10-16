@@ -259,8 +259,8 @@ final class MetalCanvasView: UIView {
         // Touching the canvas stops Play Sequence, so the Pencil can draw at once.
         if store.isPlaying { store.stopPlaying() }
         disableAncestorPinches()
-        // While a text is being typed into, the keyboard stays with it.
-        if !isFirstResponder, !textInput.isFirstResponder { becomeFirstResponder() }
+        // While a text or a formula's source is being typed into, the keyboard stays with it.
+        if !isFirstResponder, !textInput.isFirstResponder, store.ui.mathEdit == nil { becomeFirstResponder() }
         for touch in touches {
             guard let touchKind = kind(of: touch) else { continue }
             let id = nextTouchID
