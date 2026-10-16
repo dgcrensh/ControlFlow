@@ -310,17 +310,34 @@ extension TextShaper {
 
 /// The text shaper in use and a cache of its layouts. The app sets its CoreText shaper
 /// at launch; until then, and in tests, it is `StubTextShaper`.
+///
+/// The caches drop the texts used least recently when full, so a long presentation
+/// keeps its static texts laid out. A text partway through a tracking or line-height
+/// tween (one with `held` metrics) is new on every frame and never seen again, so those
+/// go in small caches of their own and can't push the static texts out.
 public enum TextShaping {
     private final class State: @unchecked Sendable {
         let lock = NSLock()
         var shaper: any TextShaper = StubTextShaper()
-        var layouts: [TextContent: TextLayout] = [:]
-        var outlines: [TextContent: BezierPath] = [:]
+        var layouts = TextCache<TextLayout>(limit: TextShaping.cacheLimit)
+        var outlines = TextCache<BezierPath>(limit: TextShaping.cacheLimit)
+        var heldLayouts = TextCache<TextLayout>(limit: TextShaping.heldCacheLimit)
+        var heldOutlines = TextCache<BezierPath>(limit: TextShaping.heldCacheLimit)
+
+        func clear() {
+            layouts.removeAll()
+            outlines.removeAll()
+            heldLayouts.removeAll()
+            heldOutlines.removeAll()
+        }
     }
 
     private static let state = State()
-    /// Layouts kept before the cache starts again.
+    /// Texts whose layouts and outlines are kept.
     static let cacheLimit = 512
+    /// Tweened (`held`) texts kept: enough for every text tweening at once to hit its
+    /// own frame again when the display draws it twice.
+    static let heldCacheLimit = 32
 
     public static var shaper: any TextShaper {
         get {
@@ -332,16 +349,16 @@ public enum TextShaping {
             state.lock.lock()
             defer { state.lock.unlock() }
             state.shaper = newValue
-            state.layouts = [:]
-            state.outlines = [:]
+            state.clear()
         }
     }
 
     /// `text` laid out by the shaper in use, cached. A text with `held` metrics is laid
     /// out at them and then `adjusted` to its own.
     public static func layout(_ text: TextContent) -> TextLayout {
+        let held = text.held != nil
         state.lock.lock()
-        if let cached = state.layouts[text] {
+        if let cached = held ? state.heldLayouts.value(for: text) : state.layouts.value(for: text) {
             state.lock.unlock()
             return cached
         }
@@ -358,31 +375,81 @@ public enum TextShaping {
             layout = shaper.layout(text)
         }
         state.lock.lock()
-        if state.layouts.count >= cacheLimit { state.layouts = [:] }
-        state.layouts[text] = layout
+        if held {
+            state.heldLayouts.set(layout, for: text)
+        } else {
+            state.layouts.set(layout, for: text)
+        }
         state.lock.unlock()
         return layout
     }
 
     /// The glyph outlines of `text` as one path (`TextLayout.outline`), cached.
     public static func outline(_ text: TextContent) -> BezierPath {
+        let held = text.held != nil
         state.lock.lock()
-        if let cached = state.outlines[text] {
+        if let cached = held ? state.heldOutlines.value(for: text) : state.outlines.value(for: text) {
             state.lock.unlock()
             return cached
         }
         state.lock.unlock()
         let path = layout(text).outline
         state.lock.lock()
-        if state.outlines.count >= cacheLimit { state.outlines = [:] }
-        state.outlines[text] = path
+        if held {
+            state.heldOutlines.set(path, for: text)
+        } else {
+            state.outlines.set(path, for: text)
+        }
         state.lock.unlock()
         return path
+    }
+
+    /// How many texts the caches hold, for tests: static layouts and tweened ones.
+    static var cachedCounts: (layouts: Int, held: Int) {
+        state.lock.lock()
+        defer { state.lock.unlock() }
+        return (state.layouts.count, state.heldLayouts.count)
     }
 
     /// False when the shaper in use doesn't have `text`'s font.
     public static func hasFont(_ text: TextContent) -> Bool {
         text.isSystemFont || shaper.hasFont(text.font)
+    }
+}
+
+/// A cache by text that drops the least recently used quarter when it is full, so
+/// eviction costs a sort every `limit / 4` insertions rather than a wipe.
+struct TextCache<Value> {
+    let limit: Int
+    private var entries: [TextContent: (value: Value, use: Int)] = [:]
+    private var clock = 0
+
+    init(limit: Int) {
+        self.limit = max(limit, 1)
+    }
+
+    var count: Int { entries.count }
+
+    /// The value for `text`, marking it as just used.
+    mutating func value(for text: TextContent) -> Value? {
+        guard let index = entries.index(forKey: text) else { return nil }
+        clock += 1
+        entries.values[index].use = clock
+        return entries.values[index].value
+    }
+
+    mutating func set(_ value: Value, for text: TextContent) {
+        if entries.count >= limit, entries[text] == nil {
+            let drop = max(limit / 4, 1)
+            let oldest = entries.lazy.map { ($0.key, $0.value.use) }.sorted { $0.1 < $1.1 }.prefix(drop)
+            for (key, _) in oldest { entries[key] = nil }
+        }
+        clock += 1
+        entries[text] = (value, clock)
+    }
+
+    mutating func removeAll() {
+        entries = [:]
     }
 }
 

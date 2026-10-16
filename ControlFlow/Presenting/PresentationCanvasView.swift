@@ -39,7 +39,7 @@ final class PresentationCanvasView: UIView {
         self.takesInput = takesInput
         self.turnsToFit = turnsToFit && controller.rotationLocked
         rotation = controller.startRotation
-        renderer = CanvasRenderer()
+        renderer = CanvasRenderer(presenting: true)
         super.init(frame: .zero)
         renderer?.attach(to: metalLayer)
         renderer?.onNeedsRender = { [weak self] in self?.setNeedsRender() }

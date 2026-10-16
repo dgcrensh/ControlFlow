@@ -132,7 +132,7 @@ From [the plan](docs/plans/animation-app.md#11-milestones):
 
 **Using it**
 
-- **Present** (the play button at the right of the top bar, or Option-Cmd-P) fills the screen with the viewport, letterboxed in black, at the opening state. It presents the document as it is when you start; the editor is untouched underneath.
+- **Present** (the play button at the right of the top bar, or Option-Cmd-P) fills the screen with the viewport, letterboxed in black, at the opening state, drawn whole on the first frame rather than layer by layer. It presents the document as it is when you start; the editor is untouched underneath.
 - **Turned to fill:** with the rotation lock on, a landscape deck presented on a portrait iPad (or a portrait deck on a landscape one) is turned a quarter turn so it fills the screen instead of sitting small between bars, and taps follow the turn: the right half is the deck's right half as you read it. Turning the iPad mid-presentation keeps the deck still on the glass. An external display and the presenter view's pictures are never turned.
 - **Advance** plays the next sequence, keyframe after keyframe, and stops on its last keyframe. Advancing while a sequence plays jumps to its end rather than queueing. **Back** jumps, with no animation, to the end of the sequence before (while a sequence plays, to where it started), or to the opening state.
 - **Inputs:** tap the right half to advance and the left half to go back, or use a keyboard or clicker: Space, →, ↓, Page Down and Return advance; ←, ↑ and Page Up go back. **Escape** or a two-finger pinch-in exits. The editor's own shortcuts are off while presenting.
@@ -170,7 +170,7 @@ The plan is [docs/plans/text.md](docs/plans/text.md).
 
 The plan is [docs/plans/images.md](docs/plans/images.md).
 
-- **More > Insert Image** adds a picture from Photos or Files as an image shape in the middle of the view, shrunk if it is larger than most of the view or the viewport (a pixel is a point otherwise). It lands where new art goes (the active or isolated layer, or a new layer), selected with Select. One undo step. Dragging a picture onto the canvas still adds a reference image.
+- **More > Insert Image** adds a picture from Photos or Files as an image shape in the middle of the view, shrunk if it is larger than most of the view or the viewport (a pixel is a point otherwise). It lands where new art goes (the active or isolated layer, or a new layer), selected with Select. One undo step. A large photo is prepared off the main thread, so it lands a moment after you pick it without stalling the canvas. Dragging a picture onto the canvas still adds a reference image.
 - An image is a shape: **Select** moves, turns, scales and flips it (corner handles keep its proportions, edge handles stretch it), and the Layers panel, draw order, Arrange, copy and paste, hide and lock, clipping and the eraser treat it like any shape. Direct Select selects it whole, since its corners aren't edited one by one, and the scissors pass it by. The Appearance panel sets its **opacity**, an **outline** around it and clipping; it has no fill.
 - **Keyframes:** an image's place, size (its scale) and opacity animate like any shape's, so a picture can slide in, grow and fade. Fading in from nothing is opacity 0 at one keyframe and 1 at the next.
 - Pictures are saved in the document under `images/`, each once however often it is used, and pasting an image into another open document brings its picture along. A picture whose file is missing shows as a faint gray frame.
@@ -179,7 +179,7 @@ The plan is [docs/plans/images.md](docs/plans/images.md).
 ### How it is built
 
 - **Core** (`Image.swift`, `DrawingEditor+Image.swift`): an image is a `VectorShape` with a `ShapeImage` (its `src`) and a closed four-corner path, so moving, transforms, interpolation, hit testing and the file need nothing new. `imagePlacement` maps the picture's unit square onto the corners; `hasEditablePath` keeps Direct Select, the scissors and path edits off it. `ArtBuilder` stencils the frame like a fill and covers it with an `ArtImage` paint (the world-to-picture map). `Presentation.imageSources` lists the pictures every keyframe shows, which the package and the HTML export save. Tests are in `ImageTests.swift`.
-- **App:** `ImageLibrary` (`Canvas/`) holds the pictures of every open document by `src`, off the main thread too. `CanvasRenderer` draws an image cover with the `image_cover_fragment` shader, sampling its texture through the paint's map, and paints a placeholder until the texture is loaded. `ThumbnailRenderer` draws pictures with Core Graphics.
+- **App:** `ImageLibrary` (`Canvas/`) holds the pictures of every open document by `src`, off the main thread too. `CanvasRenderer` draws an image cover with the `image_cover_fragment` shader, sampling its texture through the paint's map, and paints a placeholder until the texture is loaded. `CanvasGPU` decodes and uploads each picture once, off the main thread, for every canvas (the editor, the presenter view and an external display), and asks them for a frame when it is ready. `ThumbnailRenderer` draws pictures with Core Graphics.
 - **Format 1.2** adds `image` to shapes (`Schema/README.md`, "Images"). `player.js` reads it and draws an `<image>`.
 
 ## Arranging and aligning notes

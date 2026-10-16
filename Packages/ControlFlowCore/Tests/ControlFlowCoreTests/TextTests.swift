@@ -85,6 +85,45 @@ final class TextLayoutTests: XCTestCase {
         XCTAssertEqual(TextShaping.layout(text).lines.count, 2, "held, the lines break as they did")
     }
 
+    func testTextCacheDropsTheLeastRecentlyUsed() {
+        var cache = TextCache<Int>(limit: 8)
+        let texts = (0..<9).map { TextContent(string: "t\($0)") }
+        for (i, text) in texts.prefix(8).enumerated() { cache.set(i, for: text) }
+        // Touch the first two, so the next oldest go when the ninth arrives.
+        XCTAssertEqual(cache.value(for: texts[0]), 0)
+        XCTAssertEqual(cache.value(for: texts[1]), 1)
+        cache.set(8, for: texts[8])
+        XCTAssertEqual(cache.count, 7, "a quarter of the cache goes, then the new text comes in")
+        XCTAssertEqual(cache.value(for: texts[0]), 0)
+        XCTAssertEqual(cache.value(for: texts[1]), 1)
+        XCTAssertNil(cache.value(for: texts[2]))
+        XCTAssertNil(cache.value(for: texts[3]))
+        XCTAssertEqual(cache.value(for: texts[4]), 4)
+        XCTAssertEqual(cache.value(for: texts[8]), 8)
+    }
+
+    func testTweenedTextsDoNotPushStaticTextsOut() {
+        let counter = CountingShaper()
+        let previous = TextShaping.shaper
+        TextShaping.shaper = counter
+        defer { TextShaping.shaper = previous }
+
+        let title = TextContent(string: "Title", size: 40)
+        _ = TextShaping.outline(title)
+        XCTAssertEqual(counter.count, 1)
+        // A tracking tween: a new held text every frame, many more than the cache holds.
+        var tweened = TextContent(string: "Moving", size: 20)
+        tweened.held = TextMetrics(tracking: 0, lineHeight: 1.2)
+        for frame in 0..<(TextShaping.cacheLimit * 2) {
+            tweened.tracking = Double(frame) / 100
+            _ = TextShaping.outline(tweened)
+        }
+        XCTAssertEqual(counter.count, 2, "each tweened frame adjusts one layout at the held metrics")
+        XCTAssertLessThanOrEqual(TextShaping.cachedCounts.held, TextShaping.heldCacheLimit)
+        _ = TextShaping.outline(title)
+        XCTAssertEqual(counter.count, 2, "the static title is still laid out")
+    }
+
     func testCaretsAndSelectionBoxes() {
         let layout = TextShaping.layout(TextContent(string: "abc\nde", size: 10))
         XCTAssertEqual(layout.offset(nearest: Vec2(7, 3)), 1)
@@ -381,5 +420,17 @@ final class TextEditingTests: XCTestCase {
         tap(&e, Vec2(100.6, 199))
         XCTAssertEqual(e.drawing.layers[0].shapes.count, 1)
         XCTAssertNotNil(e.drawing.shape(ref)?.text)
+    }
+}
+
+/// Counts the layouts the shaper is asked for.
+private final class CountingShaper: TextShaper, @unchecked Sendable {
+    private let lock = NSLock()
+    private var made = 0
+    var count: Int { lock.withLock { made } }
+
+    func layout(_ text: TextContent) -> TextLayout {
+        lock.withLock { made += 1 }
+        return StubTextShaper().layout(text)
     }
 }

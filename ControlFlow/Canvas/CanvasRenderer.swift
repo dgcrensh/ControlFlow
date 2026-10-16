@@ -97,8 +97,10 @@ private struct ImagePaintUniforms {
 /// first build after opening is such a job too, so the first frame never waits for it.
 @MainActor
 final class CanvasRenderer {
-    private static let sampleCount = 4
+    private static let sampleCount = CanvasGPU.sampleCount
 
+    /// The shaders, pipelines and pictures every canvas shares.
+    private let gpu: CanvasGPU
     private let device: any MTLDevice
     private let queue: any MTLCommandQueue
     private let strokePipeline: any MTLRenderPipelineState
@@ -144,6 +146,9 @@ final class CanvasRenderer {
     /// command buffer retains it).
     private var artSegments: [ArtSegment] = []
     private var artBuffers: [Int: any MTLBuffer] = [:]
+    /// Presenting, where the art is each played frame's scene: its layers' buffers from
+    /// the pool, as the editor's preview's are (`previewHandles`).
+    private var artHandles: [Int: VertexBufferPool.Handle] = [:]
     /// The drawing the art was last built from, which a refine merges against.
     private var artDrawing = Drawing()
 
@@ -157,6 +162,9 @@ final class CanvasRenderer {
     private var previewSteps: [ArtStep] = []
     private var previewSegments: [ArtSegment] = []
     private var previewBuffers: [Int: any MTLBuffer] = [:]
+    /// The preview's own layers' buffers, from the pool rather than made every frame,
+    /// pinned while the preview draws them. The rest of `previewBuffers` are the art's.
+    private var previewHandles: [Int: VertexBufferPool.Handle] = [:]
 
     // Onion skin: the keyframe before the current one, every shape at the ghost opacity.
     // Built in the frame from its own cache, at the art's tolerance.
@@ -188,8 +196,12 @@ final class CanvasRenderer {
     /// that aren't ready instead of flattening them in the frame.
     private var artCold = false
 
-    /// Asks the view for a frame; a refine calls it when its result is merged.
+    /// Asks the view for a frame; a refine calls it when its result is merged, and
+    /// `CanvasGPU` when a picture has loaded.
     var onNeedsRender: (@MainActor () -> Void)?
+    /// Presenting: the first build flattens everything in the frame (see `init`), and the
+    /// art, which is each played frame, takes its buffers from the pool.
+    private let isPresenting: Bool
 
     // Vertex buffers reused between frames, and the live strokes' committed segments.
     private let clock = FrameClock()
@@ -205,89 +217,31 @@ final class CanvasRenderer {
     private var overlayKept: (wireframe: Range<Int>, selection: Range<Int>) = (0..<0, 0..<0)
 
     private var textures: [Int: any MTLTexture] = [:]
-    /// Image shapes' pictures, by `src`, from `ImageLibrary`.
-    private var imageTextures: [String: any MTLTexture] = [:]
-    /// Pictures the art drew without (it paints their placeholder), to load before the next frame.
-    private var wantedImages: Set<String> = []
-    /// Pictures the library didn't have, not looked for again until it gains some.
-    private var missingImages: Set<String> = []
-    private var libraryGeneration = -1
 
     /// Supplies the pixels for a reference image id.
     var referenceImage: (@MainActor (Int) -> CGImage?)?
 
-    init?() {
-        guard let device = MTLCreateSystemDefaultDevice(),
-              let queue = device.makeCommandQueue()
-        else { return nil }
-        self.device = device
+    /// Nil when the device has no Metal. The shaders are compiled once, for the first
+    /// canvas (`CanvasGPU`), so a second one, such as presenting's, starts at once.
+    ///
+    /// When `presenting`, the first frame flattens the whole scene before it shows,
+    /// rather than filling the layers in over the next frames as the editor's canvas
+    /// does after opening, so the first slide appears whole.
+    init?(presenting: Bool = false) {
+        guard let gpu = CanvasGPU.shared, let queue = gpu.device.makeCommandQueue() else { return nil }
+        self.gpu = gpu
+        device = gpu.device
         self.queue = queue
-        buffers = VertexBufferPool(device: device, clock: clock)
-
-        do {
-            let library = try device.makeLibrary(source: ShaderSource.metal, options: nil)
-
-            func descriptor(_ label: String, vertex: String, fragment: String?) -> MTLRenderPipelineDescriptor {
-                let d = MTLRenderPipelineDescriptor()
-                d.label = label
-                d.vertexFunction = library.makeFunction(name: vertex)
-                d.fragmentFunction = fragment.flatMap { library.makeFunction(name: $0) }
-                d.rasterSampleCount = Self.sampleCount
-                d.colorAttachments[0].pixelFormat = .bgra8Unorm
-                d.stencilAttachmentPixelFormat = .stencil8
-                return d
-            }
-            func premultipliedBlending(_ d: MTLRenderPipelineDescriptor) {
-                let attachment = d.colorAttachments[0]!
-                attachment.isBlendingEnabled = true
-                attachment.sourceRGBBlendFactor = .one
-                attachment.sourceAlphaBlendFactor = .one
-                attachment.destinationRGBBlendFactor = .oneMinusSourceAlpha
-                attachment.destinationAlphaBlendFactor = .oneMinusSourceAlpha
-            }
-
-            let stroke = descriptor("Stroke", vertex: "stroke_vertex", fragment: "stroke_fragment")
-            premultipliedBlending(stroke)
-            strokePipeline = try device.makeRenderPipelineState(descriptor: stroke)
-
-            let stencil = descriptor("Art stencil", vertex: "fill_vertex", fragment: "stencil_fragment")
-            stencil.colorAttachments[0].writeMask = []
-            stencilPipeline = try device.makeRenderPipelineState(descriptor: stencil)
-
-            let cover = descriptor("Art cover", vertex: "fill_vertex", fragment: "fill_fragment")
-            premultipliedBlending(cover)
-            coverPipeline = try device.makeRenderPipelineState(descriptor: cover)
-
-            let image = descriptor("Reference image", vertex: "image_vertex", fragment: "image_fragment")
-            premultipliedBlending(image)
-            imagePipeline = try device.makeRenderPipelineState(descriptor: image)
-
-            let imageCover = descriptor("Image cover", vertex: "fill_vertex", fragment: "image_cover_fragment")
-            premultipliedBlending(imageCover)
-            imageCoverPipeline = try device.makeRenderPipelineState(descriptor: imageCover)
-
-            let grid = descriptor("Grid", vertex: "grid_vertex", fragment: "grid_fragment")
-            gridPipeline = try device.makeRenderPipelineState(descriptor: grid)
-        } catch {
-            assertionFailure("Canvas shaders failed to build: \(error)")
-            return nil
-        }
-
-        let plain = MTLDepthStencilDescriptor()
-        plain.label = "No stencil"
-
-        let samplerDescriptor = MTLSamplerDescriptor()
-        samplerDescriptor.minFilter = .linear
-        samplerDescriptor.magFilter = .linear
-        samplerDescriptor.mipFilter = .linear
-        samplerDescriptor.sAddressMode = .clampToEdge
-        samplerDescriptor.tAddressMode = .clampToEdge
-
-        guard let plainState = device.makeDepthStencilState(descriptor: plain),
-              let sampler = device.makeSamplerState(descriptor: samplerDescriptor)
-        else { return nil }
-        self.plainState = plainState
-        self.sampler = sampler
+        buffers = VertexBufferPool(device: gpu.device, clock: clock)
+        strokePipeline = gpu.strokePipeline
+        stencilPipeline = gpu.stencilPipeline
+        coverPipeline = gpu.coverPipeline
+        imagePipeline = gpu.imagePipeline
+        imageCoverPipeline = gpu.imageCoverPipeline
+        gridPipeline = gpu.gridPipeline
+        plainState = gpu.plainState
+        sampler = gpu.sampler
+        isPresenting = presenting
     }
 
     func attach(to layer: CAMetalLayer) {
@@ -339,7 +293,6 @@ final class CanvasRenderer {
         // A preview (scrubbing or playing) shows its scene in place of the drawing.
         let shown = editor.shownDrawing
         loadMissingTextures(for: shown.references, commandBuffer: commandBuffer)
-        loadWantedImages(commandBuffer: commandBuffer)
 
         var uniforms = makeUniforms(camera: session.camera, viewSize: viewSize, scale: scale, darkMode: darkMode)
 
@@ -379,9 +332,11 @@ final class CanvasRenderer {
             }
             Signposts.canvas.withIntervalSignpost("Art draw") {
                 if editor.preview != nil, previewBuilder != nil {
+                    for handle in previewHandles.values { buffers.use(handle) }
                     drawArt(previewSteps, segments: previewSegments, buffers: previewBuffers, encoder: encoder,
                             uniforms: &uniforms, viewRect: Rect(points: screen))
                 } else {
+                    for handle in artHandles.values { buffers.use(handle) }
                     drawArt(artSteps, segments: artSegments, buffers: artBuffers, encoder: encoder, uniforms: &uniforms,
                             viewRect: Rect(points: screen))
                 }
@@ -398,7 +353,6 @@ final class CanvasRenderer {
             commandBuffer.present(drawable)
             commandBuffer.commit()
             Signposts.canvas.endInterval("Encode", encodeInterval)
-            requestWantedImages()
             return true
         }
 
@@ -440,7 +394,6 @@ final class CanvasRenderer {
         commandBuffer.present(drawable)
         commandBuffer.commit()
         Signposts.canvas.endInterval("Encode", encodeInterval)
-        requestWantedImages()
         return true
     }
 
@@ -504,8 +457,9 @@ final class CanvasRenderer {
         // flattens the drawing, the layers in view first, and each layer shows as it merges.
         if artTolerance == 0 {
             artTolerance = wanted
-            artCold = true
-            artMixed = true
+            // Presenting builds its first scene whole, in this frame (see `init`).
+            artCold = !isPresenting
+            artMixed = !isPresenting
         }
         scheduleRefine(to: wanted, drawing: drawing, navigating: navigating, viewRect: viewRect)
 
@@ -569,7 +523,33 @@ final class CanvasRenderer {
         else { return }
         previewSteps = batch.steps
         previewSegments = batch.segments
-        previewBuffers = upload(batch, keeping: previewBuffers)
+        uploadPooled(batch, keeping: &previewBuffers, handles: &previewHandles)
+    }
+
+    /// Like `upload(_:keeping:)`, but each changed layer goes in a pooled buffer, since
+    /// playback changes the moving layers on every frame. A pooled buffer stays pinned
+    /// while it is drawn, and goes back to the pool when a later frame replaces it or the
+    /// preview ends. `kept` may also hold the art's own buffers, which aren't pooled.
+    private func uploadPooled(_ batch: ArtBatch, keeping kept: inout [Int: any MTLBuffer],
+                              handles: inout [Int: VertexBufferPool.Handle]) {
+        let interval = Signposts.canvas.beginInterval("Art upload")
+        var floats = 0
+        defer { Signposts.canvas.endInterval("Art upload", interval, "\(floats) floats, pooled") }
+        var nextBuffers: [Int: any MTLBuffer] = [:]
+        var nextHandles: [Int: VertexBufferPool.Handle] = [:]
+        for id in batch.residentIDs {
+            nextBuffers[id] = kept[id]
+            nextHandles[id] = handles[id]
+        }
+        for segment in batch.segmentsToUpload(resident: Set(nextBuffers.keys)) {
+            floats += segment.floats.count
+            guard let handle = buffers.upload([segment.floats], pin: true) else { continue }
+            nextBuffers[segment.id] = handle.buffer
+            nextHandles[segment.id] = handle
+        }
+        for (id, handle) in handles where nextHandles[id] == nil { buffers.release(handle) }
+        kept = nextBuffers
+        handles = nextHandles
     }
 
     /// Drops the preview's art, its buffers and its builder's copies of the caches.
@@ -579,13 +559,21 @@ final class CanvasRenderer {
         previewSteps = []
         previewSegments = []
         previewBuffers = [:]
+        for handle in previewHandles.values { buffers.release(handle) }
+        previewHandles = [:]
     }
 
-    /// Keeps the buffers of layers that didn't change and makes one for each layer that did.
+    /// Keeps the buffers of layers that didn't change and makes one for each layer that
+    /// did. Presenting, whose art changes every frame while a sequence plays, takes them
+    /// from the pool.
     private func uploadArt(_ batch: ArtBatch) {
         artSteps = batch.steps
         artSegments = batch.segments
-        artBuffers = upload(batch, keeping: artBuffers)
+        if isPresenting {
+            uploadPooled(batch, keeping: &artBuffers, handles: &artHandles)
+        } else {
+            artBuffers = upload(batch, keeping: artBuffers)
+        }
     }
 
     /// The buffers for `batch`'s layers: those in `buffers` it still uses, and a new one
@@ -748,7 +736,7 @@ final class CanvasRenderer {
                     encoder.drawPrimitives(type: .triangle, vertexStart: local.lowerBound, vertexCount: local.count)
 
                 case .cover(let range, let paint, let state, let reference):
-                    if let image = paint.image, let texture = imageTextures[image.src] {
+                    if let image = paint.image, let texture = gpu.imageTexture(image.src, for: self) {
                         bind(imageCoverPipeline, as: .imageCover)
                         var imageUniforms = ImagePaintUniforms(image, opacity: paint.opacity)
                         encoder.setFragmentTexture(texture, index: 0)
@@ -756,8 +744,7 @@ final class CanvasRenderer {
                         encoder.setFragmentBytes(&imageUniforms, length: MemoryLayout<ImagePaintUniforms>.stride, index: 0)
                     } else {
                         // A picture not loaded yet paints its placeholder, which clears the
-                        // stencil as any cover does.
-                        if let image = paint.image { wantedImages.insert(image.src) }
+                        // stencil as any cover does, until `imagesLoaded` asks for a frame.
                         bind(coverPipeline, as: .cover)
                         var paintUniforms = PaintUniforms(paint)
                         encoder.setFragmentBytes(&paintUniforms, length: MemoryLayout<PaintUniforms>.stride, index: 0)
@@ -903,29 +890,8 @@ final class CanvasRenderer {
 
     // MARK: Image shapes
 
-    /// Loads the pictures the last frame drew without, from `ImageLibrary`.
-    private func loadWantedImages(commandBuffer: any MTLCommandBuffer) {
-        let generation = ImageLibrary.shared.generation
-        if generation != libraryGeneration {
-            libraryGeneration = generation
-            missingImages = []
-        }
-        guard !wantedImages.isEmpty else { return }
-        for src in wantedImages where imageTextures[src] == nil && !missingImages.contains(src) {
-            let interval = Signposts.canvas.beginInterval("Image texture")
-            defer { Signposts.canvas.endInterval("Image texture", interval) }
-            if let image = ImageLibrary.shared.image(src), let texture = makeTexture(image, commandBuffer: commandBuffer) {
-                imageTextures[src] = texture
-            } else {
-                missingImages.insert(src)
-            }
-        }
-        wantedImages = []
-    }
-
-    /// Asks for another frame when this one drew without pictures that may load.
-    private func requestWantedImages() {
-        guard wantedImages.contains(where: { !missingImages.contains($0) }) else { return }
+    /// A picture the art drew without has loaded (see `CanvasGPU.imageTexture`).
+    func imagesLoaded() {
         onNeedsRender?()
     }
 
@@ -933,37 +899,11 @@ final class CanvasRenderer {
         for ref in references where textures[ref.id] == nil {
             let interval = Signposts.canvas.beginInterval("Reference texture")
             defer { Signposts.canvas.endInterval("Reference texture", interval) }
-            guard let image = referenceImage?(ref.id), let texture = makeTexture(image, commandBuffer: commandBuffer) else { continue }
+            guard let image = referenceImage?(ref.id),
+                  let texture = CanvasGPU.makeTexture(image, device: device, queue: nil, commandBuffer: commandBuffer)
+            else { continue }
             textures[ref.id] = texture
         }
-    }
-
-    /// Uploads a CGImage as premultiplied RGBA with mipmaps, so it stays smooth when zoomed out.
-    private func makeTexture(_ image: CGImage, commandBuffer: any MTLCommandBuffer) -> (any MTLTexture)? {
-        let width = image.width, height = image.height
-        guard width > 0, height > 0 else { return nil }
-        let bytesPerRow = width * 4
-        var pixels = [UInt8](repeating: 0, count: bytesPerRow * height)
-        let drawn: Bool = pixels.withUnsafeMutableBytes { raw in
-            guard let space = CGColorSpace(name: CGColorSpace.sRGB),
-                  let context = CGContext(data: raw.baseAddress, width: width, height: height, bitsPerComponent: 8,
-                                          bytesPerRow: bytesPerRow, space: space,
-                                          bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
-            else { return false }
-            context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
-            return true
-        }
-        guard drawn else { return nil }
-
-        let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba8Unorm, width: width, height: height, mipmapped: true)
-        descriptor.usage = .shaderRead
-        guard let texture = device.makeTexture(descriptor: descriptor) else { return nil }
-        texture.replace(region: MTLRegionMake2D(0, 0, width, height), mipmapLevel: 0, withBytes: pixels, bytesPerRow: bytesPerRow)
-        if texture.mipmapLevelCount > 1, let blit = commandBuffer.makeBlitCommandEncoder() {
-            blit.generateMipmaps(for: texture)
-            blit.endEncoding()
-        }
-        return texture
     }
 
     // MARK: Uniforms

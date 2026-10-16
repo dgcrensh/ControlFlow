@@ -42,9 +42,11 @@ final class VertexBufferPool {
         var isPinned = false
     }
 
-    /// Enough for the overlay's kept layers (pinned), and the live and
-    /// mirrored strokes and the overlay's two per-frame layers with three frames in flight.
-    private static let maxSlots = 20
+    /// Enough for the overlay's kept layers (pinned), the live and mirrored strokes and
+    /// the overlay's two per-frame layers with three frames in flight, and a preview's
+    /// changed layers (pinned while shown) for a dozen layers moving at once. Past that a
+    /// buffer is made for the draw, as before the pool.
+    private static let maxSlots = 64
     private static let minimumLength = 64 * 1024
 
     private let device: any MTLDevice
