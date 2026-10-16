@@ -136,3 +136,30 @@ extension DrawingEditor {
         updateViewport { $0 = $0.withAspect(ratio) }
     }
 }
+
+/// Keeps `DrawingEditor.ghostFocus` between frames, worked out again only when the
+/// drawing, the selection, the pen's path or ghosting changes, so a hover frame with a
+/// big selection doesn't build the set again.
+public struct GhostFocusCache: Sendable {
+    struct Key: Equatable, Sendable {
+        var revision: Int
+        var selection: Selection
+        var pen: Int?
+        var isOn: Bool
+    }
+
+    private var key: Key?
+    private var focus: Set<Int>?
+
+    public init() {}
+
+    public mutating func focus(of editor: DrawingEditor) -> Set<Int>? {
+        let key = Key(revision: editor.revision, selection: editor.selection, pen: editor.penPath?.shape,
+                      isOn: editor.ghostsUnselected)
+        if key != self.key {
+            self.key = key
+            focus = editor.ghostFocus
+        }
+        return focus
+    }
+}

@@ -273,7 +273,7 @@ extension DrawingEditor {
         guard let bounds = selectionGeometry else { return }
         let delta = Vec2(x.map { $0 - bounds.minPoint.x } ?? 0, y.map { $0 - bounds.minPoint.y } ?? 0)
         guard delta != .zero else { return }
-        transformSelection(.translation(delta), key: "inspector-origin-\(selection)")
+        transformSelection(.translation(delta), key: selectionKey("inspector-origin"))
     }
 
     /// Scales the selection along each given axis from its top-left corner. Reference
@@ -286,7 +286,7 @@ extension DrawingEditor {
         guard kx != 1 || ky != 1 else { return }
         let origin = bounds.minPoint
         transformSelection(Affine2D.translation(origin) * Affine2D.scale(x: kx, y: ky) * Affine2D.translation(-origin),
-                           key: "inspector-size-\(selection)")
+                           key: selectionKey("inspector-size"))
     }
 
     /// The middle of the selected anchors.
@@ -305,7 +305,7 @@ extension DrawingEditor {
 
     private mutating func moveSelectedAnchors(by delta: Vec2, key: String) {
         guard delta != .zero else { return }
-        moveAnchors(Dictionary(uniqueKeysWithValues: selectedAnchors.map { ($0, delta) }), key: "\(key)-\(selection)")
+        moveAnchors(Dictionary(uniqueKeysWithValues: selectedAnchors.map { ($0, delta) }), key: selectionKey(key))
     }
 
     /// Moves anchors of the active shape, each by its own world offset, as one undo step
@@ -328,7 +328,7 @@ extension DrawingEditor {
         if !selectedAnchors.isEmpty, activeShape != nil {
             moveSelectedAnchors(by: delta, key: "nudge")
         } else {
-            transformSelection(.translation(delta), key: "nudge-\(selection)")
+            transformSelection(.translation(delta), key: selectionKey("nudge"))
         }
     }
 

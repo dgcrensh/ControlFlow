@@ -268,33 +268,52 @@ extension DrawingEditor {
     /// them. Empty at the opening state.
     public mutating func keyedProperties() -> Set<String> {
         guard let id = currentKeyframe, let keyframe = timeline.presentation.keyframe(id) else { return [] }
+        let key = KeyedPropertiesKey(keyframe: id, revision: revision, documentRevision: documentRevision,
+                                     selection: selectionGeneration)
+        if let cached = keyedPropertiesCache, cached.key == key { return cached.keys }
+        let keys = keyedProperties(in: keyframe)
+        keyedPropertiesCache = (key, keys)
+        return keys
+    }
+
+    private mutating func keyedProperties(in keyframe: Keyframe) -> Set<String> {
         var selected = Set<Int>()
+        var shapesSelected = false
         switch selection {
         case .layer(let id): selected = [id]
         case .layers(let ids): selected = ids
-        case .shape, .shapes: selected = Set(drawing.shapeRefs(in: selection).map(\.shape))
+        case .shape, .shapes:
+            selected = Set(drawing.shapeRefs(in: selection).map(\.shape))
+            shapesSelected = true
         case .none, .reference: return []
         }
         guard !selected.isEmpty else { return [] }
-        // Vertices of the selected shapes, as they are now or were before.
-        var vertices = Set<Int>()
-        for layer in drawing.layers + timeline.state(at: currentChainIndex - 1).layers {
-            for shape in layer.shapes where selected.contains(shape.id) { vertices.formUnion(shape.path.points.map(\.id)) }
-        }
         var keys = Set<String>()
+        // Targets that aren't selected objects but may be vertices of selected shapes.
+        var others = Set<Int>()
         for change in keyframe.changes {
             switch change {
             case .set(let target, let props):
-                if selected.contains(target) { keys.formUnion(props.map(\.key)) } else if vertices.contains(target) { keys.insert("points") }
+                if selected.contains(target) { keys.formUnion(props.map(\.key)) } else if shapesSelected { others.insert(target) }
             case .create(let object, let parent, _, _, _):
                 if selected.contains(object.id) { keys.insert("created") } else if let parent, selected.contains(parent), case .vertex = object {
                     keys.insert("points")
                 }
             case .delete(let target, _):
-                if vertices.contains(target) { keys.insert("points") }
+                if shapesSelected { others.insert(target) }
             case .order(let parent, _):
                 if let parent, selected.contains(parent) { keys.insert(drawing.layer(parent) != nil ? "order" : "points") }
             }
+        }
+        // Only those targets are looked up, as they are now or were before, rather than
+        // every vertex of the selection: a vertex's parent is its shape.
+        if !others.isEmpty, !keys.contains("points") {
+            var wanted = others
+            var parents: [Int: Int] = [:]
+            for state in [drawing, timeline.state(at: currentChainIndex - 1)] where !wanted.isEmpty {
+                Timeline.findParents(of: &wanted, in: state, into: &parents)
+            }
+            if others.contains(where: { parents[$0].map(selected.contains) == true }) { keys.insert("points") }
         }
         return keys
     }

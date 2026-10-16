@@ -53,7 +53,7 @@ public enum EditorOverlay {
         // Outline view: every shown shape as a thin line, dimmed outside isolation and the
         // ghost focus.
         if editor.outlineView {
-            let focus = editor.ghostFocus
+            let focus = cache.ghost.focus(of: editor)
             let key = OverlayCache.WireframeKey(revision: editor.displayRevision, bucket: bucket, isolatedLayer: editor.isolatedLayer,
                                                 isolatedGroup: editor.isolatedGroup, ghostFocus: focus, darkMode: darkMode)
             if cache.wireframeKey == key {
@@ -83,6 +83,15 @@ public enum EditorOverlay {
             }
             return layers
         }
+        // What the hover outline and the select tool's frame read of the selection, worked
+        // out once per drawing and selection rather than on every hover frame.
+        let frameKey = OverlayCache.FrameKey(revision: editor.revision, selection: editor.selection,
+                                             customPivot: editor.customPivot, framed: editor.tool == .select)
+        if cache.frameKey != frameKey {
+            cache.frameKey = frameKey
+            cache.selected = OverlayCache.Selected(editor: editor, framed: frameKey.framed)
+        }
+        guides.selected = cache.selected
         guides.guides(viewRect: viewRect, zoom: zoom)
         layers.guides = guides.out
 
@@ -101,6 +110,7 @@ public enum EditorOverlay {
         }
 
         var top = Builder(editor: editor, drawing: editor.drawing, px: px)
+        top.selected = cache.selected
         top.top()
         layers.top = top.out
         return layers
@@ -152,8 +162,42 @@ public struct OverlayCache: Sendable {
         var selectedAnchors: Set<Int>
     }
 
+    struct FrameKey: Equatable, Sendable {
+        var revision: Int
+        var selection: Selection
+        var customPivot: Vec2?
+        /// The select tool shows the frame, so it and the pivot are worked out.
+        var framed: Bool
+    }
+
+    /// The selected shapes, and with the select tool its frame and pivot.
+    struct Selected: Sendable {
+        var refs: Set<ShapeRef> = []
+        var frame: SelectionFrame?
+        var pivot: Vec2?
+
+        init() {}
+
+        init(editor: DrawingEditor, framed: Bool) {
+            refs = Set(editor.drawing.shapeRefs(in: editor.selection))
+            guard framed else { return }
+            frame = editor.drawing.frame(of: editor.selection)
+            // As `DrawingEditor.pivot`, without working out the frame again.
+            if let custom = editor.customPivot {
+                pivot = custom
+            } else if case .layer(let id) = editor.selection, let layer = editor.drawing.layer(id), !layer.shapes.isEmpty {
+                pivot = layer.worldPivot
+            } else {
+                pivot = frame?.center
+            }
+        }
+    }
+
     var wireframeKey: WireframeKey?
     var wireframe: [Float] = []
+    var frameKey: FrameKey?
+    var selected = Selected()
+    var ghost = GhostFocusCache()
     var selectionKey: SelectionKey?
     var selection: [Float] = []
     /// Changes whenever `wireframe` or `selection` is rebuilt, so a renderer that keeps
@@ -173,6 +217,8 @@ private struct Builder {
     let drawing: Drawing
     let px: Double
     var out: [Float] = []
+    /// The selection as `OverlayCache` keeps it, for the guides and the top layer.
+    var selected = OverlayCache.Selected()
 
     var accent: RGBAColor { Overlay.accent }
 
@@ -316,7 +362,7 @@ private struct Builder {
         // The scissors find the target and the cut point in one search.
         let cut = editor.tool == .scissors ? editor.hoverCut : nil
         let target = editor.tool == .scissors ? cut?.ref : editor.hoverTarget
-        if let target, editor.tool == .eraser || !drawing.shapeRefs(in: editor.selection).contains(target) {
+        if let target, editor.tool == .eraser || !selected.refs.contains(target) {
             outline(of: target, color: editor.tool == .eraser ? Overlay.eraserColor : accent)
         }
         if let hover = editor.hoverPoint {
@@ -407,7 +453,7 @@ private struct Builder {
             }
 
         case .select:
-            guard let frame = drawing.frame(of: editor.selection) else { break }
+            guard let frame = selected.frame else { break }
             var isReference = false
             if case .reference = editor.selection { isReference = true }
             let c = frame.corners
@@ -418,7 +464,7 @@ private struct Builder {
             for corner in c { ringDot(corner, radius: 6.5) }
             if !isReference {
                 for mid in frame.edgeMidpoints { ringDot(mid, radius: 5) }
-                if let pivot = editor.pivot {
+                if let pivot = selected.pivot {
                     // A crosshair in a ring, so it reads differently from the handles.
                     line(pivot - Vec2(10 * px, 0), pivot + Vec2(10 * px, 0), width: 1.5)
                     line(pivot - Vec2(0, 10 * px), pivot + Vec2(0, 10 * px), width: 1.5)

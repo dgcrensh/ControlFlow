@@ -259,7 +259,7 @@ Copying everything encodes JSON on the main thread: **298 ms**. Pasting it back 
    - "Nudge at a keyframe that keys every shape";
    - "Delete and undo at keyframe 1, keyframes reorder";
    - "Playback frame, a text per layer tweens tracking".
-2. **Quick wins (S).** Each is a few lines, and together they remove the big-selection stalls and the worst one-frame spikes:
+2. **Quick wins (shipped).** Each is a few lines, and together they remove the big-selection stalls and the worst one-frame spikes:
    - #2, seed the onion builder;
    - #5, selection keys;
    - #4, align once per refresh and skip unchanged refreshes;
@@ -269,6 +269,22 @@ Copying everything encodes JSON on the main thread: **298 ms**. Pasting it back 
    - #14, continuous hand-offs;
    - #11, batch the thumbnails;
    - #15, frame order, hover, references and the presenting grid.
+
+   What shipped: the onion builder starts from the art's tessellations; coalescing keys use `selectionGeneration`; `alignAvailability` counts the units once without bounds, and `refresh()` reads the selection's queries only when `selectionQueriesKey` changes; `keyedProperties()` looks up only the targets that aren't selected objects and is cached; `OverlayCache` keeps the selected refs, select frame and pivot, and `GhostFocusCache` the ghost focus; the marquee finds groups in one walk; the transition, text metric and reference opacity controls and text selection changes are continuous; thumbnails render and decode in one background batch and reach the strip in one update; the renderer takes the drawable after the CPU work, decodes references off the main thread and remembers failures, skips the grid when presenting, and draws on hover only when `pencilHovered` reports a change.
+
+   Measured in this container against `main` before the change (release, full stress drawing, median per call):
+
+   | Workload | Before | After |
+   |---|---|---|
+   | Refresh queries, everything selected | 11.3 ms | 4.2 ms |
+   | The same at keyframe 10 | 16.5 ms | 4.5 ms |
+   | Hover frame, everything selected | 3.3 ms | 0.02 ms |
+   | Nudge everything | 20 ms | 11.8 ms |
+   | Color picker tick, everything selected, keyframe 10 | 35 ms | 22 ms |
+   | Marquee over everything, shapes grouped in pairs | 165 ms | 9.9 ms |
+   | Onion skin build, keyframe 10 of 20 | 67 ms | 13.7 ms |
+
+   The refresh rows are what a refresh reads when the selection's key changed; a pan, zoom or tool option now skips them. What is left of a nudge and a colour tick is the commit itself (#9's diff at a keyframe).
 3. **#1's encoder diet (S-M):** cut the redundant binds and state, and put paint in buffers. Then check on a device whether culling or an art cache is still needed.
 4. **#3 (M):** paint-only changes keep their buffers.
 5. **#9, #10, #12 (M):** incremental diff, prune and shape index for edits that touch many keyframes or shapes.

@@ -242,9 +242,10 @@ public struct CanvasSession: Sendable {
 
     /// The Pencil hovering above the screen at `location`, or `nil` when it leaves. The
     /// pen tool draws its rubber band to it.
-    public mutating func pencilHovered(at location: Vec2?) {
-        guard drawingTouch == nil, editor.preview == nil else { return }
-        editor.pencilHovered(at: location.map { camera.toWorld($0) }, zoom: camera.zoom)
+    @discardableResult
+    public mutating func pencilHovered(at location: Vec2?) -> Bool {
+        guard drawingTouch == nil, editor.preview == nil else { return false }
+        return editor.pencilHovered(at: location.map { camera.toWorld($0) }, zoom: camera.zoom)
     }
 
     /// Checks for a QuickShape hold: the app calls this on a timer while the Pencil is

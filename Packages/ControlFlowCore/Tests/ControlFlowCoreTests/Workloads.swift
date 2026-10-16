@@ -363,7 +363,8 @@ struct Workload: @unchecked Sendable {
 
     /// The onion skin's first build at keyframe 10 of 20, after turning it on or zooming
     /// into a new bucket: the previous keyframe built by a fresh builder at the art's
-    /// tolerance with every shape ghosted, as `CanvasRenderer.updateOnion` does.
+    /// tolerance with every shape ghosted, starting from the art builder's tessellations,
+    /// as `CanvasRenderer.updateOnion` does.
     static let onionSkinBuild = Workload(name: "Onion skin build, keyframe 10 of 20") { drawing in
         let presentation = StressDrawing.presentation(drawing, keyframes: 20)
         var editor = DrawingEditor(presentation: presentation)
@@ -374,7 +375,8 @@ struct Workload: @unchecked Sendable {
         _ = art.build(editor.drawing, isolatedLayer: nil, tolerance: 0.5)
         return {
             var builder = ArtBuilder.likeRenderer()
-            _ = builder.build(onion, isolatedLayer: nil, tolerance: 0.5, ghostFocus: [])
+            builder.tessellations = art.tessellations
+            _ = builder.build(onion, isolatedLayer: nil, tolerance: 0.5, ghostFocus: [], reusingOtherTolerances: true)
         }
     }
 

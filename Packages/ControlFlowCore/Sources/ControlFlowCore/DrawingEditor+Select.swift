@@ -26,6 +26,19 @@ public struct SelectionCrumb: Hashable, Sendable {
 
 /// The Select menu: select parent and the breadcrumbs it walks, Select All in Layer,
 /// Select Same Fill and Outline, and Invert Selection. None of these is an undo step.
+/// See `DrawingEditor.selectionQueriesKey`.
+public struct SelectionQueriesKey: Equatable, Sendable {
+    var revision: Int
+    var documentRevision: Int
+    var selection: Selection
+    var selectedAnchors: Set<Int>
+    var tool: Tool
+    var isolatedLayer: Int?
+    var isolatedGroup: Int?
+    var keyframe: Int?
+    var targetLayer: Int?
+}
+
 extension DrawingEditor {
     // MARK: Breadcrumbs and select parent
 
@@ -110,6 +123,20 @@ extension DrawingEditor {
     public mutating func selectParent() {
         guard let level = parentCrumb else { return }
         selectCrumb(level)
+    }
+
+    // MARK: What the selection queries depend on
+
+    /// Changes whenever the answer to a selection query (`canAlign`, `selectionCrumbs`,
+    /// `selectionAppearance`, `keyedProperties()` and the other `can...` and `selection...`
+    /// properties the app reads after each change) might: the drawing, the document, the
+    /// selection and its anchors, the tool, isolation, the keyframe and the layer chosen
+    /// in the panel. A caller that reads them all can skip them while it is unchanged,
+    /// as after a pan or a zoom.
+    public var selectionQueriesKey: SelectionQueriesKey {
+        SelectionQueriesKey(revision: revision, documentRevision: documentRevision, selection: selection,
+                            selectedAnchors: selectedAnchors, tool: tool, isolatedLayer: isolatedLayer,
+                            isolatedGroup: isolatedGroup, keyframe: currentKeyframe, targetLayer: targetLayer)
     }
 
     // MARK: Select all, same and invert
