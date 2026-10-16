@@ -8,7 +8,7 @@ Formulas typeset from LaTeX with MathJax, drawn as shapes, saved with their layo
 | --- | --- | --- |
 | 1 | Formulas in the core and the file (format 1.3) | Shipped |
 | 2 | MathJax in the app | Planned |
-| 3 | The Math tool | Planned |
+| 3 | The Math tool | Shipped |
 | 4 | The morph | Planned |
 
 Where PR 1 differs from the plan below:
@@ -18,6 +18,14 @@ Where PR 1 differs from the plan below:
 - MathJax cuts a stretched extender (the middle of a tall parenthesis) to length with a nested `<svg>` window. `MathLayout.parse` squeezes such a glyph into its window, which draws the same thing because an extender is the same all along, so a layout stays glyphs and rules with no clipping.
 - The fixtures live in `Packages/ControlFlowCore/Tests/ControlFlowCoreTests/Fixtures/math/`, named by an FNV-1a hash of the style and source, and `Schema/typeset_math.mjs` builds the bundle with `MathJax/build.sh` into a temporary folder rather than needing `ControlFlow/Resources/cf-mathjax.js` (which PR 2 adds).
 - The test vectors carry `math` (the export's `math.json`) and `mathOutlines` (each formula's outline) once per file, rather than outlines per sample, since a formula's outline doesn't change during a transition until the morph.
+
+Where PR 3 differs from the plan below:
+
+- `MathEditState` also carries a `session` (one undo step per edit, numbered with the text sessions) and a `revision` the app watches to copy a draft it didn't type into its field (a pasted formula). `mathDraftContent` is the formula the draft would make; the store typesets it 120 ms after it last changed and hands it to `mathDraftTypeset(_:)`, which takes the content rather than a result, since `MathTypesetting` already holds the layout or the error. A draft whose layout or error is already known applies as it is typed.
+- A new formula starts with an empty source, drawn as the placeholder box until its first draft typesets, and is deleted if the edit ends with the field empty or before anything typeset. Its box's left middle is where the tap was.
+- Pasting plain text with the Math tool starts a new edit with the text as its draft, so a pasted formula that doesn't typeset is never kept. With the source panel open, Cut, Copy and Paste act on its field.
+- Retypeset All Formulas is `forgetFormulaLayouts()` (forget and list them), then `formulaLayoutsChanged()` once the app has typeset them, which marks the document changed so `math.json` is written again.
+- The context bar's Edit is `editSelectedMath()`. The source panel takes the timeline bar's place while it is open.
 
 ## Design
 

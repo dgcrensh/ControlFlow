@@ -208,14 +208,14 @@ extension DrawingEditor {
 
     // MARK: Paste
 
-    /// Starts a new formula centered at world point `center` from LaTeX `source` (plain
-    /// text pasted with the Math tool), editing it as if it were typed, so it is kept
-    /// only if it typesets. False when `source` is blank.
+    /// Starts a new formula from LaTeX `source` (plain text pasted with the Math tool),
+    /// its box's left middle at world point `p`, editing it as if it were typed, so it is
+    /// kept only if it typesets. False when `source` is blank.
     @discardableResult
-    public mutating func pasteMath(_ source: String, at center: Vec2) -> Bool {
+    public mutating func pasteMath(_ source: String, at p: Vec2) -> Bool {
         let trimmed = source.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return false }
-        beginMathEdit(at: center)
+        beginMathEdit(at: p)
         guard var edit = mathEdit else { return false }
         edit.revision += 1
         mathEdit = edit

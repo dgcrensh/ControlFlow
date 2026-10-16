@@ -185,7 +185,17 @@ The plan is [docs/plans/images.md](docs/plans/images.md).
 
 ## Math notes
 
-The plan is [docs/plans/math.md](docs/plans/math.md). Formulas are being built in four steps; the first, below, puts them in the core and the file, with no way to make one in the app yet.
+The plan is [docs/plans/math.md](docs/plans/math.md). Formulas are being built in four steps: the core and the file, MathJax in the app, the Math tool (below), and the morph between keyframes.
+
+**Using it**
+
+- **Math tool** (the ∑ button after Text, or L): tap the canvas to start a formula there, or tap a formula to edit it. Double-tapping a formula with Select edits it too, as does Edit in the context bar.
+- **The source panel** docks above the keyboard while a formula is edited: the LaTeX in a monospaced field (no autocorrect or smart quotes; Scribble and a hardware keyboard work), a row of buttons that insert a fraction, root, superscript, subscript, sum, integral, matrix, a Greek letter or a relation with the caret in the first empty slot (around the selected text, if any), and Done. The formula on the canvas updates a moment after you stop typing. When the LaTeX doesn't typeset, MathJax's message shows under the field and the canvas keeps the last version that did, outlined in red, so a slide never shows a broken formula.
+- Tapping outside the formula, Done, Escape or changing tools ends the edit; a formula left empty is deleted. The whole edit is one undo step.
+- **Context bar** (Math tool, or a formula selected with Select): the size, Display or Inline style (inline sets smaller fractions and limits), and Edit. They set the style of new formulas and of the selected ones. The Appearance panel's fill colors the whole formula; `\color` in the source is ignored.
+- **Edit > Convert to Outlines** (Shift-Cmd-O) turns a formula into ordinary shapes, one per symbol and one per fraction bar or overline, grouped and named after the LaTeX.
+- **Copy** puts a formula's LaTeX on the pasteboard as text too, so it pastes into a LaTeX document or Notes. **Paste** with the Math tool makes a formula from text on the pasteboard.
+- **More > Retypeset All Formulas** typesets every formula again with this app's MathJax. Formulas otherwise keep the look they were saved with, so an update can't shift a rehearsed slide.
 
 - A document with formulas (made by hand or by the tests) opens, plays, presents and exports: each formula draws in the shape's fill, at its place, turn and scale, from the layout saved with the document, so opening it typesets nothing. Select, Arrange, Align, copy and paste, the Layers panel and undo treat a formula like a text, picked anywhere in its box. Direct Select and the scissors leave it alone.
 - **Keyframes:** a formula's place, turn, scale, opacity and fill animate as any shape's; a change to its LaTeX, size or style happens at the start of the transition (the morph comes later).
@@ -193,6 +203,7 @@ The plan is [docs/plans/math.md](docs/plans/math.md). Formulas are being built i
 
 ### How it is built
 
+- **Editing** (`DrawingEditor+Math.swift`): `Tool.math`, `mathStyle` and the editing session, `MathEditState`, whose draft reaches the shape only once it typesets. The app's `MathEditorPanel` holds the source field and insert buttons, and `CanvasStore` typesets the draft after a pause in typing. Tests are in `MathEditTests.swift`.
 - **Core** (`Math.swift`, `MathLayout.swift`, `MathTypesetting.swift`): a formula is a `VectorShape` with a `MathContent` (its LaTeX, size and display style) and an empty path. `MathLayout.parse(svg:content:)` reads MathJax's SVG into glyphs (each outline once, by key, with where it goes, its `\class` tags and its LaTeX) and rules, in points. `MathTypesetting` keeps every layout known, with the engine that made it, and typesets in the background through the `MathTypesetter` in use; `VectorShape.resolvingLayout()` draws a formula from it, or a placeholder box until it is known. `Presentation.mathContents` lists the formulas every keyframe shows, and `MathFile` writes and reads their layouts as `math.json`, which the package and the HTML export save. Tests are in `MathLayoutTests.swift`, `MathTests.swift` and `MathPackageTests.swift`, against MathJax's real output in `Tests/ControlFlowCoreTests/Fixtures/math`.
 - **MathJax:** `MathJax/` pins MathJax 4.1.3 and its New Computer Modern font and bundles them into one script that typesets synchronously with no DOM (`MathJax/build.sh`). `node Schema/typeset_math.mjs` runs that bundle in a bare Node context, as the app will run it in JavaScriptCore, to write the test fixtures listed in `sources.json`.
 - **Format 1.3** adds `math` to shapes and `math.json` to the package (`Schema/README.md`, "Math"). `player.js` reads both and draws formulas from `math.json`, checked against the test vectors.
