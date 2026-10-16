@@ -285,7 +285,18 @@ Copying everything encodes JSON on the main thread: **298 ms**. Pasting it back 
    | Onion skin build, keyframe 10 of 20 | 67 ms | 13.7 ms |
 
    The refresh rows are what a refresh reads when the selection's key changed; a pan, zoom or tool option now skips them. What is left of a nudge and a colour tick is the commit itself (#9's diff at a keyframe).
-3. **#1's encoder diet (S-M):** cut the redundant binds and state, and put paint in buffers. Then check on a device whether culling or an art cache is still needed.
+3. **#1's encoder diet (shipped):** cut the redundant binds and state, and put paint in buffers. Then check on a device whether culling or an art cache is still needed.
+
+   What shipped: the walk over the art's steps moved into ControlFlowCore as `ArtEncoding.encode`, which sets the pipeline, the transform, the vertex buffer, the depth-stencil state, the stencil reference and the paint buffer only when a step needs a different one. `ArtEncodingTests` replays its commands as a GPU keeps them and checks every draw sees what the old per-step walk set, on the stress drawing, under isolation, ghosting and a live drag, and with image covers whose picture is or isn't ready. The art's vertex shader now takes the 64-byte matrix alone instead of the 176-byte `CanvasUniforms`, and only on a new segment, `place` or `moving`. Each layer's buffer holds its cover steps' paints after its vertices, one 256-byte slot each (`ArtSegment.paintFloats`), written at upload, so a cover binds its paint with `setFragmentBufferOffset` instead of copying it; the paint goes with the vertices, so the buffer's lifetime rules cover it. `StencilState`s still resolve through a dictionary, but only when the state changes.
+
+   Commands per frame for the art of the full stress drawing (`STRESS_DRAWING=full`, 8,010 steps), counted by `ArtEncodingTests`:
+
+   | | Before | After |
+   |---|---|---|
+   | Encoder calls | 52,030 | 31,322 |
+   | Bytes copied into the command buffer | 2.24 MB | 64 B |
+
+   The calls left are a pipeline, a depth-stencil state and usually a reference per step, since stencil and cover steps alternate. **Still to do on a device:** take the `Frame` and `GPU frame` signposts while hovering and while drawing a stroke over the stress drawing, and decide from them whether culling (fix 3) or an art cache (fix 4) is still worth it.
 4. **#3 (M):** paint-only changes keep their buffers.
 5. **#9, #10, #12 (M):** incremental diff, prune and shape index for edits that touch many keyframes or shapes.
 6. **#13 and #16 (M).**

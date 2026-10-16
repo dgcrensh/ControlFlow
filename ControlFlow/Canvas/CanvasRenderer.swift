@@ -17,8 +17,10 @@ private struct CanvasUniforms {
     var gridColor: SIMD4<Float>
 }
 
-/// A solid color or gradient for the cover shader. Layout must match `Paint` in
-/// ShaderSource: three float4s, then eight stop colors and eight stop offsets.
+/// A solid color for the cover shader, for the draws outside the art (the stage, the
+/// veils). Layout must match `Paint` in ShaderSource: three float4s, then eight stop
+/// colors and eight stop offsets. The art's paints are written into each layer's buffer
+/// instead (`ArtSegment.paintFloats`).
 private struct PaintUniforms {
     var color: SIMD4<Float>
     var points: SIMD4<Float> = .zero
@@ -26,25 +28,6 @@ private struct PaintUniforms {
     var stopColors: (SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>,
                      SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>) = (.zero, .zero, .zero, .zero, .zero, .zero, .zero, .zero)
     var stopOffsets: (SIMD4<Float>, SIMD4<Float>) = (.zero, .zero)
-
-    init(_ paint: ArtPaint) {
-        color = Self.vector(paint.color)
-        info = SIMD4(0, 0, Float(min(max(paint.opacity, 0), 1)), 0)
-        guard let gradient = paint.gradient, !gradient.stops.isEmpty else { return }
-        points = SIMD4(Float(gradient.start.x), Float(gradient.start.y), Float(gradient.end.x), Float(gradient.end.y))
-        let stops = Array(gradient.stops.prefix(ShapeGradient.maxStops))
-        info.x = gradient.kind == .linear ? 1 : 2
-        info.y = Float(stops.count)
-        var colors = [SIMD4<Float>](repeating: .zero, count: 8)
-        var offsets = [Float](repeating: 1, count: 8)
-        for (i, stop) in stops.enumerated() {
-            colors[i] = Self.vector(stop.color)
-            offsets[i] = Float(stop.offset)
-        }
-        stopColors = (colors[0], colors[1], colors[2], colors[3], colors[4], colors[5], colors[6], colors[7])
-        stopOffsets = (SIMD4(offsets[0], offsets[1], offsets[2], offsets[3]),
-                       SIMD4(offsets[4], offsets[5], offsets[6], offsets[7]))
-    }
 
     /// A solid color, given in straight alpha.
     init(solid: SIMD4<Float>) {
@@ -111,7 +94,7 @@ final class CanvasRenderer {
     private let gridPipeline: any MTLRenderPipelineState
     private let plainState: any MTLDepthStencilState
     /// Depth-stencil states for the art's steps, made on first use.
-    private var stencilStates: [StencilState: any MTLDepthStencilState] = [:]
+    private let stencilStates: StencilStates
     private let sampler: any MTLSamplerState
     private let pixelFormat = MTLPixelFormat.bgra8Unorm
     private let stencilFormat = MTLPixelFormat.stencil8
@@ -140,10 +123,10 @@ final class CanvasRenderer {
     /// The live drag drawn on the last frame, whose triangles move with the shapes when it ends.
     private var lastLive: LiveTransform?
     private var artSteps: [ArtStep] = []
-    /// One per layer. Each layer's vertices live in their own buffer, keyed by segment id,
-    /// so an edit uploads only the layers it changed. A buffer is never written after it
-    /// is made, so a frame still in flight keeps reading the one it was given (the
-    /// command buffer retains it).
+    /// One per layer. Each layer's vertices, then its cover steps' paints, live in their own
+    /// buffer, keyed by segment id, so an edit uploads only the layers it changed. A buffer
+    /// is never written after it is made, so a frame still in flight keeps reading the one
+    /// it was given (the command buffer retains it).
     private var artSegments: [ArtSegment] = []
     private var artBuffers: [Int: any MTLBuffer] = [:]
     /// Presenting, where the art is each played frame's scene: its layers' buffers from
@@ -246,6 +229,7 @@ final class CanvasRenderer {
         imageCoverPipeline = gpu.imageCoverPipeline
         gridPipeline = gpu.gridPipeline
         plainState = gpu.plainState
+        stencilStates = StencilStates(device: gpu.device, fallback: gpu.plainState)
         sampler = gpu.sampler
         isPresenting = presenting
     }
@@ -361,7 +345,7 @@ final class CanvasRenderer {
         if !editor.outlineView {
             if showsOnion {
                 Signposts.canvas.withIntervalSignpost("Onion draw") {
-                    drawArt(onionSteps, segments: onionSegments, buffers: onionBuffers, encoder: encoder, uniforms: &uniforms,
+                    drawArt(onionSteps, segments: onionSegments, buffers: onionBuffers, encoder: encoder, uniforms: uniforms,
                             viewRect: Rect(points: screen))
                 }
             }
@@ -369,10 +353,10 @@ final class CanvasRenderer {
                 if editor.preview != nil, previewBuilder != nil {
                     for handle in previewHandles.values { buffers.use(handle) }
                     drawArt(previewSteps, segments: previewSegments, buffers: previewBuffers, encoder: encoder,
-                            uniforms: &uniforms, viewRect: Rect(points: screen))
+                            uniforms: uniforms, viewRect: Rect(points: screen))
                 } else {
                     for handle in artHandles.values { buffers.use(handle) }
-                    drawArt(artSteps, segments: artSegments, buffers: artBuffers, encoder: encoder, uniforms: &uniforms,
+                    drawArt(artSteps, segments: artSegments, buffers: artBuffers, encoder: encoder, uniforms: uniforms,
                             viewRect: Rect(points: screen))
                 }
             }
@@ -566,8 +550,9 @@ final class CanvasRenderer {
             nextHandles[id] = handles[id]
         }
         for segment in batch.segmentsToUpload(resident: Set(nextBuffers.keys)) {
-            floats += segment.floats.count
-            guard let handle = buffers.upload([segment.floats], pin: true) else { continue }
+            let paint = segment.paintFloats(in: batch.steps)
+            floats += segment.floats.count + paint.count
+            guard let handle = buffers.upload([segment.floats, paint], pin: true) else { continue }
             nextBuffers[segment.id] = handle.buffer
             nextHandles[segment.id] = handle
         }
@@ -601,7 +586,7 @@ final class CanvasRenderer {
     }
 
     /// The buffers for `batch`'s layers: those in `buffers` it still uses, and a new one
-    /// for each layer that changed.
+    /// for each layer that changed, holding its vertices and then its paints.
     private func upload(_ batch: ArtBatch, keeping buffers: [Int: any MTLBuffer]) -> [Int: any MTLBuffer] {
         let interval = Signposts.canvas.beginInterval("Art upload")
         var floats = 0
@@ -609,12 +594,26 @@ final class CanvasRenderer {
         var kept: [Int: any MTLBuffer] = [:]
         for id in batch.residentIDs { kept[id] = buffers[id] }
         for segment in batch.segmentsToUpload(resident: Set(kept.keys)) {
-            floats += segment.floats.count
-            kept[segment.id] = segment.floats.withUnsafeBytes { bytes in
-                bytes.baseAddress.flatMap { device.makeBuffer(bytes: $0, length: bytes.count, options: .storageModeShared) }
-            }
+            let paint = segment.paintFloats(in: batch.steps)
+            floats += segment.floats.count + paint.count
+            kept[segment.id] = makeBuffer([segment.floats, paint])
         }
         return kept
+    }
+
+    /// A new shared buffer holding `chunks`, one after another.
+    private func makeBuffer(_ chunks: [[Float]]) -> (any MTLBuffer)? {
+        let length = chunks.reduce(0) { $0 + $1.count } * MemoryLayout<Float>.stride
+        guard length > 0, let buffer = device.makeBuffer(length: length, options: .storageModeShared) else { return nil }
+        var offset = 0
+        for chunk in chunks {
+            chunk.withUnsafeBytes { bytes in
+                guard let base = bytes.baseAddress else { return }
+                buffer.contents().advanced(by: offset).copyMemory(from: base, byteCount: bytes.count)
+                offset += bytes.count
+            }
+        }
+        return buffer
     }
 
     /// Builds the onion skin when it or the art's tolerance changed: every shape faded to
@@ -717,8 +716,14 @@ final class CanvasRenderer {
         onNeedsRender?()
     }
 
+    /// Draws the art's steps with `ArtEncoding`, which sets only what changes from one
+    /// step to the next. Each layer's vertices are in its own space, and each shape's in
+    /// the space its `place` step names: the vertex shader takes them through the place,
+    /// the layer's transform and, for shapes a drag moves, the drag's transform, before
+    /// the camera. Gradients and pictures are in the vertices' own space, so they move
+    /// with them. Each cover's paint is read from its slot in the layer's buffer.
     private func drawArt(_ steps: [ArtStep], segments: [ArtSegment], buffers: [Int: any MTLBuffer],
-                         encoder: any MTLRenderCommandEncoder, uniforms: inout CanvasUniforms, viewRect: Rect) {
+                         encoder: any MTLRenderCommandEncoder, uniforms: CanvasUniforms, viewRect: Rect) {
         guard !steps.isEmpty else { return }
         var view: [Float] = []
         let corners = viewRect.corners
@@ -726,128 +731,16 @@ final class CanvasRenderer {
             view.append(Float(corners[i].x))
             view.append(Float(corners[i].y))
         }
-        // Each layer's vertices are in its own space, and each shape's in the space its
-        // `place` step names: the vertex shader takes them through the place, the layer's
-        // transform and, for shapes a drag moves, the drag's transform, before the camera.
-        // Gradients and pictures are in the vertices' own space, so they move with them.
-        var moving = false
-        var place = Affine2D.identity
-        var placed = uniforms
-        var segmentTransform = Affine2D.identity
-        enum Bound { case none, stencil, cover, imageCover }
-        var bound = Bound.none
-        var layerBuffer: (any MTLBuffer)?
-        func bind(_ pipeline: any MTLRenderPipelineState, as kind: Bound) {
-            guard bound != kind else { return }
-            encoder.setRenderPipelineState(pipeline)
-            var toWorld = segmentTransform * place
-            if moving { toWorld = liveTransform * toWorld }
-            placed.worldToClip = toWorld == .identity ? uniforms.worldToClip : uniforms.worldToClip * toWorld.matrix4x4
-            encoder.setVertexBytes(&placed, length: MemoryLayout<CanvasUniforms>.stride, index: 1)
-            if let layerBuffer { encoder.setVertexBuffer(layerBuffer, offset: 0, index: 0) }
-            bound = kind
-        }
-
-        for segment in segments {
-            // Each layer's ranges count from the start of its own buffer.
-            layerBuffer = buffers[segment.id]
-            segmentTransform = segment.transform
-            place = .identity
-            bound = .none
-            for step in steps[segment.steps] {
-                switch step {
-                case .stencil(let range, let state, let reference):
-                    bind(stencilPipeline, as: .stencil)
-                    encoder.setDepthStencilState(depthStencilState(state))
-                    encoder.setStencilReferenceValue(UInt32(reference))
-                    let local = segment.local(range)
-                    encoder.drawPrimitives(type: .triangle, vertexStart: local.lowerBound, vertexCount: local.count)
-
-                case .cover(let range, let paint, let state, let reference):
-                    if let image = paint.image, let texture = gpu.imageTexture(image.src, for: self) {
-                        bind(imageCoverPipeline, as: .imageCover)
-                        var imageUniforms = ImagePaintUniforms(image, opacity: paint.opacity)
-                        encoder.setFragmentTexture(texture, index: 0)
-                        encoder.setFragmentSamplerState(sampler, index: 0)
-                        encoder.setFragmentBytes(&imageUniforms, length: MemoryLayout<ImagePaintUniforms>.stride, index: 0)
-                    } else {
-                        // A picture not loaded yet paints its placeholder, which clears the
-                        // stencil as any cover does, until `imagesLoaded` asks for a frame.
-                        bind(coverPipeline, as: .cover)
-                        var paintUniforms = PaintUniforms(paint)
-                        encoder.setFragmentBytes(&paintUniforms, length: MemoryLayout<PaintUniforms>.stride, index: 0)
-                    }
-                    encoder.setDepthStencilState(depthStencilState(state))
-                    encoder.setStencilReferenceValue(UInt32(reference))
-                    let local = segment.local(range)
-                    encoder.drawPrimitives(type: .triangle, vertexStart: local.lowerBound, vertexCount: local.count)
-
-                case .stencilView(let state, let reference):
-                    encoder.setRenderPipelineState(stencilPipeline)
-                    encoder.setVertexBytes(view, length: view.count * MemoryLayout<Float>.stride, index: 0)
-                    encoder.setVertexBytes(&uniforms, length: MemoryLayout<CanvasUniforms>.stride, index: 1)
-                    encoder.setDepthStencilState(depthStencilState(state))
-                    encoder.setStencilReferenceValue(UInt32(reference))
-                    encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6)
-                    bound = .none
-
-                case .veil:
-                    let bg = uniforms.background
-                    var paint = PaintUniforms(solid: SIMD4(bg.x, bg.y, bg.z, 0.7))
-                    encoder.setRenderPipelineState(coverPipeline)
-                    encoder.setDepthStencilState(plainState)
-                    encoder.setVertexBytes(view, length: view.count * MemoryLayout<Float>.stride, index: 0)
-                    encoder.setVertexBytes(&uniforms, length: MemoryLayout<CanvasUniforms>.stride, index: 1)
-                    encoder.setFragmentBytes(&paint, length: MemoryLayout<PaintUniforms>.stride, index: 0)
-                    encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6)
-                    bound = .none
-
-                case .moving(let on):
-                    moving = on
-                    bound = .none
-
-                case .place(let matrix):
-                    place = matrix
-                    bound = .none
-                }
-            }
-        }
-    }
-
-    /// The Metal state for a stencil configuration from the art pass.
-    private func depthStencilState(_ state: StencilState) -> any MTLDepthStencilState {
-        if let cached = stencilStates[state] { return cached }
-        func face(_ pass: StencilOperation) -> MTLStencilDescriptor {
-            let d = MTLStencilDescriptor()
-            d.stencilCompareFunction = switch state.compare {
-            case .always: .always
-            case .equal: .equal
-            case .notEqual: .notEqual
-            case .less: .less
-            }
-            d.stencilFailureOperation = CanvasRenderer.operation(state.fail)
-            d.depthFailureOperation = .keep
-            d.depthStencilPassOperation = CanvasRenderer.operation(pass)
-            d.readMask = UInt32(state.readMask)
-            d.writeMask = UInt32(state.writeMask)
-            return d
-        }
-        let descriptor = MTLDepthStencilDescriptor()
-        descriptor.frontFaceStencil = face(state.pass)
-        descriptor.backFaceStencil = face(state.backPass)
-        let made = device.makeDepthStencilState(descriptor: descriptor) ?? plainState
-        stencilStates[state] = made
-        return made
-    }
-
-    private static func operation(_ op: StencilOperation) -> MTLStencilOperation {
-        switch op {
-        case .keep: .keep
-        case .zero: .zero
-        case .replace: .replace
-        case .incrementWrap: .incrementWrap
-        case .decrementWrap: .decrementWrap
-        }
+        let bg = uniforms.background
+        var art = MetalArtEncoder(encoder: encoder, buffers: buffers, worldToClip: uniforms.worldToClip, view: view,
+                                  veil: PaintUniforms(solid: SIMD4(bg.x, bg.y, bg.z, 0.7)),
+                                  stencilPipeline: stencilPipeline, coverPipeline: coverPipeline,
+                                  imageCoverPipeline: imageCoverPipeline, plainState: plainState,
+                                  stencilStates: stencilStates, sampler: sampler, pictures: gpu.readyImages)
+        ArtEncoding.encode(steps, segments: segments, liveTransform: liveTransform, into: &art)
+        // A picture not loaded yet painted its placeholder, which clears the stencil as
+        // any cover does; this starts loading it, and `imagesLoaded` asks for a frame.
+        for src in art.missingPictures { _ = gpu.imageTexture(src, for: self) }
     }
 
     /// The veil's strength over art outside the viewport.
@@ -859,10 +752,11 @@ final class CanvasRenderer {
         guard !triangles.isEmpty else { return }
         let floats = triangles.flatMap { [Float($0.x), Float($0.y)] }
         var paint = PaintUniforms(solid: color)
+        var worldToClip = uniforms.worldToClip
         encoder.setRenderPipelineState(coverPipeline)
         encoder.setDepthStencilState(plainState)
         encoder.setVertexBytes(floats, length: floats.count * MemoryLayout<Float>.stride, index: 0)
-        encoder.setVertexBytes(&uniforms, length: MemoryLayout<CanvasUniforms>.stride, index: 1)
+        encoder.setVertexBytes(&worldToClip, length: MemoryLayout<simd_float4x4>.stride, index: 1)
         encoder.setFragmentBytes(&paint, length: MemoryLayout<PaintUniforms>.stride, index: 0)
         encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: triangles.count)
     }
@@ -970,6 +864,161 @@ final class CanvasRenderer {
             background: background,
             gridColor: gridColor
         )
+    }
+}
+
+/// Sends `ArtEncoding`'s commands to a Metal encoder. The art's vertex shader takes
+/// the 64-byte matrix alone, so a new place copies only that.
+private struct MetalArtEncoder: ArtEncoder {
+    let encoder: any MTLRenderCommandEncoder
+    let buffers: [Int: any MTLBuffer]
+    let worldToClip: simd_float4x4
+    /// The view's rectangle, two triangles in the world.
+    let view: [Float]
+    let veil: PaintUniforms
+    let stencilPipeline: any MTLRenderPipelineState
+    let coverPipeline: any MTLRenderPipelineState
+    let imageCoverPipeline: any MTLRenderPipelineState
+    let plainState: any MTLDepthStencilState
+    let stencilStates: StencilStates
+    let sampler: any MTLSamplerState
+    /// Image shapes' pictures that are ready, by `src`.
+    let pictures: [String: any MTLTexture]
+    /// Pictures the art wanted and didn't have.
+    private(set) var missingPictures: Set<String> = []
+    /// The picture `hasPicture` found, for `setImagePaint`.
+    private var picture: (any MTLTexture)?
+
+    init(encoder: any MTLRenderCommandEncoder, buffers: [Int: any MTLBuffer], worldToClip: simd_float4x4,
+         view: [Float], veil: PaintUniforms, stencilPipeline: any MTLRenderPipelineState,
+         coverPipeline: any MTLRenderPipelineState, imageCoverPipeline: any MTLRenderPipelineState,
+         plainState: any MTLDepthStencilState, stencilStates: StencilStates, sampler: any MTLSamplerState,
+         pictures: [String: any MTLTexture]) {
+        self.encoder = encoder
+        self.buffers = buffers
+        self.worldToClip = worldToClip
+        self.view = view
+        self.veil = veil
+        self.stencilPipeline = stencilPipeline
+        self.coverPipeline = coverPipeline
+        self.imageCoverPipeline = imageCoverPipeline
+        self.plainState = plainState
+        self.stencilStates = stencilStates
+        self.sampler = sampler
+        self.pictures = pictures
+    }
+
+    mutating func hasPicture(_ image: ArtImage) -> Bool {
+        picture = pictures[image.src]
+        if picture == nil { missingPictures.insert(image.src) }
+        return picture != nil
+    }
+
+    func setPipeline(_ pipeline: ArtPipeline) {
+        switch pipeline {
+        case .stencil: encoder.setRenderPipelineState(stencilPipeline)
+        case .cover: encoder.setRenderPipelineState(coverPipeline)
+        case .imageCover: encoder.setRenderPipelineState(imageCoverPipeline)
+        }
+    }
+
+    func setTransform(_ toWorld: Affine2D) {
+        var matrix = toWorld == .identity ? worldToClip : worldToClip * toWorld.matrix4x4
+        encoder.setVertexBytes(&matrix, length: MemoryLayout<simd_float4x4>.stride, index: 1)
+    }
+
+    func setVertices(_ segment: ArtSegment) {
+        // A layer with no vertices has no buffer, and nothing to draw.
+        guard let buffer = buffers[segment.id] else { return }
+        encoder.setVertexBuffer(buffer, offset: 0, index: 0)
+    }
+
+    func setViewVertices() {
+        encoder.setVertexBytes(view, length: view.count * MemoryLayout<Float>.stride, index: 0)
+    }
+
+    func setStencil(_ state: StencilState?) {
+        encoder.setDepthStencilState(state.map { stencilStates.state($0) } ?? plainState)
+    }
+
+    func setStencilReference(_ reference: UInt8) {
+        encoder.setStencilReferenceValue(UInt32(reference))
+    }
+
+    func setPaint(_ segment: ArtSegment, slot: Int, rebind: Bool) {
+        let offset = segment.paintByteOffset(slot: slot)
+        if rebind {
+            guard let buffer = buffers[segment.id] else { return }
+            encoder.setFragmentBuffer(buffer, offset: offset, index: 0)
+        } else {
+            encoder.setFragmentBufferOffset(offset, index: 0)
+        }
+    }
+
+    func setImagePaint(_ image: ArtImage, opacity: Double) {
+        var uniforms = ImagePaintUniforms(image, opacity: opacity)
+        encoder.setFragmentTexture(picture, index: 0)
+        encoder.setFragmentSamplerState(sampler, index: 0)
+        encoder.setFragmentBytes(&uniforms, length: MemoryLayout<ImagePaintUniforms>.stride, index: 0)
+    }
+
+    func setVeilPaint() {
+        var paint = veil
+        encoder.setFragmentBytes(&paint, length: MemoryLayout<PaintUniforms>.stride, index: 0)
+    }
+
+    func draw(_ vertices: Range<Int>) {
+        guard !vertices.isEmpty else { return }
+        encoder.drawPrimitives(type: .triangle, vertexStart: vertices.lowerBound, vertexCount: vertices.count)
+    }
+}
+
+/// The Metal depth-stencil state for each of the art's stencil configurations, made on
+/// first use.
+private final class StencilStates {
+    private let device: any MTLDevice
+    /// Used if Metal can't make a state.
+    private let fallback: any MTLDepthStencilState
+    private var states: [StencilState: any MTLDepthStencilState] = [:]
+
+    init(device: any MTLDevice, fallback: any MTLDepthStencilState) {
+        self.device = device
+        self.fallback = fallback
+    }
+
+    func state(_ state: StencilState) -> any MTLDepthStencilState {
+        if let cached = states[state] { return cached }
+        func face(_ pass: StencilOperation) -> MTLStencilDescriptor {
+            let d = MTLStencilDescriptor()
+            d.stencilCompareFunction = switch state.compare {
+            case .always: .always
+            case .equal: .equal
+            case .notEqual: .notEqual
+            case .less: .less
+            }
+            d.stencilFailureOperation = Self.operation(state.fail)
+            d.depthFailureOperation = .keep
+            d.depthStencilPassOperation = Self.operation(pass)
+            d.readMask = UInt32(state.readMask)
+            d.writeMask = UInt32(state.writeMask)
+            return d
+        }
+        let descriptor = MTLDepthStencilDescriptor()
+        descriptor.frontFaceStencil = face(state.pass)
+        descriptor.backFaceStencil = face(state.backPass)
+        let made = device.makeDepthStencilState(descriptor: descriptor) ?? fallback
+        states[state] = made
+        return made
+    }
+
+    private static func operation(_ op: StencilOperation) -> MTLStencilOperation {
+        switch op {
+        case .keep: .keep
+        case .zero: .zero
+        case .replace: .replace
+        case .incrementWrap: .incrementWrap
+        case .decrementWrap: .decrementWrap
+        }
     }
 }
 
