@@ -75,22 +75,28 @@ extension JSONValue {
 
 extension JSONValue {
     /// Pretty-printed JSON with two-space indents. Arrays of plain values and small
-    /// flat objects (such as a path point) stay on one line.
-    public func formatted() -> String {
+    /// flat objects (such as a path point) stay on one line. With `longNumberLists`, so
+    /// does an array of numbers however long it is (a glyph's outline in `math.json`).
+    public func formatted(longNumberLists: Bool = false) -> String {
         var out = ""
-        write(to: &out, indent: 0)
+        write(to: &out, indent: 0, longNumberLists: longNumberLists)
         out.append("\n")
         return out
     }
 
     private static let inlineLimit = 120
 
-    private func write(to out: inout String, indent: Int) {
+    private func write(to out: inout String, indent: Int, longNumberLists: Bool) {
         switch self {
         case .null, .bool, .number, .string:
             out.append(scalarText)
         case .array(let items):
             if items.isEmpty { out.append("[]"); return }
+            if longNumberLists, items.allSatisfy({ if case .number = $0 { true } else { false } }),
+               let inline = inlineText(budget: .max) {
+                out.append(inline)
+                return
+            }
             if let inline = inlineText(budget: Self.inlineLimit - indent) {
                 out.append(inline)
                 return
@@ -98,7 +104,7 @@ extension JSONValue {
             out.append("[\n")
             for (i, item) in items.enumerated() {
                 out.append(String(repeating: " ", count: indent + 2))
-                item.write(to: &out, indent: indent + 2)
+                item.write(to: &out, indent: indent + 2, longNumberLists: longNumberLists)
                 out.append(i == items.count - 1 ? "\n" : ",\n")
             }
             out.append(String(repeating: " ", count: indent) + "]")
@@ -112,7 +118,7 @@ extension JSONValue {
             for (i, member) in members.enumerated() {
                 out.append(String(repeating: " ", count: indent + 2))
                 out.append(Self.quoted(member.key) + ": ")
-                member.value.write(to: &out, indent: indent + 2)
+                member.value.write(to: &out, indent: indent + 2, longNumberLists: longNumberLists)
                 out.append(i == members.count - 1 ? "\n" : ",\n")
             }
             out.append(String(repeating: " ", count: indent) + "}")

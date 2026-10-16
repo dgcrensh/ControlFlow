@@ -51,6 +51,10 @@ final class TestVectorTests: XCTestCase {
             return XCTFail("\(name) has no document")
         }
         var timeline = Timeline(try PresentationFormat.decode(documentJSON).presentation)
+        if let math = vectors["math"] {
+            guard let expected = vectors["mathOutlines"] else { return XCTFail("\(name) has formulas but no outlines") }
+            if let difference = Self.difference(Self.mathOutlines(math), expected, path: "mathOutlines") { XCTFail("\(name): \(difference)") }
+        }
         guard case .array(let samples)? = vectors["samples"], !samples.isEmpty else { return XCTFail("\(name) has no samples") }
         for sample in samples {
             guard case .number(let sequence)? = sample["sequence"], case .number(let time)? = sample["time"],
@@ -72,9 +76,13 @@ final class TestVectorTests: XCTestCase {
         let documentValue: JSONValue
         switch document {
         case .file(let path):
-            let json = try JSONValue(parsing: Data(contentsOf: url.deletingLastPathComponent().appendingPathComponent(path)))
+            let file = url.deletingLastPathComponent().appendingPathComponent(path)
+            let json = try JSONValue(parsing: Data(contentsOf: file))
             presentation = try PresentationFormat.decode(json).presentation
             documentValue = .string(path)
+            // The package's formula layouts, as opening it would read them.
+            let math = file.deletingLastPathComponent().appendingPathComponent(MathFile.fileName)
+            if let data = try? Data(contentsOf: math) { MathTypesetting.insert(MathFile.read(try JSONValue(parsing: data))) }
         case .embedded(let p):
             // Written and read back, so the samples come from exactly what the file holds.
             let json = PresentationFormat.encode(p)
@@ -108,6 +116,12 @@ final class TestVectorTests: XCTestCase {
         // The glyphs the HTML export would write, from the stub shaper.
         if let texts = try HTMLExport.textLayouts(PresentationFormat.encode(presentation)) {
             file.append((key: "texts", value: texts))
+        }
+        // The formula layouts the HTML export would write (its math.json), and each
+        // formula's outline drawn from them.
+        if let math = MathFile.json(for: presentation.mathContents) {
+            file.append((key: "math", value: math))
+            file.append((key: "mathOutlines", value: Self.mathOutlines(math)))
         }
         file.append((key: "samples", value: .array(samples)))
         try Data(JSONValue.object(file).rounded().formatted().utf8).write(to: url)
@@ -150,6 +164,23 @@ final class TestVectorTests: XCTestCase {
                 out.append(.object([(key: "shape", value: .number(Double(shape.id))),
                                     (key: "points", value: .array(points.map(JSONValue.number)))]))
             }
+        }
+        return JSONValue.array(out).rounded()
+    }
+
+    /// Each formula's outline in `math` (a `math.json`), in its own space, as
+    /// `[{ "math", "points" }]` with each point's `x, y, inX, inY, outX, outY` in one flat list.
+    static func mathOutlines(_ math: JSONValue) -> JSONValue {
+        let layouts = MathFile.read(math)
+        guard case .array(let formulas)? = math["formulas"] else { return .array([]) }
+        var out: [JSONValue] = []
+        for formula in formulas {
+            guard let key = formula["math"], let content = try? SceneJSON.readMath(Node(root: key)),
+                  let layout = layouts[content]?.layout else { continue }
+            let points = layout.outline.points.flatMap { p in
+                [p.position.x, p.position.y, p.inHandle.x, p.inHandle.y, p.outHandle.x, p.outHandle.y]
+            }
+            out.append(.object([(key: "math", value: key), (key: "points", value: .array(points.map(JSONValue.number)))]))
         }
         return JSONValue.array(out).rounded()
     }

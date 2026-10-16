@@ -875,7 +875,7 @@ public struct DrawingEditor: Sendable {
     static func marqueeTouches(_ shape: VectorShape, _ rect: Rect) -> Bool {
         guard shape.hitBounds.intersects(rect) else { return false }
         // A text's box counts, so an empty one can be caught too.
-        if let frame = shape.textFrame {
+        if let frame = shape.layoutFrame {
             if frame.contains(where: { rect.contains($0) }) { return true }
             for i in frame.indices where rect.intersectsSegment(frame[i], frame[(i + 1) % frame.count]) { return true }
         }

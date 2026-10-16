@@ -1,7 +1,8 @@
-// ControlFlow player: plays a ControlFlow presentation (format 1.2, see Schema/README.md)
+// ControlFlow player: plays a ControlFlow presentation (format 1.3, see Schema/README.md)
 // in a browser, as the app's presentation mode does. It reads presentation.json next to
-// the page (and text.json, the glyph outlines of its text, when there is one, and the
-// pictures of image shapes under images/), resolves each keyframe's scene, plays transitions with the same rules as
+// the page (and text.json, the glyph outlines of its text, when there is one, math.json,
+// the layouts of its formulas, when there is one, and the pictures of image shapes under
+// images/), resolves each keyframe's scene, plays transitions with the same rules as
 // ControlFlowCore (Interpolation.swift, VertexMerge.swift) and draws each frame as SVG
 // (as SVGWriter.swift does).
 //
@@ -142,6 +143,7 @@
     shape.clipped = bool(o, 'clipped', false);
     shape.transform = readTransform(o.transform);
     shape.text = present(o, 'text') ? readText(o.text) : null;
+    shape.math = present(o, 'math') ? readMath(o.math) : null;
     shape.image = present(o, 'image') ? readImage(o.image) : null;
   }
 
@@ -153,6 +155,18 @@
       fail('an image src is not a file in images/');
     }
     return { src: o.src };
+  }
+
+  /// SceneJSON.readMath.
+  function readMath(o) {
+    if (!isObject(o)) fail('math is not an object');
+    if (typeof o.source !== 'string') fail('a formula has no source');
+    const math = { source: o.source };
+    const size = number(o, 'size', 72);
+    if (!(size > 0)) fail('a formula size is not positive');
+    math.size = Math.min(Math.max(size, 1), 2000);
+    math.display = bool(o, 'display', true);
+    return math;
   }
 
   /// SceneJSON.readText.
@@ -303,6 +317,7 @@
     if (shape.group !== null) out.group = shape.group;
     out.closed = shape.closed;
     if (shape.text) out.text = textJSON(shape.text);
+    if (shape.math) out.math = mathJSON(shape.math);
     if (shape.image) out.image = { src: shape.image.src };
     if (shape.fill) {
       out.fill = hexColor(shape.fill);
@@ -328,6 +343,14 @@
     if (text.width !== null) out.width = text.width;
     if (text.lineHeight !== 1.2) out.lineHeight = text.lineHeight;
     if (text.tracking !== 0) out.tracking = text.tracking;
+    return out;
+  }
+
+  /// SceneJSON.math: the source, and the size and style where they aren't the default.
+  function mathJSON(math) {
+    const out = { source: math.source };
+    if (math.size !== 72) out.size = math.size;
+    if (!math.display) out.display = false;
     return out;
   }
 
@@ -488,7 +511,7 @@
 
   const settable = {
     viewport: ['background'], globalColor: ['color'], layer: ['transform'], group: ['clipped', 'transform'],
-    shape: ['group', 'closed', 'fill', 'fillGlobal', 'gradient', 'stroke', 'opacity', 'clipped', 'transform', 'text', 'image'],
+    shape: ['group', 'closed', 'fill', 'fillGlobal', 'gradient', 'stroke', 'opacity', 'clipped', 'transform', 'text', 'math', 'image'],
     vertex: ['p', 'in', 'out', 'w', 'smooth', 'symmetric', 'stroked'],
   };
 
@@ -1402,7 +1425,7 @@
    * in world space. Only what drawing needs is kept.
    */
   function r_worldShape(layer, shape, groupsById) {
-    const text = shape.text ? r_textOutline(shape.text) : null;
+    const text = shape.text ? r_textOutline(shape.text) : shape.math ? r_mathOutline(shape.math) : null;
     const layerMatrix = r_matrix(layer.transform);
     let parent = layerMatrix;
     if (shape.group !== null && shape.group !== undefined) {
@@ -1452,7 +1475,7 @@
           stops: stops,
         };
     }
-    // Text draws its glyphs filled, with no outline (VectorShape.resolvingText).
+    // Text and formulas draw their glyphs filled, with no outline (VectorShape.resolvingLayout).
     let stroke = text ? null : shape.stroke || null;
     if (stroke && !ident) {
       const k = Math.sqrt(Math.abs(m.a * m.d - m.b * m.c));
@@ -1561,6 +1584,112 @@
     if (r_textCache.size >= 512) r_textCache = new Map();
     r_textCache.set(cacheKey, out);
     return out;
+  }
+
+  // MARK: Formulas (Math.swift, MathFile in PresentationPackage.swift)
+
+  /// The layouts in math.json, by `r_mathKey` of their formula.
+  let r_math = null;
+  let r_mathCache = new Map();
+
+  function r_mathKey(math) { return JSON.stringify(mathJSON(math)); }
+
+  /// Reads math.json (already parsed) into the layouts `renderScene` takes as
+  /// `options.math`: each formula's glyphs `{ contours, place }` and rules, in points.
+  /// Entries that don't read are left out (MathFile.read).
+  function readMathLayouts(json) {
+    const out = new Map();
+    if (!isObject(json) || !Array.isArray(json.formulas)) return out;
+    const table = isObject(json.glyphs) ? json.glyphs : {};
+    const finite = (list, n) => Array.isArray(list) && list.length === n && list.every((x) => typeof x === 'number' && isFinite(x));
+    for (const entry of json.formulas) {
+      try {
+        if (!isObject(entry)) continue;
+        const math = readMath(entry.math);
+        const k = math.size / 1000;
+        if (!finite(entry.box, 2) || typeof entry.baseline !== 'number' || !Array.isArray(entry.glyphs) || !Array.isArray(entry.rules)) continue;
+        const glyphs = [];
+        for (const g of entry.glyphs) {
+          const contours = isObject(g) ? table[g.key] : null;
+          if (!Array.isArray(contours) || !finite(g.place, 6)) throw new Error('a glyph does not read');
+          const m = g.place.map((x) => x * k);
+          glyphs.push({ contours, place: { a: m[0], b: m[1], c: m[2], d: m[3], tx: m[4], ty: m[5] } });
+        }
+        const rules = [];
+        for (const r of entry.rules) {
+          if (!finite(r, 4)) throw new Error('a rule does not read');
+          rules.push(r.map((x) => x * k));
+        }
+        out.set(r_mathKey(math), { glyphs, rules });
+      } catch (e) {
+        // A cache: a formula that doesn't read draws nothing.
+      }
+    }
+    return out;
+  }
+
+  /// A formula's glyphs and rules as one path's points `{ p, in, out }`, in the shape's
+  /// space (MathLayout.outline, bridged as BezierPath.bridging does, rules wound as the
+  /// glyphs are). Empty when math.json has no layout for it.
+  function r_mathOutline(math) {
+    if (!r_math) return [];
+    const key = r_mathKey(math);
+    if (r_mathCache.has(key)) return r_mathCache.get(key);
+    const layout = r_math.get(key);
+    const rings = [];
+    let area = 0;
+    const signedArea = (ring) => {
+      let sum = 0;
+      for (let i = 0; i < ring.length; i++) {
+        const a = ring[i].p, b = ring[(i + 1) % ring.length].p;
+        sum += a[0] * b[1] - a[1] * b[0];
+      }
+      return ring.length >= 3 ? sum / 2 : 0;
+    };
+    if (layout) {
+      for (const glyph of layout.glyphs) {
+        const m = glyph.place;
+        for (const c of glyph.contours) {
+          if (!Array.isArray(c) || c.length < 12) continue;
+          const ring = [];
+          for (let i = 0; i + 5 < c.length; i += 6) {
+            const x = c[i], y = c[i + 1];
+            ring.push({
+              p: [m.a * x + m.c * y + m.tx, m.b * x + m.d * y + m.ty],
+              in: [m.a * c[i + 2] + m.c * c[i + 3], m.b * c[i + 2] + m.d * c[i + 3]],
+              out: [m.a * c[i + 4] + m.c * c[i + 5], m.b * c[i + 4] + m.d * c[i + 5]],
+            });
+          }
+          area += signedArea(ring);
+          rings.push(ring);
+        }
+      }
+      for (const [x, y, w, h] of layout.rules) {
+        if (!(w > 0 && h > 0)) continue;
+        let ring = [[x, y], [x + w, y], [x + w, y + h], [x, y + h]].map((p) => ({ p, in: [0, 0], out: [0, 0] }));
+        if (area !== 0 && (signedArea(ring) > 0) !== (area > 0)) ring = ring.reverse();
+        rings.push(ring);
+      }
+    }
+    const out = [];
+    let hub = null;
+    for (const ring of rings) {
+      // Enter at the first point and come back to it along straight bridges.
+      const back = { p: ring[0].p, in: ring[0].in, out: [0, 0] };
+      ring[0] = { p: ring[0].p, in: [0, 0], out: ring[0].out };
+      for (const point of ring) out.push(point);
+      out.push(back);
+      if (hub) out.push(hub); else hub = { p: ring[0].p, in: [0, 0], out: [0, 0] };
+    }
+    r_mathCache.set(key, out);
+    return out;
+  }
+
+  function r_useMath(math) {
+    if ((math || null) !== r_math) {
+      r_math = math || null;
+      r_mathCache = new Map();
+    }
   }
 
   // MARK: Bézier paths
@@ -2237,6 +2366,8 @@
    * skips them, as does SVG export, so the default is false).
    * options.texts: the glyph layouts from text.json (readTextLayouts); without them text
    * draws nothing.
+   * options.math: the formula layouts from math.json (readMathLayouts); without them
+   * formulas draw nothing.
    */
   function renderScene(scene, options) {
     const opts = options || {};
@@ -2244,6 +2375,7 @@
       r_texts = opts.texts || null;
       r_textCache = new Map();
     }
+    r_useMath(opts.math);
     const drawHidden = !!opts.drawHidden;
     const w = {
       defs: [], body: [], next: 1, prefix: opts.idPrefix || '',
@@ -2264,7 +2396,7 @@
   // MARK: Exports
 
   const api = {
-    FormatError, readPresentation, readTextLayouts, Timeline, interpolateScene, progress, sceneJSON, hexColor, parseColor,
+    FormatError, readPresentation, readTextLayouts, readMathLayouts, Timeline, interpolateScene, progress, sceneJSON, hexColor, parseColor,
     renderScene: typeof renderScene === 'function' ? renderScene : null,
     /// A text's glyph outline points, from layouts read by readTextLayouts (for the tests).
     textOutline(text, texts) {
@@ -2273,6 +2405,12 @@
         r_textCache = new Map();
       }
       return r_textOutline(text);
+    },
+    /// A formula's outline points (its file JSON or as read), from layouts read by
+    /// readMathLayouts (for the tests).
+    mathOutline(math, layouts) {
+      r_useMath(layouts);
+      return r_mathOutline(readMath(math));
     },
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
@@ -2284,7 +2422,7 @@
   /// stopping on its last keyframe. Advancing while a sequence plays jumps to its end;
   /// Back jumps, with no animation, to the end of the sequence before. The address's
   /// hash (`#3`) is the number of sequences played, so a link opens on that step.
-  function play(svg, presentation, texts) {
+  function play(svg, presentation, texts, math) {
     const timeline = new Timeline(presentation);
     const count = presentation.sequences.length;
     const { width, height } = presentation.viewport;
@@ -2304,7 +2442,7 @@
 
     const draw = (scene) => {
       stage.innerHTML = renderScene({ width, height, background: scene.viewport.background,
-        globalColors: scene.globalColors, layers: scene.layers }, { texts });
+        globalColors: scene.globalColors, layers: scene.layers }, { texts, math });
     };
     const rest = () => {
       draw(timeline.stateAfter(position));
@@ -2438,10 +2576,14 @@
       })
       .then((json) => {
         const presentation = readPresentation(json);
-        // text.json is there only when the presentation has text.
-        return fetch('text.json', { cache: 'no-cache' })
+        // text.json is there only when the presentation has text, and math.json only
+        // when it has formulas.
+        const optional = (name) => fetch(name, { cache: 'no-cache' })
           .then((response) => (response.ok ? response.json() : null), () => null)
-          .then((texts) => play(svg, presentation, texts ? readTextLayouts(texts) : null));
+          .catch(() => null);
+        return Promise.all([optional('text.json'), optional('math.json')])
+          .then(([texts, math]) => play(svg, presentation, texts ? readTextLayouts(texts) : null,
+            math ? readMathLayouts(math) : null));
       })
       .catch((error) => {
         // Browsers don't let a page opened from a file read the file next to it.

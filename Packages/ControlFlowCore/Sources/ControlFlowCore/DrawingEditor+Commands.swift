@@ -240,12 +240,12 @@ extension DrawingEditor {
             if let (p, group) = drawing.wholeGroup(selection), let g = drawing.layers[p].groups.firstIndex(where: { $0.id == group.id }) {
                 let groupMatrix = group.transform.matrix
                 for s in drawing.layers[p].members(ofGroup: group.id) {
-                    drawing.layers[p].shapes[s] = drawing.layers[p].shapes[s].bakedKeepingText(groupMatrix * drawing.layers[p].shapes[s].transform.matrix)
+                    drawing.layers[p].shapes[s] = drawing.layers[p].shapes[s].bakedKeepingLayout(groupMatrix * drawing.layers[p].shapes[s].transform.matrix)
                 }
                 drawing.layers[p].groups[g].transform = .identity
             } else {
                 for (p, s) in drawing.shapeIndices(in: selection) {
-                    drawing.layers[p].shapes[s] = drawing.layers[p].shapes[s].bakedKeepingText(drawing.layers[p].shapes[s].transform.matrix)
+                    drawing.layers[p].shapes[s] = drawing.layers[p].shapes[s].bakedKeepingLayout(drawing.layers[p].shapes[s].transform.matrix)
                 }
             }
         case .none, .reference:

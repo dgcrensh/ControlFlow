@@ -3,7 +3,8 @@ import Foundation
 /// The presentation as a static web page: a folder that any web server, GitHub Pages
 /// included, serves as is. It holds `index.html`, `player.js`, `presentation.json`
 /// (the same file the app saves) and, when there is text, `text.json` (its glyph
-/// outlines, since a browser can't be counted on to have the fonts) and the pictures of
+/// outlines, since a browser can't be counted on to have the fonts), when there are
+/// formulas, `math.json` (their layouts, as the package keeps them) and the pictures of
 /// image shapes at their `src` (`images/...`), uses relative paths and needs no build step. The player plays it as presentation mode does, with the same inputs plus
 /// swipes, and the address's hash (`#3`) opens it with that many sequences played.
 ///
@@ -32,6 +33,7 @@ public enum HTMLExport {
             PresentationPackage.presentationFile: Data(json.formatted().utf8),
         ]
         if let texts = try textLayouts(json) { files[textFile] = Data(texts.formatted().utf8) }
+        if let math = MathFile.data(for: presentation.mathContents) { files[MathFile.fileName] = math }
         for src in presentation.imageSources {
             if let image = images[src] { files[src] = image }
         }

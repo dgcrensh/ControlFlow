@@ -167,7 +167,7 @@ final class TextShapeTests: XCTestCase {
         // 7 letters, each a box with a hole, at 100 across.
         let box = drawn.path.bounds()
         assertClose(box.minPoint.x, 100 + 0.6)
-        XCTAssertNotNil(drawn.textFrame)
+        XCTAssertNotNil(drawn.layoutFrame)
     }
 
     func testATextIsTappedAnywhereInItsBox() {

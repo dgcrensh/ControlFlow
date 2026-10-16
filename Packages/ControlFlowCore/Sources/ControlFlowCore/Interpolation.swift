@@ -12,7 +12,7 @@ import Foundation
 ///   at the end (see `TextContent.held`), so no word jumps between lines midway.
 /// - Everything else (`closed`, handle modes, ends, corners, outline position, gradient
 ///   kind, clipping, fill or outline on or off, bare edges, group membership, draw order,
-///   a text's words, font, weight, size, alignment and width) takes its new value at the
+///   a text's words, font, weight, size, alignment and width, a formula) takes its new value at the
 ///   start.
 /// - Objects that are created appear at the start; objects that are deleted stay, as they
 ///   were, until the end. A shape's vertices line up as `VertexMerge` describes.

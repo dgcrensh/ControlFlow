@@ -53,9 +53,9 @@ extension VectorShape {
 
     public var isImage: Bool { image != nil }
 
-    /// False for a text or an image, whose path isn't edited point by point: a text's
-    /// is laid out from its words and an image's is the frame it is drawn in.
-    public var hasEditablePath: Bool { text == nil && image == nil }
+    /// False for a text, a formula or an image, whose path isn't edited point by point:
+    /// a text's or formula's is laid out and an image's is the frame it is drawn in.
+    public var hasEditablePath: Bool { !isLaidOut && image == nil }
 
     /// For an image shape, the map from the image's own unit square (x across, y down,
     /// 0...1) to where it is drawn: its top-left, top-right and bottom-left corners are

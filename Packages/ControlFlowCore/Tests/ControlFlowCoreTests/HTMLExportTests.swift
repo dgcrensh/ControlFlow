@@ -11,7 +11,7 @@ final class HTMLExportTests: XCTestCase {
             .deletingLastPathComponent()
             .appendingPathComponent("Schema/examples/demo.controlflow")
         var files: [String: Data] = [:]
-        for name in ["presentation.json", "references/reference-1.png"] {
+        for name in ["presentation.json", "math.json", "references/reference-1.png"] {
             files[name] = try Data(contentsOf: url.appendingPathComponent(name))
         }
         return try PresentationPackage(files: files)
@@ -19,7 +19,7 @@ final class HTMLExportTests: XCTestCase {
 
     func testTheFolderHoldsThePagePlayerAndPresentation() throws {
         let files = try HTMLExport.files(for: try demo().presentation)
-        XCTAssertEqual(Set(files.keys), ["index.html", "player.js", "presentation.json", "text.json"])
+        XCTAssertEqual(Set(files.keys), ["index.html", "player.js", "presentation.json", "text.json", "math.json"])
         let page = try XCTUnwrap(files["index.html"].flatMap { String(data: $0, encoding: .utf8) })
         // Relative paths only, so the folder can be served from anywhere.
         XCTAssertTrue(page.contains("<script src=\"player.js\"></script>"))

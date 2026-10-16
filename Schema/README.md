@@ -1,4 +1,4 @@
-# Presentation file format 1.2
+# Presentation file format 1.3
 
 A ControlFlow document is a `.controlflow` package (a folder that Files shows as one document):
 
@@ -8,8 +8,9 @@ A ControlFlow document is a `.controlflow` package (a folder that Files shows as
 | `thumbnail.png` | Optional 512 x 512 preview of the opening state. |
 | `references/` | Pixels of editor-only reference images, named `reference-1.png`, `reference-2.jpg`, ... |
 | `images/` | Pictures that [image](#images) shapes show (PNG, JPEG or HEIC), named by a hash of their bytes. |
+| `math.json` | Optional typeset layouts of the [formulas](#math), validated by [`math-1.0.schema.json`](math-1.0.schema.json). |
 
-[`examples/demo.controlflow`](examples/demo.controlflow) is a complete example: a robot in three sequences that turns its head, changes color, pops up a speech bubble, grows a point on it and takes it away, with a title that spreads its letters and then changes its words, and a picture that fades, moves and grows. The core tests check that the app re-saves it byte for byte, and CI validates it against the schema (`python Schema/validate.py`, which needs `pip install "jsonschema>=4.18"`). [`vectors/`](vectors) holds the [test vectors](#test-vectors).
+[`examples/demo.controlflow`](examples/demo.controlflow) is a complete example: a robot in three sequences that turns its head, changes color, pops up a speech bubble, grows a point on it and takes it away, with a title that spreads its letters and then changes its words, a picture that fades, moves and grows, and a formula that changes from `a + b = c` to `a = c - b`. The core tests check that the app re-saves it byte for byte, and CI validates it against the schema (`python Schema/validate.py`, which checks its `math.json` too and needs `pip install "jsonschema>=4.18"`). [`vectors/`](vectors) holds the [test vectors](#test-vectors).
 
 Character Studio's `.charstudio` files (formats 0.1 to 0.3), which ControlFlow saved until milestone 3, don't open.
 
@@ -17,7 +18,7 @@ Character Studio's `.charstudio` files (formats 0.1 to 0.3), which ControlFlow s
 
 - Points, y-axis down. Angles in degrees, clockwise on screen. Colors are `#RRGGBBAA` sRGB with straight alpha.
 - Numbers are written with at most 4 decimal places. Keys are written in a fixed order, so saving twice gives the same file.
-- `formatVersion` is `MAJOR.MINOR`. Readers refuse a newer major version; a newer minor version only adds keys, which older readers ignore. Older files are upgraded on open by the steps in `PresentationFormat.migrations` (none yet). 1.1 added [text](#text) and 1.2 [images](#images); a 1.0 or 1.1 file is a valid 1.2 file.
+- `formatVersion` is `MAJOR.MINOR`. Readers refuse a newer major version; a newer minor version only adds keys, which older readers ignore. Older files are upgraded on open by the steps in `PresentationFormat.migrations` (none yet). 1.1 added [text](#text), 1.2 [images](#images) and 1.3 [formulas](#math); a 1.0, 1.1 or 1.2 file is a valid 1.3 file.
 - Readers should ignore keys they do not know.
 - **Ids** are positive whole numbers, each used once in the file: the viewport, global colors, layers, groups, shapes, vertices, sequences and keyframes all share one numbering. The one exception is an object created by a keyframe after an object with its id was deleted: a shape moved to another layer is deleted from one and created in the other with the same id, so it animates as one shape.
 
@@ -75,6 +76,32 @@ An image has `"closed": true` and four straight-edged corner points: top-left, t
 
 The HTML export copies each picture the presentation shows to the same path beside `presentation.json`.
 
+### Math
+
+A shape with a `math` key is a formula: LaTeX math typeset in the shape's own space and filled with the shape's `fill` (and `fillGlobal`), `opacity`, `transform` and clipping, like a text. A formula has `"closed": true` and empty `points`, and a `stroke` on it is not drawn. Readers that don't know `math` (1.2 and older) see an empty shape and draw nothing.
+
+- `source`: LaTeX math without `$` or `\[ \]`, as MathJax 4's TeX input reads it (with the AMS, `newcommand`, `html` and `color` packages). Colors inside it are ignored: the shape's fill colors the whole formula.
+- `size`: points per em, default 72.
+- `display`: display style (`true`, the default) or inline style (`false`, smaller fractions and limits).
+
+The box's top-left is the shape's origin. A formula's look depends on the typesetter, so the app keeps every formula's layout in **`math.json`** beside `presentation.json`, and draws, hit-tests and exports from it: a document opens without typesetting, and a formula looks the same after an app update until it is edited or retypeset. `math.json` is a cache. A formula it leaves out (or a file without it) is typeset when needed, and a `math.json` that doesn't read is ignored.
+
+```
+{ "engine": "mathjax-4.1.3/newcm",
+  "glyphs": { "NCM-I-1D44E": [[x, y, inX, inY, outX, outY, ...], ...], ... },
+  "formulas": [
+    { "math": { "source": "a + b = c" }, "box": [w, h], "baseline": b,
+      "glyphs": [{ "key", "place": [a, b, c, d, tx, ty], "tags", "source" }],
+      "rules": [[x, y, w, h]] } ] }
+```
+
+- `glyphs` holds each glyph's closed contours once for the file, keyed by font, variant and code point (`NCM-I-1D44E` is New Computer Modern's italic 𝑎), in glyph units: 1000 per em, y up, each point's position and handle offsets in one flat list.
+- `formulas` has one entry per distinct formula a keyframe shows, in draw order with the first keyframe first, keyed by its `math` object exactly as the shape writes it. Its `box` (the top-left at 0, 0), `baseline`, glyph `place`s and `rules` are in thousandths of an em with y down, so multiplying by `size / 1000` gives points in the shape's space. A glyph is its contours mapped by `place` (`x' = a x + c y + tx`, `y' = b x + d y + ty`); `tags` are the `\class` names it sits in, outermost first, and `source` is the LaTeX it came from. `rules` are fraction bars and overlines.
+- A formula draws as all its placed contours and its rules filled together (non-zero), each rule wound the same way as the glyphs, so a rule overlapping a glyph adds to it.
+- `engine` names the typesetter and font that made the layouts. When formulas in one file come from two engines, each formula has its own `engine` and the top level has none.
+
+The HTML export writes the same `math.json` for the formulas it shows, and its player draws them from it, so the page needs no typesetter or fonts.
+
 ### Transforms
 
 - `transform` is `{ "position", "rotation", "scale", "pivot" }`: the object scales by `scale` and turns by `rotation` (degrees, clockwise) about `pivot`, then moves by `position`. As a matrix, `translate(position + pivot) · rotate(rotation) · scale(scale) · translate(-pivot)`.
@@ -112,6 +139,7 @@ A transition into a keyframe animates from the scene before it to its own over `
 - **Colors** (fills, outlines, gradient stops, global colors, the viewport background) move componentwise in sRGB with straight alpha, as CSS does. Shapes following a global color follow it as it moves.
 - **Text**: `tracking` and `lineHeight` move like numbers, with lines broken as they will be at the end. Every other text key (`string`, `font`, `weight`, `italic`, `size`, `align`, `width`) takes its new value at the start.
 - **Images**: an image's `src` takes its new value at the start; its frame (points and transform) and opacity move like any shape's.
+- **Formulas**: a formula's `source`, `size` and `display` take their new values at the start.
 - **Everything else** takes its new value at the **start**: `closed`, handle modes, ends, corners, outline position, gradient kind, clipping, fill or outline turned on or off, stroked edges, group membership and draw order. Dash lists and gradient stops that change length snap too.
 - **Created** objects appear at the start. **Deleted** objects stay, as they were, until the end, in their old place.
 - Values a curve carries past its ends are clamped where they must be: colors and opacity to 0 to 1, widths to 0 or more, the miter limit to 1 or more, and a scale to the sign both ends share.
@@ -132,6 +160,8 @@ The files in [`vectors/`](vectors) check another player (such as the HTML export
 A `scene` is `{ "background", "globalColors", "layers" }`, in the file's own JSON for those objects, with numbers rounded to 4 decimals; compare numbers to within 0.0002. Layers include objects that are leaving.
 
 Glyph shapes depend on the font, so the vectors check text against a stand-in font that draws every character as a box with a hole (ControlFlowCore's `StubTextShaper`). A file with text also has `texts`, the `text.json` the HTML export would write for it with that font (each text's lines, and its glyphs' outlines as flat `x, y, inX, inY, outX, outY` lists), and samples where a text's spacing is moving have `outlines`: `[{ "shape", "points" }]`, each text's glyphs as one path in its own space, bridged into one ring as the app does, drawn from `texts`.
+
+Formulas are checked against real MathJax output: a file with formulas has `math`, the `math.json` the HTML export would write for it, and `mathOutlines`: `[{ "math", "points" }]`, each formula's glyphs and rules as one path in its own space, bridged as the app does, drawn from `math`.
 
 - `demo.json` plays the example.
 - `morph.json` exercises each rule: points born and dying on segments and at an open path's end, turns past 360, a flip, an overshooting curve and color, a cut, a shape created and one deleted, a new draw order, a shape that can't be merged, and a wrapping text whose spacing and words change.
