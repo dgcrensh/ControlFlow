@@ -123,9 +123,10 @@ final class CanvasRenderer {
     /// The live drag drawn on the last frame, whose triangles move with the shapes when it ends.
     private var lastLive: LiveTransform?
     private var artSteps: [ArtStep] = []
-    /// One per layer. Each layer's vertices live in their own buffer, keyed by segment id,
-    /// and its cover steps' paints in another, keyed by its paint id, so an edit uploads
-    /// only the layers it changed, and a fade or recolour only their paints. The two kinds
+    /// One per layer, or a few for a layer whose shapes change their points frame after
+    /// frame (see `ArtBuilder.patch`). Each segment's vertices live in their own buffer,
+    /// keyed by segment id, and its cover steps' paints in another, keyed by its paint id,
+    /// so an edit uploads only the layers it changed, and a fade or recolour only their paints. The two kinds
     /// of id never collide, so one dictionary holds both. A buffer is never written after
     /// it is made, so a frame still in flight keeps reading the one it was given (the
     /// command buffer retains it).

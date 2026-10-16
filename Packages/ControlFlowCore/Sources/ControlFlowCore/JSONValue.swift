@@ -91,7 +91,7 @@ extension JSONValue {
             out.append(scalarText)
         case .array(let items):
             if items.isEmpty { out.append("[]"); return }
-            if let inline = inlineText, inline.count + indent <= Self.inlineLimit {
+            if let inline = inlineText(budget: Self.inlineLimit - indent) {
                 out.append(inline)
                 return
             }
@@ -104,7 +104,7 @@ extension JSONValue {
             out.append(String(repeating: " ", count: indent) + "]")
         case .object(let members):
             if members.isEmpty { out.append("{}"); return }
-            if let inline = inlineText, inline.count + indent <= Self.inlineLimit {
+            if let inline = inlineText(budget: Self.inlineLimit - indent) {
                 out.append(inline)
                 return
             }
@@ -119,26 +119,70 @@ extension JSONValue {
         }
     }
 
-    /// One-line text for scalars, arrays of scalars or of arrays of scalars, and objects whose values are those. Nil for anything deeper.
-    private var inlineText: String? {
+    /// One-line text for scalars, arrays of scalars or of arrays of scalars, and objects
+    /// whose values are those, when it is at most `budget` characters. Nil for anything
+    /// deeper or longer: the check comes first, and the text stops as soon as it runs over,
+    /// so a long array is never written out only to be dropped.
+    private func inlineText(budget: Int) -> String? {
         switch self {
-        case .null, .bool, .number, .string:
-            return scalarText
         case .array(let items):
-            if items.allSatisfy(\.isScalar) { return "[" + items.map(\.scalarText).joined(separator: ", ") + "]" }
-            guard items.allSatisfy(\.isScalarArray) else { return nil }
-            return "[" + items.map { $0.inlineText! }.joined(separator: ", ") + "]"
+            guard items.allSatisfy(\.isScalar) || items.allSatisfy(\.isScalarArray) else { return nil }
         case .object(let members):
-            var layers: [String] = []
             for member in members {
                 switch member.value {
                 case .object: return nil
-                case .array(let items) where !items.allSatisfy(\.isScalar) && !items.allSatisfy(\.isScalarArray):
-                    return nil
-                default: layers.append(Self.quoted(member.key) + ": " + member.value.inlineText!)
+                case .array(let items) where !items.allSatisfy(\.isScalar) && !items.allSatisfy(\.isScalarArray): return nil
+                default: break
                 }
             }
-            return "{ " + layers.joined(separator: ", ") + " }"
+        case .null, .bool, .number, .string:
+            break
+        }
+        var line = InlineLine(budget: budget)
+        return line.add(self) ? line.text : nil
+    }
+
+    /// One line being written against a budget of characters. Every piece starts and
+    /// ends with an ASCII character (a quote, a bracket, a digit), so no character spans
+    /// two pieces and the line's count is the sum of theirs.
+    private struct InlineLine {
+        let budget: Int
+        var text = ""
+        var count = 0
+
+        init(budget: Int) {
+            self.budget = budget
+        }
+
+        /// False as soon as the line runs over its budget.
+        mutating func append(_ piece: String, ascii: Bool = true) -> Bool {
+            count += ascii ? piece.utf8.count : piece.count
+            guard count <= budget else { return false }
+            text.append(piece)
+            return true
+        }
+
+        mutating func add(_ value: JSONValue) -> Bool {
+            switch value {
+            case .null, .bool, .number:
+                return append(value.scalarText)
+            case .string(let s):
+                return append(JSONValue.quoted(s), ascii: false)
+            case .array(let items):
+                guard append("[") else { return false }
+                for (i, item) in items.enumerated() {
+                    if i > 0 { guard append(", ") else { return false } }
+                    guard add(item) else { return false }
+                }
+                return append("]")
+            case .object(let members):
+                guard append("{ ") else { return false }
+                for (i, member) in members.enumerated() {
+                    if i > 0 { guard append(", ") else { return false } }
+                    guard append(JSONValue.quoted(member.key), ascii: false), append(": "), add(member.value) else { return false }
+                }
+                return append(" }")
+            }
         }
     }
 

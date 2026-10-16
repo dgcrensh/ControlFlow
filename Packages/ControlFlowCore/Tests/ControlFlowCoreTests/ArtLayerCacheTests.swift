@@ -179,9 +179,10 @@ final class ArtLayerCacheTests: XCTestCase {
         var builder = ArtBuilder()
         let batch = build(&builder, base, live)
         let marks = batch.steps.compactMap { step -> Bool? in if case .moving(let on) = step { on } else { nil } }
-        // Layer 1 ends moving and layer 2 starts moving: one run across both, then layer 4's.
-        XCTAssertEqual(marks, [true, false, true, false])
-        XCTAssertEqual(marks.count, 4)
+        // A run in each layer: the encoder starts every segment with `moving` off, so layer
+        // 2's run can't carry on from layer 1's.
+        XCTAssertEqual(marks, [true, false, true, false, true, false])
+        XCTAssertEqual(batch.steps[batch.segments[2].steps].first, .moving(true))
     }
 
     func testANewTolerance() {

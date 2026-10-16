@@ -454,6 +454,14 @@ final class PerformanceTests: XCTestCase {
 
     func testOpenDocument() { measure(.open) }
 
+    func testCopyEverything() { measure(.copyEverything) }
+
+    func testCopyEverythingAsJSON() { measure(.copyEverythingAsJSON) }
+
+    func testPasteEverything() { measure(.pasteEverything) }
+
+    func testPasteEverythingFromJSON() { measure(.pasteEverythingFromJSON) }
+
     func testSVGExport() { measure(.svgExport) }
 
     func testSVGImport() { measure(.svgImport) }
@@ -474,7 +482,8 @@ final class PerformanceTests: XCTestCase {
 
     /// What each played frame uploads, printed per transition. A slide only moves layers,
     /// so it uploads nothing; a change of paint uploads its layers' paints, one 256-byte
-    /// slot per cover, and none of their triangles.
+    /// slot per cover, and none of their triangles; a tracking tween uploads its texts'
+    /// triangles alone.
     func testPlaybackUploadPerFrame() {
         var lines = ["Floats uploaded per playback frame", ""]
         var slide = 0
@@ -493,6 +502,18 @@ final class PerformanceTests: XCTestCase {
                 XCTAssertEqual(frames.uploadedFloats % ArtSegment.paintSlotFloats, 0, "\(name): paint slots only")
             }
         }
+        // The third frame of a tracking tween: the texts' layers were built once more on
+        // the second, with each text in a segment of its own.
+        var tween = Workload.textTrackingTween(drawing)
+        var frames = PlaybackFrames(tween)
+        for _ in 0..<3 { frames.next() }
+        var whole = ArtBuilder.likeRenderer()
+        let art = whole.build(tween.state(at: 0), isolatedLayer: nil, tolerance: 0.5).segments.reduce(0) { $0 + $1.floats.count }
+        let kilobytes = Double(frames.uploadedFloats * MemoryLayout<Float>.size) / 1024
+        lines.append("A text per layer tweens tracking: \(frames.uploadedFloats) floats (" + String(format: "%.1f", kilobytes) +
+                     " KB) of the art's \(art)")
+        XCTAssertGreaterThan(frames.uploadedFloats, 0)
+        XCTAssertLessThan(frames.uploadedFloats * 10, art, "the texts' triangles alone")
         print(lines.joined(separator: "\n"))
         XCTAssertEqual(slide, 0)
     }

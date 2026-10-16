@@ -324,20 +324,57 @@ public struct ArtBuilder: Sendable {
         var bakedLayer: Affine2D?
         var detail: Double
 
-        /// True when a layer built for `other` has the same vertices and steps as one
-        /// built for this key, but for its covers' paint: the keys differ in their shapes'
-        /// paint at most (see `VectorShape.hasSameGeometry(as:)`).
-        func sameGeometry(as other: LayerKey) -> Bool {
-            guard shapes.count == other.shapes.count else { return false }
-            var a = self, b = other
+        /// How a layer built for this key differs from one built for `next`, found in one
+        /// walk over the shapes (an `==` that is cheap where their storage is shared).
+        enum Change {
+            /// Nothing: the layer is reused.
+            case none
+            /// Only the shapes at `changed` differ, and only in paint (see
+            /// `VectorShape.hasSameGeometry(as:)`): the same vertices and steps.
+            case paint(changed: [Int])
+            /// The shapes at `reshaped` differ in their points too, those at `changed` (which
+            /// holds them) in paint at most (see `VectorShape.hasSameSteps(as:)`): the same
+            /// steps, given vertex counts that match.
+            case points(reshaped: [Int], changed: [Int])
+            /// Anything else: the layer is built again.
+            case other
+        }
+
+        func change(to next: LayerKey) -> Change {
+            var a = self, b = next
             a.shapes = []
             b.shapes = []
-            guard a == b else { return false }
-            for (x, y) in zip(shapes, other.shapes) where x != y {
-                guard x.hasSameGeometry(as: y) else { return false }
+            guard a == b else { return .other }
+            // An untouched layer's shapes share storage with the last ones: a pointer compare.
+            if shapes == next.shapes { return .none }
+            guard shapes.count == next.shapes.count else { return .other }
+            var changed: [Int] = [], reshaped: [Int] = []
+            for (i, (x, y)) in zip(shapes, next.shapes).enumerated() where x != y {
+                changed.append(i)
+                guard !x.hasSameGeometry(as: y) else { continue }
+                guard x.hasSameSteps(as: y) else { return .other }
+                reshaped.append(i)
             }
-            return true
+            if changed.isEmpty { return .none }
+            return reshaped.isEmpty ? .paint(changed: changed) : .points(reshaped: reshaped, changed: changed)
         }
+    }
+
+    /// Where one shape's vertices sit in its layer's `vertices` (vertex ranges, as the
+    /// steps hold them), so a shape whose points changed can be written again in place
+    /// (see `patch`).
+    struct ShapeVertices: Sendable {
+        /// The shape's index in its layer.
+        var index: Int
+        /// Whether its tessellation had a fan and an outline: an empty one draws no part.
+        var hasFan: Bool
+        var hasOutline: Bool
+        /// The fan, and its copy for an inside or outside outline.
+        var fans: [Range<Int>] = []
+        /// The fill's or picture's cover rectangle.
+        var fanCover: Range<Int>?
+        var outline: Range<Int>?
+        var outlineCover: Range<Int>?
     }
 
     /// What a cover step paints, so a change of paint alone can paint the layer's steps
@@ -357,20 +394,50 @@ public struct ArtBuilder: Sendable {
         var fade: Double
     }
 
-    /// One layer's steps, with vertex ranges counted from the start of its own `vertices`.
-    /// Each starts and ends with `moving` off, and starts with `place` the identity.
+    /// One layer's steps, with vertex ranges counted from the start of the layer's
+    /// vertices, which its chunks hold. Each starts and ends with `moving` off, and
+    /// starts with `place` the identity.
     struct LayerBatch: Sendable {
         var key: LayerKey
-        var id: Int
-        var paintID: Int
         /// One per cover step, in order.
         var covers: [CoverSource]
+        /// One per shape drawn, in order.
+        var shapeVertices: [ShapeVertices]
         /// Every shape was drawn at its tolerance. A layer built while a refine was under
         /// way may hold shapes at an older tolerance; it is rebuilt rather than reused, so
         /// it picks up the refined shapes once they are merged.
         var isExact: Bool
-        var vertices: [Float]
         var steps: [ArtStep]
+        /// The layer's steps and vertices in runs, each a segment of the batch with a
+        /// buffer of its own. Usually one; a layer whose shapes are reshaped frame after
+        /// frame (see `patch`) keeps those shapes in runs of their own, so each frame writes
+        /// and uploads only their vertices.
+        var chunks: [Chunk]
+        /// The shapes (indices) whose points the update that made this batch changed, if
+        /// it changed nothing else: a second update that reshapes the same ones splits them
+        /// into chunks of their own.
+        var reshaped: Set<Int> = []
+
+        /// True when a chunk holding a shape in `indices` also draws shapes that aren't.
+        func shares(_ indices: Set<Int>) -> Bool {
+            chunks.contains { chunk in
+                let shapes = shapeVertices[chunk.shapes]
+                return shapes.contains { indices.contains($0.index) } && shapes.contains { !indices.contains($0.index) }
+            }
+        }
+    }
+
+    /// A run of a layer's steps and the vertices they draw: one `ArtSegment`. It starts
+    /// with `place` the identity and `moving` off, as every segment does.
+    struct Chunk: Sendable {
+        var id: Int
+        var paintID: Int
+        /// Into the layer's steps, and its vertex numbering.
+        var steps: Range<Int>
+        var vertices: Range<Int>
+        var floats: [Float]
+        /// The shapes it draws, as indices into the layer's `shapeVertices`.
+        var shapes: Range<Int>
     }
 
     /// Each layer's last build, by layer id.
@@ -380,6 +447,9 @@ public struct ArtBuilder: Sendable {
     private(set) var layerBuilds = 0
     /// How many layer batches have been painted again rather than built, for tests.
     private(set) var layerRepaints = 0
+    /// How many layer batches have had shapes' points written again rather than been
+    /// built, for tests.
+    private(set) var layerPatches = 0
     /// How many shapes have a cached tessellation, for tests.
     var cachedShapeCount: Int { tessellations.count }
     /// Each shape's tessellation. Public so the renderer can refine a copy in the
@@ -403,8 +473,14 @@ public struct ArtBuilder: Sendable {
     private var moving: Set<Int> = []
     private var isMoving = false
     private var place = Affine2D.identity
-    /// While building a layer: its covers so far.
+    /// While building a layer: its covers and where its shapes' vertices went so far.
     private var covers: [CoverSource] = []
+    private var shapeVertices: [ShapeVertices] = []
+    /// While building a layer: the shapes that go in chunks of their own, whether the
+    /// last shape drawn was one, and where each chunk after the first starts.
+    private var splitting: Set<Int> = []
+    private var splitMember: Bool?
+    private var chunkStarts: [ChunkStart] = []
 
     /// How strongly the ghost view draws the shapes outside its focus.
     public static let ghostOpacity = 0.25
@@ -457,21 +533,45 @@ public struct ArtBuilder: Sendable {
                               ghostFocus: ghostFocus.map { Self.restrict($0, to: layer) },
                               moving: Self.restrict(moving, to: layer),
                               bakedLayer: placement.baked, detail: placement.detail)
-            if let cached = layerCache[slot], cached.isExact, cached.key == key {
-                batch.append(cached, layer: layer.id, transform: placement.segment, concatenating: concatenatesVertices)
-                continue
-            }
-            // Only paint changed (a fade, a recolour): the same vertices and steps, with
-            // the covers painted again. Its shapes and their tessellations stay.
-            if let cached = layerCache[slot], cached.isExact, cached.key.sameGeometry(as: key) {
-                let repainted = repaint(cached, layer: layer, key: key)
-                layerCache[slot] = repainted
-                batch.append(repainted, layer: layer.id, transform: placement.segment, concatenating: concatenatesVertices)
-                continue
+            var reshaped: Set<Int> = [], splitting: Set<Int> = []
+            if let cached = layerCache[slot], cached.isExact {
+                switch cached.key.change(to: key) {
+                case .none:
+                    batch.append(cached, layer: layer.id, transform: placement.segment, concatenating: concatenatesVertices)
+                    continue
+                case .paint(let changed):
+                    // Only paint changed (a fade, a recolour): the same vertices and steps,
+                    // with the covers painted again. Its shapes and their tessellations stay.
+                    var repainted = repaint(cached, changed: changed, layer: layer, key: key)
+                    repainted.reshaped = []
+                    layerCache[slot] = repainted
+                    batch.append(repainted, layer: layer.id, transform: placement.segment, concatenating: concatenatesVertices)
+                    continue
+                case .points(let indices, let changed):
+                    // Only some shapes' points changed (a text tweening its tracking, a
+                    // morph): their vertices are written again in place. When the same
+                    // shapes are reshaped again, as on every frame of a transition, the
+                    // layer is built once more with them in chunks of their own, so later
+                    // frames write and upload only their vertices.
+                    reshaped = Set(indices)
+                    let again = cached.reshaped == reshaped
+                    if !(again && cached.shares(reshaped)),
+                       var patched = patch(cached, reshaped: indices, changed: changed, layer: layer, key: key,
+                                           placement: placement) {
+                        patched.reshaped = reshaped
+                        layerCache[slot] = patched
+                        batch.append(patched, layer: layer.id, transform: placement.segment, concatenating: concatenatesVertices)
+                        continue
+                    }
+                    if again { splitting = reshaped }
+                case .other:
+                    break
+                }
             }
             if let old = layerCache[slot] { retired.formUnion(old.key.shapes.lazy.map(\.id)) }
             fresh.formUnion(layer.shapes.lazy.map(\.id))
-            let built = buildLayer(layer, key: key, placement: placement)
+            var built = buildLayer(layer, key: key, placement: placement, splitting: splitting)
+            built.reshaped = reshaped
             layerCache[slot] = built
             batch.append(built, layer: layer.id, transform: placement.segment, concatenating: concatenatesVertices)
         }
@@ -567,27 +667,94 @@ public struct ArtBuilder: Sendable {
 
     // MARK: Building a layer
 
-    /// `cached` with each cover's paint taken from `layer`'s shapes, for `key`, which
-    /// differs from its key in paint alone. It keeps its id, so its vertices' buffer; it
-    /// takes a new paint id unless no cover's paint changed.
-    private mutating func repaint(_ cached: LayerBatch, layer: Layer, key: LayerKey) -> LayerBatch {
+    /// `cached` with the covers of the shapes at `changed` painted from `layer`'s shapes,
+    /// for `key`, which differs from its key in those shapes' paint (and points, see
+    /// `patch`) alone. Its chunks keep their ids, so their vertices' buffers; each takes
+    /// a new paint id unless no cover's paint in it changed.
+    private mutating func repaint(_ cached: LayerBatch, changed indices: [Int], layer: Layer,
+                                  key: LayerKey) -> LayerBatch {
         var result = cached
         result.key = key
+        let set = Set(indices)
         var cover = 0
-        for i in result.steps.indices {
-            guard case .cover(let range, _, let state, let reference) = result.steps[i] else { continue }
-            let source = cached.covers[cover]
-            cover += 1
-            let shape = layer.shapes[source.index]
-            let paint = Self.coverPaint(source.kind, of: source.baked.map { shape.baked($0) } ?? shape, fade: source.fade)
-            result.steps[i] = .cover(vertices: range, paint: paint, state: state, reference: reference)
+        var repainted = false
+        for c in result.chunks.indices {
+            var changed = false
+            for i in result.chunks[c].steps {
+                guard case .cover(let range, let old, let state, let reference) = result.steps[i] else { continue }
+                let source = cached.covers[cover]
+                cover += 1
+                guard set.contains(source.index) else { continue }
+                let shape = layer.shapes[source.index]
+                let paint = Self.coverPaint(source.kind, of: source.baked.map { shape.baked($0) } ?? shape, fade: source.fade)
+                guard paint != old else { continue }
+                result.steps[i] = .cover(vertices: range, paint: paint, state: state, reference: reference)
+                changed = true
+            }
+            if changed {
+                result.chunks[c].paintID = nextLayerBatchID
+                nextLayerBatchID += 1
+                repainted = true
+            }
         }
-        if result.steps != cached.steps {
-            layerRepaints += 1
-            result.paintID = nextLayerBatchID
+        if repainted { layerRepaints += 1 }
+        return result
+    }
+
+    /// `cached` with the vertices of the shapes `reshaped` (whose points changed for
+    /// `key`, see `LayerKey.change(to:)`) written again from their new tessellations,
+    /// and its covers painted again (see `repaint`). Only the chunks holding those shapes
+    /// take new ids, so only their vertices are uploaded again; the steps stay. Nil, and
+    /// the layer is built, when a reshaped shape is clipped (its bounds decide its base's
+    /// clip clear) or when a new tessellation has a different vertex count.
+    private mutating func patch(_ cached: LayerBatch, reshaped: [Int], changed: [Int], layer: Layer, key: LayerKey,
+                                placement: LayerPlacement) -> LayerBatch? {
+        guard !skipsVertices else { return nil }
+        let clips = layer.clipPlan()
+        guard reshaped.allSatisfy({ clips.base(of: $0) == nil && clips.groupBase(of: $0) == nil }) else { return nil }
+        let set = Set(reshaped)
+        var result = cached
+        usedOtherTolerance = false
+        for (c, chunk) in cached.chunks.enumerated() {
+            let entries = cached.shapeVertices[chunk.shapes].filter { set.contains($0.index) }
+            guard !entries.isEmpty else { continue }
+            var floats = chunk.floats
+            let base = chunk.vertices.lowerBound
+            for entry in entries {
+                let art = Self.artShape(entry.index, of: layer, placement: placement, tolerance: key.tolerance)
+                let geometry = tessellation(of: art)
+                guard entry.hasFan == !geometry.fan.isEmpty, entry.hasOutline == !geometry.outline.isEmpty,
+                      entry.fans.allSatisfy({ $0.count * 2 == geometry.fan.count }),
+                      entry.outline.map({ $0.count * 2 == geometry.outline.count }) ?? true
+                else { return nil }
+                for range in entry.fans { Self.write(geometry.fan, at: range, base: base, in: &floats) }
+                if let range = entry.fanCover {
+                    Self.write(Self.rectFloats(geometry.fanBounds), at: range, base: base, in: &floats)
+                }
+                if let range = entry.outline { Self.write(geometry.outline, at: range, base: base, in: &floats) }
+                if let range = entry.outlineCover {
+                    Self.write(Self.rectFloats(geometry.outlineBounds), at: range, base: base, in: &floats)
+                }
+            }
+            result.chunks[c].floats = floats
+            result.chunks[c].id = nextLayerBatchID
             nextLayerBatchID += 1
         }
+        layerPatches += 1
+        result = repaint(result, changed: changed, layer: layer, key: key)
+        result.isExact = !usedOtherTolerance
         return result
+    }
+
+    /// Writes `floats` over vertices `range` of a chunk whose vertices start at `base`.
+    private static func write(_ floats: [Float], at range: Range<Int>, base: Int, in vertices: inout [Float]) {
+        vertices.replaceSubrange(((range.lowerBound - base) * 2)..<((range.upperBound - base) * 2), with: floats)
+    }
+
+    /// The two triangles `ArtBatch.addRect` adds for `rect`, as floats.
+    private static func rectFloats(_ rect: Rect) -> [Float] {
+        let c = rect.corners
+        return [c[0], c[1], c[2], c[0], c[2], c[3]].flatMap { [Float($0.x), Float($0.y)] }
     }
 
     /// What a cover of `kind` paints for `shape` (as the art draws it, see `ArtShape`),
@@ -609,13 +776,20 @@ public struct ArtBuilder: Sendable {
     }
 
     /// Draws one layer from scratch (its shapes' tessellations still come from the cache).
-    private mutating func buildLayer(_ layer: Layer, key: LayerKey, placement: LayerPlacement) -> LayerBatch {
+    /// The shapes at the indices in `splitting` go in chunks of their own (a run of them
+    /// shares one), apart from the layer's other shapes (see `patch`).
+    private mutating func buildLayer(_ layer: Layer, key: LayerKey, placement: LayerPlacement,
+                                     splitting: Set<Int> = []) -> LayerBatch {
         layerBuilds += 1
         var batch = ArtBatch()
         moving = key.moving
         isMoving = false
         place = .identity
         covers = []
+        shapeVertices = []
+        self.splitting = splitting
+        splitMember = nil
+        chunkStarts = []
         usedOtherTolerance = false
         let arts = layer.shapes.indices.map { Self.artShape($0, of: layer, placement: placement, tolerance: key.tolerance) }
         let all = Array(layer.shapes.indices)
@@ -633,12 +807,31 @@ public struct ArtBuilder: Sendable {
         moving = []
         isMoving = false
         place = .identity
-        defer {
-            covers = []
+        let starts = [ChunkStart(step: 0, vertex: 0, shape: 0)] + chunkStarts
+        let end = ChunkStart(step: batch.steps.count, vertex: batch.vertexCount, shape: shapeVertices.count)
+        var chunks: [Chunk] = []
+        for (i, start) in starts.enumerated() {
+            let next = i + 1 < starts.count ? starts[i + 1] : end
+            let floats = starts.count == 1 ? batch.vertices : Array(batch.vertices[(start.vertex * 2)..<(next.vertex * 2)])
+            chunks.append(Chunk(id: nextLayerBatchID, paintID: nextLayerBatchID + 1, steps: start.step..<next.step,
+                                vertices: start.vertex..<next.vertex, floats: floats, shapes: start.shape..<next.shape))
             nextLayerBatchID += 2
         }
-        return LayerBatch(key: key, id: nextLayerBatchID, paintID: nextLayerBatchID + 1, covers: covers,
-                          isExact: !usedOtherTolerance, vertices: batch.vertices, steps: batch.steps)
+        defer {
+            covers = []
+            shapeVertices = []
+            self.splitting = []
+            chunkStarts = []
+        }
+        return LayerBatch(key: key, covers: covers, shapeVertices: shapeVertices, isExact: !usedOtherTolerance,
+                          steps: batch.steps, chunks: chunks)
+    }
+
+    /// Where a chunk after the first starts, while building a layer.
+    private struct ChunkStart {
+        var step: Int
+        var vertex: Int
+        var shape: Int
     }
 
     /// Adds the shapes at `indices` of `layer` (drawn as `arts`), leaving out clipped
@@ -772,7 +965,14 @@ public struct ArtBuilder: Sendable {
 
     /// Flattens and strokes one shape. Pure, so a background refine can call it.
     static func tessellate(_ shape: VectorShape, tolerance: Double) -> Tessellation {
-        let poly = shape.path.flattened(tolerance: tolerance)
+        let poly: [Vec2]
+        if let text = shape.text, text.held != nil, shape.textFrame != nil, shape.path == TextShaping.outline(text) {
+            // A text partway through a tracking or line-height tween, drawn unbaked: its
+            // glyphs' flattened outlines, moved where this frame puts them.
+            poly = TextShaping.flattenedOutline(text, tolerance: tolerance)
+        } else {
+            poly = shape.path.flattened(tolerance: tolerance)
+        }
         var fan: [Float] = []
         if shape.path.closed, poly.count >= 3 {
             fan.reserveCapacity((poly.count - 2) * 6)
@@ -806,6 +1006,17 @@ public struct ArtBuilder: Sendable {
     private mutating func append(_ art: ArtShape, index: Int, baked: Affine2D?, _ geometry: Tessellation, role: ClipRole,
                                  clipArea: Rect?, masked: Bool, fade: Double, to batch: inout ArtBatch) {
         let shape = art.shape
+        if !splitting.isEmpty {
+            let member = splitting.contains(index)
+            if let last = splitMember, last != member {
+                // A new segment: the encoder starts it with `place` the identity and
+                // `moving` off, so the steps below set them again as needed.
+                chunkStarts.append(ChunkStart(step: batch.steps.count, vertex: batch.vertexCount, shape: shapeVertices.count))
+                place = .identity
+                isMoving = false
+            }
+            splitMember = member
+        }
         let moves = moving.contains(shape.id)
         if moves != isMoving {
             batch.steps.append(.moving(moves))
@@ -823,12 +1034,16 @@ public struct ArtBuilder: Sendable {
             }
         }
         setPlace(art.place, in: &batch)
+        var drawn = ShapeVertices(index: index, hasFan: !geometry.fan.isEmpty, hasOutline: !geometry.outline.isEmpty)
+        defer { shapeVertices.append(drawn) }
 
         if shape.image != nil, !geometry.fan.isEmpty {
             // Stencilled like a fill, then covered with the picture.
             let fan = add(to: &batch, geometry.fan)
             batch.steps.append(.stencil(vertices: fan, state: ArtStencil.winding, reference: 0))
             let cover = addRect(to: &batch, geometry.fanBounds)
+            drawn.fans.append(fan)
+            drawn.fanCover = cover
             let (state, reference) = Self.fillCover(role, masked: masked)
             batch.steps.append(.cover(vertices: cover, paint: Self.coverPaint(.image, of: shape, fade: fade), state: state,
                                       reference: reference))
@@ -837,6 +1052,8 @@ public struct ArtBuilder: Sendable {
             let fan = add(to: &batch, geometry.fan)
             batch.steps.append(.stencil(vertices: fan, state: ArtStencil.winding, reference: 0))
             let cover = addRect(to: &batch, geometry.fanBounds)
+            drawn.fans.append(fan)
+            drawn.fanCover = cover
             let (state, reference) = Self.fillCover(role, masked: masked)
             batch.steps.append(.cover(vertices: cover, paint: Self.coverPaint(.fill, of: shape, fade: fade), state: state,
                                       reference: reference))
@@ -847,11 +1064,14 @@ public struct ArtBuilder: Sendable {
             let alignment = shape.path.closed && !geometry.fan.isEmpty ? stroke.alignment : .center
             let marks = add(to: &batch, geometry.outline)
             batch.steps.append(.stencil(vertices: marks, state: ArtStencil.outline, reference: ArtStencil.outlineBit))
+            drawn.outline = marks
             if alignment != .center {
                 let fan = add(to: &batch, geometry.fan)
                 batch.steps.append(.stencil(vertices: fan, state: ArtStencil.winding, reference: 0))
+                drawn.fans.append(fan)
             }
             let cover = addRect(to: &batch, geometry.outlineBounds)
+            drawn.outlineCover = cover
             let (state, reference) = Self.outlineCover(role, alignment, masked: masked)
             batch.steps.append(.cover(vertices: cover, paint: Self.coverPaint(.outline, of: shape, fade: fade), state: state,
                                       reference: reference))
@@ -955,24 +1175,23 @@ extension ArtBatch {
     /// moving its vertex ranges past the vertices so far. A `moving(false)` ending the
     /// last layer and a `moving(true)` starting this one cancel out, as they would in one
     /// walk across both layers.
+    /// Adds `layer`'s steps, one segment per chunk. Each segment stands alone: the
+    /// encoder starts each with `place` the identity and `moving` off.
     mutating func append(_ layer: ArtBuilder.LayerBatch, layer id: Int, transform: Affine2D, concatenating: Bool) {
         let base = segments.last?.vertices.upperBound ?? 0
-        var layerSteps = layer.steps[...]
-        if case .moving(true)? = layerSteps.first, case .moving(false)? = steps.last, let last = segments.indices.last {
-            steps.removeLast()
-            segments[last].steps = segments[last].steps.lowerBound..<(segments[last].steps.upperBound - 1)
-            layerSteps = layerSteps.dropFirst()
+        for chunk in layer.chunks {
+            let firstStep = steps.count
+            if base == 0 {
+                steps.append(contentsOf: layer.steps[chunk.steps])
+            } else {
+                steps.reserveAdditional(chunk.steps.count)
+                for step in layer.steps[chunk.steps] { steps.append(step.offset(by: base)) }
+            }
+            if concatenating { vertices.append(contentsOf: chunk.floats) }
+            let range = (base + chunk.vertices.lowerBound)..<(base + chunk.vertices.upperBound)
+            segments.append(ArtSegment(id: chunk.id, paintID: chunk.paintID, layer: id, vertices: range,
+                                       steps: firstStep..<steps.count, floats: chunk.floats, transform: transform))
         }
-        let firstStep = steps.count
-        if base == 0 {
-            steps.append(contentsOf: layerSteps)
-        } else {
-            steps.reserveAdditional(layerSteps.count)
-            for step in layerSteps { steps.append(step.offset(by: base)) }
-        }
-        if concatenating { vertices.append(contentsOf: layer.vertices) }
-        segments.append(ArtSegment(id: layer.id, paintID: layer.paintID, layer: id, vertices: base..<(base + layer.vertices.count / 2),
-                                   steps: firstStep..<steps.count, floats: layer.vertices, transform: transform))
     }
 
     mutating func add(_ points: [Float]) -> Range<Int> {
@@ -1005,7 +1224,16 @@ extension VectorShape {
     /// outline's color, since only the covers' paint reads them. `ArtRepaintTests` lists
     /// the shape's properties, so a new one has to be placed on one side or the other.
     func hasSameGeometry(as other: VectorShape) -> Bool {
-        id == other.id && path == other.path && text == other.text && textFrame == other.textFrame &&
+        hasSameSteps(as: other) && path == other.path && text == other.text && textFrame == other.textFrame
+    }
+
+    /// True when the art draws `other` with the same steps as this shape, given vertex
+    /// counts that match: they differ in paint and in their points at most (a path's
+    /// points, a text's words or metrics), so the steps place, stencil and cover the same
+    /// parts the same way. Whether the path is closed and whether it is a text count,
+    /// since they decide which parts there are.
+    func hasSameSteps(as other: VectorShape) -> Bool {
+        id == other.id && path.closed == other.path.closed && (text == nil) == (other.text == nil) &&
             (fill == nil) == (other.fill == nil) && (gradient == nil) == (other.gradient == nil) &&
             (image == nil) == (other.image == nil) &&
             ArtBuilder.Tessellation.sameOutline(stroke, other.stroke) &&

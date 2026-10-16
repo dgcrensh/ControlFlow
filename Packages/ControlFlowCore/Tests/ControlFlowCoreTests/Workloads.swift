@@ -343,9 +343,14 @@ struct Workload: @unchecked Sendable {
         playbackFrame(StressDrawing.transition(from: drawing, to: firstLayerFaded(drawing)))
     }
 
-    /// The same with a text on every layer tweening its tracking: each frame lays out,
-    /// outlines and tessellates every text again.
+    /// The same with a text on every layer tweening its tracking: each frame moves every
+    /// text's glyphs, writes their triangles into their layer in place and uploads them.
     static let playbackFrameTextTracking = Workload(name: "Playback frame, a text per layer tweens tracking") { drawing in
+        playbackFrame(textTrackingTween(drawing))
+    }
+
+    /// `drawing` with a text on every layer, into a keyframe that tweens their tracking.
+    static func textTrackingTween(_ drawing: Drawing) -> Timeline {
         let start = StressDrawing.withText(drawing)
         var end = start
         for l in end.layers.indices {
@@ -353,7 +358,7 @@ struct Workload: @unchecked Sendable {
                 end.layers[l].shapes[s].text!.tracking = 8
             }
         }
-        return playbackFrame(StressDrawing.transition(from: start, to: end))
+        return StressDrawing.transition(from: start, to: end)
     }
 
     static func everyLayerSlid(_ drawing: Drawing) -> Drawing {
@@ -661,6 +666,45 @@ struct Workload: @unchecked Sendable {
         return { _ = try! SVGImporter.parse(svg) }
     }
 
+    // MARK: Clipboard
+
+    /// Copying everything, as the app does on the main thread: the copied art, kept as it
+    /// is. Its JSON is written only when something reads the pasteboard (the next row).
+    static let copyEverything = Workload(name: "Copy everything") { drawing in
+        var editor = DrawingEditor(drawing: drawing)
+        editor.selection = everything(in: drawing)
+        return { _ = editor.clipboard() }
+    }
+
+    /// The JSON of everything copied, as another app's paste (or this app's after a
+    /// relaunch) reads it, off the main thread.
+    static let copyEverythingAsJSON = Workload(name: "Copy everything, as file JSON") { drawing in
+        var editor = DrawingEditor(drawing: drawing)
+        editor.selection = everything(in: drawing)
+        let clip = editor.clipboard()!
+        return { _ = clip.text }
+    }
+
+    /// Pasting everything copied in the app, which pastes the copy as it is, then undoing.
+    static let pasteEverything = Workload(name: "Paste everything copied in the app, and undo") { drawing in
+        var editor = DrawingEditor(drawing: drawing)
+        editor.selection = everything(in: drawing)
+        let clip = editor.clipboard()!
+        return {
+            _ = editor.paste(clip)
+            editor.undo()
+        }
+    }
+
+    /// Reading everything copied from its JSON, as a paste of another app's copy does off
+    /// the main thread.
+    static let pasteEverythingFromJSON = Workload(name: "Paste everything: read its JSON") { drawing in
+        var editor = DrawingEditor(drawing: drawing)
+        editor.selection = everything(in: drawing)
+        let text = editor.clipboard()!.text
+        return { _ = DrawingEditor.Clipboard(text: text)! }
+    }
+
     /// Everything above, in the order `ScalingTests` prints them.
     static var all: [Workload] {
         [artRebuildAfterOneEdit, artRebuildAfterOneEditWalkOnly, artRebuildAfterOneEditAndUpload, artRepaintAfterOneRecolour,
@@ -673,7 +717,8 @@ struct Workload: @unchecked Sendable {
          undoRedoAtKeyframe, resolveLastKeyframeCold, changedObjectsAtKeyframe, onionSkinBuild,
          nudgeAtKeyframeKeyingEverything, deleteAndUndoWithReorders, firstHoverAfterNudge, firstHoverAfterNudgeTransformed,
          hoverFrameEverythingSelected, nudgeEverything,
-         colorTickEverythingAtKeyframe, marqueeOverGroupedArt, refreshQueriesAtKeyframe]
+         colorTickEverythingAtKeyframe, marqueeOverGroupedArt, refreshQueriesAtKeyframe, copyEverything,
+         copyEverythingAsJSON, pasteEverything, pasteEverythingFromJSON]
     }
 
     static func everything(in drawing: Drawing) -> Selection {
