@@ -205,7 +205,7 @@ From reading the code:
    - #1's geometry-only cache key;
    - #7;
    - #4's caching.
-3. **#3:** keep the timeline's states across undo, and make `SceneLookup` lighter.
+3. **#3 (shipped):** keep the timeline's states across undo, and make `SceneLookup` lighter.
 4. **#1 properly:** local-space tessellation with transforms applied at draw time. This also removes #6.
 5. **#8, #9, #10, #11.**
 
@@ -257,4 +257,19 @@ Before and after, full size, `-c release`, per call, on one cloud container:
 | `undoRedoAtKeyframe` | 276 ms | 273 ms (step 3) |
 
 `frameAfterPlayback` now times the art builder building the keyframe again after a preview copy played; what is left is the world bake and the layer compares of #6, and the renderer skips even that, since `revision` didn't move. `changedObjectsAtKeyframe` now times the timeline's computation, not the editor's cached copy. What is left of the fill and fade frames is the interpolation, the world bake and rebuilding each changed layer's steps.
+
+### Step 3: undo, redo and resolving keyframes (shipped)
+
+- **Undo and redo keep resolved states.** `DrawingEditor.restore` builds the new `Timeline` and calls `reuseStates(of:)` with the old one. When the opening states match (ignoring `nextID`), it takes every resolved state up to the first keyframe whose changes differ, so undo at keyframe k re-applies only from the keyframe the step changed. Comparing changes is cheap because the snapshot's keyframes share storage with the live timeline's.
+- **One lookup per run, without vertices.** `Timeline.state(at:)` and `prune` build one `SceneLookup` and keep it up to date while each keyframe applies (`Drawing.apply(_:lookup:)`), rather than indexing the whole scene per keyframe. The lookup leaves vertices out until a change names an id it doesn't know (`SceneLookup.prepare`); most keyframes only set layer and shape properties, so it never indexes them. Until then a create checks only that its layers, groups and shapes are new, since ids are unique across a scene. Repairing groups (which can make new group ids) rebuilds the lookup. Loading a file still indexes everything, to validate it.
+- New workload `resolveLastKeyframeCold`: resolving keyframe 20 of 20 from the opening state, as the first show of a late keyframe after opening a file.
+
+Before and after, full size, `-c release`, per call, on one cloud container:
+
+| Workload | Before | After |
+| --- | --- | --- |
+| `undoRedoAtKeyframe` (one undo and redo) | 196 ms | 1.3 ms |
+| `resolveLastKeyframeCold` | 185 ms | 1.0 ms |
+| `changedObjectsAtKeyframe` | < 0.1 ms | < 0.3 ms (noise) |
+| `open` | 228 ms | 243 ms (noise; unchanged code) |
 

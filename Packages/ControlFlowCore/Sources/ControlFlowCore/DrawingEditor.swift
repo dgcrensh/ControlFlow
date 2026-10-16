@@ -1838,7 +1838,9 @@ public struct DrawingEditor: Sendable {
         let lastTransition = timeline.lastTransition
         var presentation = state.presentation
         presentation.opening.nextID = max(presentation.opening.nextID, nextID)
+        let previous = timeline
         timeline = Timeline(presentation)
+        timeline.reuseStates(of: previous)
         timeline.lastTransition = lastTransition
         currentKeyframe = state.keyframe.flatMap { presentation.chainIndex(of: $0) != nil ? $0 : nil }
         endPreview()
