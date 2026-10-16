@@ -17,6 +17,7 @@ final class PerformanceTests: XCTestCase {
         XCTAssertEqual(drawing.layers.count, StressDrawing.layers)
         XCTAssertEqual(drawing.shapeCount, StressDrawing.layers * StressDrawing.shapesPerLayer)
         XCTAssertTrue(drawing.groupsAreValid)
+        XCTAssertTrue(drawing.vertexIDsAreValid)
         XCTAssertTrue(drawing.layers.contains { $0.shapes.contains(where: \.isClipped) })
         XCTAssertTrue(drawing.layers.contains { $0.shapes.contains { $0.stroke?.dash.isEmpty == false } })
         XCTAssertNotNil(drawing.hitTest(StressDrawing.busyPoint(), tolerance: 4))
@@ -424,4 +425,23 @@ final class PerformanceTests: XCTestCase {
     func testSVGExport() { measure(.svgExport) }
 
     func testSVGImport() { measure(.svgImport) }
+
+    // MARK: Keyframe workloads
+
+    /// 10 frames of a whole-stage slide.
+    func testPlaybackFrameAllLayersSlide() { measure(.playbackFrameAllLayersSlide, calls: 10) }
+
+    /// 10 frames of every shape recoloring.
+    func testPlaybackFrameEveryFillChanges() { measure(.playbackFrameEveryFillChanges, calls: 10) }
+
+    /// 10 frames of one layer fading.
+    func testPlaybackFrameOneLayerFades() { measure(.playbackFrameOneLayerFades, calls: 10) }
+
+    func testFrameAfterPlayback() { measure(.frameAfterPlayback) }
+
+    /// 4 undo-redo pairs at keyframe 10 of 20.
+    func testUndoRedoAtKeyframe() { measure(.undoRedoAtKeyframe, calls: 4) }
+
+    /// 4 reads of the changed marks at keyframe 10 of 20.
+    func testChangedObjectsAtKeyframe() { measure(.changedObjectsAtKeyframe, calls: 4) }
 }

@@ -4,7 +4,9 @@ import Foundation
 /// A large, deterministic character for the performance tests: a grid of layers, each
 /// a stack of wobbly closed shapes with fills and outlines, some dashed outlines, a
 /// clipped group per few layers, and accessories. The same arguments always make the
-/// same drawing, so timings are comparable from run to run.
+/// same drawing, so timings are comparable from run to run. Every vertex has an id, as in
+/// a real document (`assignVertexIDs` runs on every commit): without them interpolation
+/// treats every shape as reshaped and takes the slow vertex-merge fallback.
 enum StressDrawing {
     /// The size the performance audit asks for, 40 layers × 60 shapes × 24 anchors, when
     /// the environment sets `STRESS_DRAWING=full`. Otherwise a quarter of the layers and
@@ -47,7 +49,34 @@ enum StressDrawing {
             }
             d.layers.append(layer)
         }
+        d.assignVertexIDs()
         return d
+    }
+
+    /// A presentation of `drawing` with `keyframes` keyframes after the opening state, each
+    /// moving one layer (a layer transform) and recoloring one shape of another, as a deck
+    /// of build-up slides would.
+    static func presentation(_ drawing: Drawing, keyframes: Int) -> Presentation {
+        var timeline = Timeline(Presentation(opening: drawing))
+        var state = drawing
+        for k in 1...keyframes {
+            _ = timeline.insertKeyframe(after: k - 1)
+            state.layers[k % state.layers.count].transform.position = Vec2(Double(k) * 3, 0)
+            let recolored = (k * 7) % state.layers.count
+            let shape = k % state.layers[recolored].shapes.count
+            state.layers[recolored].shapes[shape].fill = RGBAColor(r: 0.1, g: Double(k % 10) / 10, b: 0.4)
+            timeline.record(state, at: k)
+        }
+        return timeline.presentation
+    }
+
+    /// A presentation of `drawing` with one keyframe whose transition, 1 second long,
+    /// leads to `end`.
+    static func transition(from drawing: Drawing, to end: Drawing) -> Timeline {
+        var timeline = Timeline(Presentation(opening: drawing))
+        _ = timeline.insertKeyframe(after: 0, transition: Transition(duration: 1, curve: .easeInOut))
+        timeline.record(end, at: 1)
+        return timeline
     }
 
     /// The middle of the layer grid's bounds, on top of plenty of shapes.

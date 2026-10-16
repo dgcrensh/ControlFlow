@@ -312,6 +312,90 @@ struct Workload: @unchecked Sendable {
         }
     }
 
+    // MARK: Keyframes
+
+    /// One playback or scrub frame of a transition in which every layer slides (a layer
+    /// transform): the scene interpolated and the art rebuilt from a warm builder.
+    static let playbackFrameAllLayersSlide = Workload(name: "Playback frame, every layer slides") { drawing in
+        var end = drawing
+        for l in end.layers.indices { end.layers[l].transform.position = Vec2(200, 0) }
+        return playbackFrame(StressDrawing.transition(from: drawing, to: end))
+    }
+
+    /// The same with every shape changing fill and nothing moving.
+    static let playbackFrameEveryFillChanges = Workload(name: "Playback frame, every fill changes") { drawing in
+        var end = drawing
+        for l in end.layers.indices {
+            for s in end.layers[l].shapes.indices { end.layers[l].shapes[s].fill = RGBAColor(r: 0.2, g: 0.5, b: 0.9) }
+        }
+        return playbackFrame(StressDrawing.transition(from: drawing, to: end))
+    }
+
+    /// The same with one layer's shapes fading out.
+    static let playbackFrameOneLayerFades = Workload(name: "Playback frame, one layer fades") { drawing in
+        var end = drawing
+        for s in end.layers[0].shapes.indices { end.layers[0].shapes[s].opacity = 0 }
+        return playbackFrame(StressDrawing.transition(from: drawing, to: end))
+    }
+
+    /// 120 Hz frames through the transition into keyframe 1, wrapping before the end.
+    private static func playbackFrame(_ timeline: Timeline) -> () -> Void {
+        var timeline = timeline
+        var builder = ArtBuilder()
+        _ = builder.build(timeline.state(at: 0), isolatedLayer: nil, tolerance: 0.5)
+        var frame = 0
+        return {
+            frame += 1
+            let scene = timeline.transition(into: 1, elapsed: Double(frame % 110 + 1) / 120)
+            _ = builder.build(scene, isolatedLayer: nil, tolerance: 0.5)
+        }
+    }
+
+    /// The first frame after a whole-stage slide ends: the keyframe's own state built by a
+    /// builder that drew both keyframes and then a frame in the middle of the transition.
+    /// Each call starts from a copy of that builder, so it includes copying its caches on
+    /// first write.
+    static let frameAfterPlayback = Workload(name: "Frame after playback, every layer slid") { drawing in
+        var end = drawing
+        for l in end.layers.indices { end.layers[l].transform.position = Vec2(200, 0) }
+        var timeline = StressDrawing.transition(from: drawing, to: end)
+        let state = timeline.state(at: 1)
+        var playing = ArtBuilder()
+        _ = playing.build(state, isolatedLayer: nil, tolerance: 0.5)
+        _ = playing.build(timeline.state(at: 0), isolatedLayer: nil, tolerance: 0.5)
+        _ = playing.build(timeline.transition(into: 1, elapsed: 0.5), isolatedLayer: nil, tolerance: 0.5)
+        return {
+            var builder = playing
+            _ = builder.build(state, isolatedLayer: nil, tolerance: 0.5)
+        }
+    }
+
+    /// An undo then a redo of a nudge at keyframe 10 of 20, which resolves keyframe 10's
+    /// state again.
+    static let undoRedoAtKeyframe = Workload(name: "Undo and redo at keyframe 10 of 20") { drawing in
+        let presentation = StressDrawing.presentation(drawing, keyframes: 20)
+        var editor = DrawingEditor(presentation: presentation)
+        editor.selectKeyframe(presentation.keyframe(atChainIndex: 10)!.id)
+        editor.tool = .select
+        let layer = editor.drawing.layers[min(3, editor.drawing.layers.count - 1)]
+        editor.selection = .shape(layer: layer.id, shape: layer.shapes[min(2, layer.shapes.count - 1)].id)
+        editor.nudge(by: Vec2(1, 0))
+        return {
+            editor.undo()
+            editor.redo()
+        }
+    }
+
+    /// The Layers panel's "changed" marks at keyframe 10 of 20, with every state resolved:
+    /// what `CanvasStore.refresh()` reads after each edit or switch at a keyframe.
+    static let changedObjectsAtKeyframe = Workload(name: "Changed objects at keyframe 10 of 20") { drawing in
+        let presentation = StressDrawing.presentation(drawing, keyframes: 20)
+        var editor = DrawingEditor(presentation: presentation)
+        editor.selectKeyframe(presentation.keyframe(atChainIndex: 10)!.id)
+        _ = editor.state(atKeyframe: presentation.keyframe(atChainIndex: 20)!.id)
+        return { precondition(!editor.changedObjects().isEmpty) }
+    }
+
     // MARK: Navigating
 
     /// A two-finger pan, zoom and rotate of 60 samples through `CanvasSession`, plus the
@@ -391,7 +475,9 @@ struct Workload: @unchecked Sendable {
          zoomInRefineVisible, hoverFrame, selectHoverHitTest, overlayWireframeAtNewZoom, overlayWireframeAcrossZoomBucket,
          scissorsHover, pencilStroke, quickShapeCheck, eraserSample, dragSampleEverything, dragEndOneLayer,
          dragEndEverything, undoRedo, twoFingerNavigation, refreshQueries, layerTree, save, open, openParse,
-         openDecode, openFirstFrame, openFirstArtInView, svgExport, svgImport]
+         openDecode, openFirstFrame, openFirstArtInView, svgExport, svgImport, playbackFrameAllLayersSlide,
+         playbackFrameEveryFillChanges, playbackFrameOneLayerFades, frameAfterPlayback, undoRedoAtKeyframe,
+         changedObjectsAtKeyframe]
     }
 
     static func everything(in drawing: Drawing) -> Selection {
