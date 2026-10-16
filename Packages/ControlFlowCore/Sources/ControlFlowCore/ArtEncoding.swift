@@ -24,9 +24,9 @@ public protocol ArtEncoder {
     /// The depth-stencil state; nil is no stencil test or writes.
     mutating func setStencil(_ state: StencilState?)
     mutating func setStencilReference(_ reference: UInt8)
-    /// Fragment buffer 0 reads paint `slot` of `segment`'s buffer (see
-    /// `ArtSegment.paintByteOffset(slot:)`). `rebind` is false when it already reads that
-    /// buffer, so only the offset moves.
+    /// Fragment buffer 0 reads paint `slot` of `segment`'s paint buffer, the one for its
+    /// `paintID` (see `ArtSegment.paintByteOffset(slot:)`). `rebind` is false when it
+    /// already reads that buffer, so only the offset moves.
     mutating func setPaint(_ segment: ArtSegment, slot: Int, rebind: Bool)
     /// Fragment buffer 0 holds `image`'s map and `opacity`, and texture 0 its picture.
     mutating func setImagePaint(_ image: ArtImage, opacity: Double)
@@ -67,8 +67,8 @@ public enum ArtEncoding {
                         state.paint = nil
                     } else {
                         state.pipeline(.cover, &encoder)
-                        encoder.setPaint(segment, slot: slot, rebind: state.paint != segment.id)
-                        state.paint = segment.id
+                        encoder.setPaint(segment, slot: slot, rebind: state.paint != segment.paintID)
+                        state.paint = segment.paintID
                     }
                     slot += 1
                     state.place(segment, place, moving: moving, live: liveTransform, &encoder)
@@ -112,7 +112,7 @@ public enum ArtEncoding {
         /// `.some(nil)` is no stencil.
         var stencil: StencilState??
         var reference: UInt8?
-        /// The segment whose buffer fragment buffer 0 reads.
+        /// The paint id whose buffer fragment buffer 0 reads.
         var paint: Int?
 
         mutating func pipeline<E: ArtEncoder>(_ wanted: ArtPipeline, _ encoder: inout E) {
@@ -172,23 +172,38 @@ extension ArtPaint {
     /// shape's paint is its placeholder: `color`.
     public func appendGPUFloats(to floats: inout [Float]) {
         let start = floats.count
-        floats.append(contentsOf: [Float(color.r), Float(color.g), Float(color.b), Float(color.a)])
-        guard let gradient, !gradient.stops.isEmpty else {
-            floats.append(contentsOf: [0, 0, 0, 0, 0, 0, Float(min(max(opacity, 0), 1)), 0])
-            floats.append(contentsOf: repeatElement(0, count: start + Self.gpuFloatCount - floats.count))
-            return
-        }
+        floats.append(contentsOf: repeatElement(0, count: Self.gpuFloatCount))
+        floats.withUnsafeMutableBufferPointer { writeGPUFloats(to: $0.baseAddress! + start) }
+    }
+
+    /// Writes this paint as the cover shader reads it into the `gpuFloatCount` floats at
+    /// `target`, which hold zeros.
+    func writeGPUFloats(to target: UnsafeMutablePointer<Float>) {
+        target[0] = Float(color.r)
+        target[1] = Float(color.g)
+        target[2] = Float(color.b)
+        target[3] = Float(color.a)
+        target[10] = Float(min(max(opacity, 0), 1))
+        guard let gradient, !gradient.stops.isEmpty else { return }
         let stops = gradient.stops.prefix(ShapeGradient.maxStops)
-        floats.append(contentsOf: [Float(gradient.start.x), Float(gradient.start.y),
-                                   Float(gradient.end.x), Float(gradient.end.y)])
-        floats.append(contentsOf: [gradient.kind == .linear ? 1 : 2, Float(stops.count),
-                                   Float(min(max(opacity, 0), 1)), 0])
-        for stop in stops {
-            floats.append(contentsOf: [Float(stop.color.r), Float(stop.color.g), Float(stop.color.b), Float(stop.color.a)])
+        target[4] = Float(gradient.start.x)
+        target[5] = Float(gradient.start.y)
+        target[6] = Float(gradient.end.x)
+        target[7] = Float(gradient.end.y)
+        target[8] = gradient.kind == .linear ? 1 : 2
+        target[9] = Float(stops.count)
+        for slot in 0..<ShapeGradient.maxStops {
+            guard slot < stops.count else {
+                target[44 + slot] = 1
+                continue
+            }
+            let stop = stops[stops.startIndex + slot]
+            target[12 + slot * 4] = Float(stop.color.r)
+            target[13 + slot * 4] = Float(stop.color.g)
+            target[14 + slot * 4] = Float(stop.color.b)
+            target[15 + slot * 4] = Float(stop.color.a)
+            target[44 + slot] = Float(stop.offset)
         }
-        floats.append(contentsOf: repeatElement(0, count: (ShapeGradient.maxStops - stops.count) * 4))
-        floats.append(contentsOf: stops.map { Float($0.offset) })
-        floats.append(contentsOf: repeatElement(1, count: ShapeGradient.maxStops - stops.count))
     }
 }
 
@@ -197,35 +212,32 @@ extension ArtSegment {
     /// constant buffer, which also fits `ArtPaint.gpuFloatCount`.
     public static let paintSlotFloats = 64
 
-    /// Where the paint slots start in the segment's buffer, in floats: after `floats`,
-    /// rounded up to a slot.
-    public var paintStart: Int {
-        (floats.count + Self.paintSlotFloats - 1) / Self.paintSlotFloats * Self.paintSlotFloats
-    }
-
-    /// The byte offset of paint `slot` in the segment's buffer.
+    /// The byte offset of paint `slot` in the segment's paint buffer.
     public func paintByteOffset(slot: Int) -> Int {
-        (paintStart + slot * Self.paintSlotFloats) * MemoryLayout<Float>.stride
+        slot * Self.paintSlotFloats * MemoryLayout<Float>.stride
     }
 
-    /// What follows `floats` in the segment's buffer: padding up to `paintStart`, then one
-    /// slot for each of its cover steps (with `steps`, its batch's), in order. Empty when
-    /// it has no covers. A segment with the same id has the same steps, so its paint
-    /// stays valid as long as its vertices do.
-    public func paintFloats(in steps: [ArtStep]) -> [Float] {
+    /// How many cover steps the segment has (with `steps`, its batch's).
+    public func coverCount(in steps: [ArtStep]) -> Int {
         var covers = 0
         for step in steps[self.steps] {
             if case .cover = step { covers += 1 }
         }
-        guard covers > 0 else { return [] }
-        var result: [Float] = []
-        result.reserveCapacity(paintStart - floats.count + covers * Self.paintSlotFloats)
-        result.append(contentsOf: repeatElement(0, count: paintStart - floats.count))
-        for step in steps[self.steps] {
-            guard case .cover(_, let paint, _, _) = step else { continue }
-            let start = result.count
-            paint.appendGPUFloats(to: &result)
-            result.append(contentsOf: repeatElement(0, count: start + Self.paintSlotFloats - result.count))
+        return covers
+    }
+
+    /// The segment's paint buffer, kept by `paintID` apart from its vertices so a change
+    /// of paint alone uploads only this: one slot for each of its cover steps (with
+    /// `steps`, its batch's), in order. Empty when it has no covers.
+    public func paintFloats(in steps: [ArtStep]) -> [Float] {
+        var result = [Float](repeating: 0, count: coverCount(in: steps) * Self.paintSlotFloats)
+        result.withUnsafeMutableBufferPointer { floats in
+            var slot = 0
+            for step in steps[self.steps] {
+                guard case .cover(_, let paint, _, _) = step else { continue }
+                paint.writeGPUFloats(to: floats.baseAddress! + slot * Self.paintSlotFloats)
+                slot += 1
+            }
         }
         return result
     }

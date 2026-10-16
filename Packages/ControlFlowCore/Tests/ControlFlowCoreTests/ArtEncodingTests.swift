@@ -5,7 +5,7 @@ import XCTest
 /// What a draw reads: the state bound when it is made.
 private struct DrawState: Equatable {
     enum Vertices: Equatable { case view, segment(Int) }
-    enum Paint: Equatable { case none, slot(segment: Int, slot: Int), image(String, Double), veil }
+    enum Paint: Equatable { case none, slot(paint: Int, slot: Int), image(String, Double), veil }
 
     var pipeline: ArtPipeline?
     var transform: Affine2D?
@@ -20,7 +20,7 @@ private struct DrawState: Equatable {
 private struct RecordingEncoder: ArtEncoder {
     var ready: Set<String> = []
     var state = DrawState()
-    /// The segment whose buffer fragment buffer 0 reads.
+    /// The paint id whose buffer fragment buffer 0 reads.
     var paintBuffer: Int?
     var draws: [DrawState] = []
     var calls = 0
@@ -38,9 +38,9 @@ private struct RecordingEncoder: ArtEncoder {
     mutating func setStencilReference(_ reference: UInt8) { calls += 1; state.reference = reference }
     mutating func setPaint(_ segment: ArtSegment, slot: Int, rebind: Bool) {
         calls += 1
-        if !rebind { XCTAssertEqual(paintBuffer, segment.id, "only the offset moves when the buffer is bound") }
-        paintBuffer = segment.id
-        state.paint = .slot(segment: segment.id, slot: slot)
+        if !rebind { XCTAssertEqual(paintBuffer, segment.paintID, "only the offset moves when the buffer is bound") }
+        paintBuffer = segment.paintID
+        state.paint = .slot(paint: segment.paintID, slot: slot)
     }
     mutating func setImagePaint(_ image: ArtImage, opacity: Double) {
         calls += 2 // the map and the picture
@@ -77,7 +77,7 @@ private func expectedDraws(_ batch: ArtBatch, live: Affine2D, ready: Set<String>
                 draws.append(DrawState(pipeline: image == nil ? .cover : .imageCover, transform: toWorld(),
                                        vertices: .segment(segment.id), stencil: .some(state), reference: reference,
                                        paint: image.map { .image($0.src, paint.opacity) } ??
-                                           .slot(segment: segment.id, slot: slot),
+                                           .slot(paint: segment.paintID, slot: slot),
                                        range: segment.local(range)))
                 slot += 1
             case .stencilView(let state, let reference):
@@ -192,7 +192,7 @@ final class ArtEncodingTests: XCTestCase {
         let batch = builder.build(d, isolatedLayer: nil, tolerance: 0.5)
         let encoder = assertEncodesLikeFullWalk(batch, ready: ["a.png"])
         XCTAssertTrue(encoder.draws.contains { $0.pipeline == .imageCover })
-        XCTAssertTrue(encoder.draws.contains { $0.paint == .slot(segment: batch.segments[0].id, slot: 1) },
+        XCTAssertTrue(encoder.draws.contains { $0.paint == .slot(paint: batch.segments[0].paintID, slot: 1) },
                       "the missing picture paints its placeholder from its slot")
     }
 
@@ -216,7 +216,7 @@ final class ArtEncodingTests: XCTestCase {
         XCTAssertEqual(Array(floats[44..<52]), [0, 0.75, 1, 1, 1, 1, 1, 1])
     }
 
-    func testEachCoverHasAnAlignedSlotAfterTheVertices() {
+    func testEachCoverHasAnAlignedSlotInThePaintBuffer() {
         var builder = ArtBuilder.likeRenderer()
         let batch = builder.build(Self.drawing, isolatedLayer: nil, tolerance: 0.5)
         for segment in batch.segments where !segment.floats.isEmpty {
@@ -224,13 +224,14 @@ final class ArtEncodingTests: XCTestCase {
             let covers = batch.steps[segment.steps].compactMap { step -> ArtPaint? in
                 if case .cover(_, let paint, _, _) = step { paint } else { nil }
             }
-            XCTAssertEqual(segment.floats.count + paints.count,
-                           segment.paintStart + covers.count * ArtSegment.paintSlotFloats)
-            XCTAssertEqual(segment.paintByteOffset(slot: 0) % 256, 0)
+            XCTAssertEqual(paints.count, covers.count * ArtSegment.paintSlotFloats)
+            XCTAssertEqual(segment.coverCount(in: batch.steps), covers.count)
+            XCTAssertNotEqual(segment.paintID, segment.id)
             for (slot, paint) in covers.enumerated() {
                 var wanted: [Float] = []
                 paint.appendGPUFloats(to: &wanted)
-                let start = segment.paintByteOffset(slot: slot) / MemoryLayout<Float>.stride - segment.floats.count
+                XCTAssertEqual(segment.paintByteOffset(slot: slot) % 256, 0)
+                let start = segment.paintByteOffset(slot: slot) / MemoryLayout<Float>.stride
                 XCTAssertEqual(Array(paints[start..<(start + ArtPaint.gpuFloatCount)]), wanted)
             }
         }

@@ -159,8 +159,14 @@ public struct ArtBatch: Hashable, Sendable {
 /// its own GPU buffer and upload only the layers an edit changed.
 public struct ArtSegment: Hashable, Sendable {
     /// Names these vertices: a segment in a later batch from the same `ArtBuilder` with
-    /// the same id has the same `floats`. Never reused by that builder.
+    /// the same id has the same `floats` and the same steps but for their paint. Never
+    /// reused by that builder.
     public var id: Int
+    /// Names these paints: a segment in a later batch from the same `ArtBuilder` with the
+    /// same `paintID` has the same cover paints (`paintFloats(in:)`). A change of paint
+    /// alone (a fade, a recolour) keeps `id`, and so the vertices' buffer, and takes a new
+    /// `paintID`. Never reused by that builder, nor equal to any segment's `id`.
+    public var paintID: Int
     /// The layer (its id in the drawing) whose art this is.
     public var layer: Int
     /// The layer's vertices, in the batch's vertex numbering.
@@ -187,9 +193,21 @@ extension ArtBatch {
         segments.filter { !$0.floats.isEmpty && !resident.contains($0.id) }
     }
 
-    /// The ids whose buffers this batch draws from; buffers for any other id can go.
+    /// The ids whose vertex buffers this batch draws from; buffers for any other id can go.
     public var residentIDs: Set<Int> {
         Set(segments.lazy.filter { !$0.floats.isEmpty }.map(\.id))
+    }
+
+    /// The segments whose paints aren't in a GPU buffer yet: those with cover steps whose
+    /// `paintID` isn't in `resident`. A fade or recolour lists the layers it repaints, and
+    /// none of them is in `segmentsToUpload`.
+    public func segmentsToRepaint(resident: Set<Int>) -> [ArtSegment] {
+        segments.filter { !resident.contains($0.paintID) && $0.coverCount(in: steps) > 0 }
+    }
+
+    /// The paint ids whose buffers this batch draws from; buffers for any other can go.
+    public var residentPaintIDs: Set<Int> {
+        Set(segments.lazy.filter { $0.coverCount(in: steps) > 0 }.map(\.paintID))
     }
 }
 
@@ -215,6 +233,8 @@ public struct ArtShape: Sendable {
     public var shape: VectorShape
     public var place: Affine2D
     public var tolerance: Double
+    /// The transform `shape` took into its points, when it couldn't be drawn through it.
+    public var baked: Affine2D?
 
     public var id: Int { shape.id }
 }
@@ -276,7 +296,8 @@ public struct ArtBuilder: Sendable {
             self.shape.id == shape.id && self.shape.path == shape.path && Self.sameOutline(self.shape.stroke, shape.stroke)
         }
 
-        private static func sameOutline(_ a: StrokeStyle?, _ b: StrokeStyle?) -> Bool {
+        /// The outlines have the same geometry: everything but their color.
+        static func sameOutline(_ a: StrokeStyle?, _ b: StrokeStyle?) -> Bool {
             guard let a, let b else { return a == nil && b == nil }
             return a.width == b.width && a.cap == b.cap && a.join == b.join && a.miterLimit == b.miterLimit &&
                 a.dash == b.dash && a.dashOffset == b.dashOffset && a.alignment == b.alignment
@@ -302,6 +323,38 @@ public struct ArtBuilder: Sendable {
         /// `LayerPlacement.baked` and `detail`.
         var bakedLayer: Affine2D?
         var detail: Double
+
+        /// True when a layer built for `other` has the same vertices and steps as one
+        /// built for this key, but for its covers' paint: the keys differ in their shapes'
+        /// paint at most (see `VectorShape.hasSameGeometry(as:)`).
+        func sameGeometry(as other: LayerKey) -> Bool {
+            guard shapes.count == other.shapes.count else { return false }
+            var a = self, b = other
+            a.shapes = []
+            b.shapes = []
+            guard a == b else { return false }
+            for (x, y) in zip(shapes, other.shapes) where x != y {
+                guard x.hasSameGeometry(as: y) else { return false }
+            }
+            return true
+        }
+    }
+
+    /// What a cover step paints, so a change of paint alone can paint the layer's steps
+    /// again without building them (see `repaint`).
+    struct CoverSource: Sendable {
+        enum Kind: Sendable {
+            case fill, image, outline
+        }
+
+        /// The shape's index in its layer.
+        var index: Int
+        var kind: Kind
+        /// The matrix baked into the shape's points (see `artShape`), whose paint is then
+        /// in that space too.
+        var baked: Affine2D?
+        /// The ghost view's opacity for the shape.
+        var fade: Double
     }
 
     /// One layer's steps, with vertex ranges counted from the start of its own `vertices`.
@@ -309,6 +362,9 @@ public struct ArtBuilder: Sendable {
     struct LayerBatch: Sendable {
         var key: LayerKey
         var id: Int
+        var paintID: Int
+        /// One per cover step, in order.
+        var covers: [CoverSource]
         /// Every shape was drawn at its tolerance. A layer built while a refine was under
         /// way may hold shapes at an older tolerance; it is rebuilt rather than reused, so
         /// it picks up the refined shapes once they are merged.
@@ -322,6 +378,8 @@ public struct ArtBuilder: Sendable {
     private var nextLayerBatchID = 1
     /// How many layer batches have been built rather than reused, for tests.
     private(set) var layerBuilds = 0
+    /// How many layer batches have been painted again rather than built, for tests.
+    private(set) var layerRepaints = 0
     /// How many shapes have a cached tessellation, for tests.
     var cachedShapeCount: Int { tessellations.count }
     /// Each shape's tessellation. Public so the renderer can refine a copy in the
@@ -345,6 +403,8 @@ public struct ArtBuilder: Sendable {
     private var moving: Set<Int> = []
     private var isMoving = false
     private var place = Affine2D.identity
+    /// While building a layer: its covers so far.
+    private var covers: [CoverSource] = []
 
     /// How strongly the ghost view draws the shapes outside its focus.
     public static let ghostOpacity = 0.25
@@ -401,6 +461,14 @@ public struct ArtBuilder: Sendable {
                 batch.append(cached, layer: layer.id, transform: placement.segment, concatenating: concatenatesVertices)
                 continue
             }
+            // Only paint changed (a fade, a recolour): the same vertices and steps, with
+            // the covers painted again. Its shapes and their tessellations stay.
+            if let cached = layerCache[slot], cached.isExact, cached.key.sameGeometry(as: key) {
+                let repainted = repaint(cached, layer: layer, key: key)
+                layerCache[slot] = repainted
+                batch.append(repainted, layer: layer.id, transform: placement.segment, concatenating: concatenatesVertices)
+                continue
+            }
             if let old = layerCache[slot] { retired.formUnion(old.key.shapes.lazy.map(\.id)) }
             fresh.formUnion(layer.shapes.lazy.map(\.id))
             let built = buildLayer(layer, key: key, placement: placement)
@@ -447,7 +515,7 @@ public struct ArtBuilder: Sendable {
         if r.isSimilarity || !stretchesUnlikeItsPoints(shape) {
             return ArtShape(shape: shape.resolvingText(), place: r, tolerance: tolerance / detail(of: placement.segment * r))
         }
-        return ArtShape(shape: shape.baked(r), place: .identity, tolerance: tolerance / placement.detail)
+        return ArtShape(shape: shape.baked(r), place: .identity, tolerance: tolerance / placement.detail, baked: r)
     }
 
     /// Every shape of `layer` as the art draws it at `tolerance` (see `artShape`), and
@@ -499,6 +567,47 @@ public struct ArtBuilder: Sendable {
 
     // MARK: Building a layer
 
+    /// `cached` with each cover's paint taken from `layer`'s shapes, for `key`, which
+    /// differs from its key in paint alone. It keeps its id, so its vertices' buffer; it
+    /// takes a new paint id unless no cover's paint changed.
+    private mutating func repaint(_ cached: LayerBatch, layer: Layer, key: LayerKey) -> LayerBatch {
+        var result = cached
+        result.key = key
+        var cover = 0
+        for i in result.steps.indices {
+            guard case .cover(let range, _, let state, let reference) = result.steps[i] else { continue }
+            let source = cached.covers[cover]
+            cover += 1
+            let shape = layer.shapes[source.index]
+            let paint = Self.coverPaint(source.kind, of: source.baked.map { shape.baked($0) } ?? shape, fade: source.fade)
+            result.steps[i] = .cover(vertices: range, paint: paint, state: state, reference: reference)
+        }
+        if result.steps != cached.steps {
+            layerRepaints += 1
+            result.paintID = nextLayerBatchID
+            nextLayerBatchID += 1
+        }
+        return result
+    }
+
+    /// What a cover of `kind` paints for `shape` (as the art draws it, see `ArtShape`),
+    /// at `fade` for the ghost view.
+    static func coverPaint(_ kind: CoverSource.Kind, of shape: VectorShape, fade: Double) -> ArtPaint {
+        switch kind {
+        case .image:
+            let placed = shape.image.flatMap { image in
+                shape.imagePlacement?.inverted.map { ArtImage(src: image.src, worldToImage: $0) }
+            }
+            return ArtPaint(color: ArtPaint.missingImage, opacity: shape.opacity * fade, image: placed)
+        case .fill:
+            // The shape had a visible fill when it was built, and nothing that decides
+            // whether it has one has changed since (see `VectorShape.hasSameGeometry(as:)`).
+            return ArtPaint(color: shape.fill ?? .black, gradient: shape.gradient, opacity: shape.opacity * fade)
+        case .outline:
+            return ArtPaint(color: shape.stroke?.color ?? .black, opacity: shape.opacity * fade)
+        }
+    }
+
     /// Draws one layer from scratch (its shapes' tessellations still come from the cache).
     private mutating func buildLayer(_ layer: Layer, key: LayerKey, placement: LayerPlacement) -> LayerBatch {
         layerBuilds += 1
@@ -506,6 +615,7 @@ public struct ArtBuilder: Sendable {
         moving = key.moving
         isMoving = false
         place = .identity
+        covers = []
         usedOtherTolerance = false
         let arts = layer.shapes.indices.map { Self.artShape($0, of: layer, placement: placement, tolerance: key.tolerance) }
         let all = Array(layer.shapes.indices)
@@ -523,9 +633,12 @@ public struct ArtBuilder: Sendable {
         moving = []
         isMoving = false
         place = .identity
-        defer { nextLayerBatchID += 1 }
-        return LayerBatch(key: key, id: nextLayerBatchID, isExact: !usedOtherTolerance, vertices: batch.vertices,
-                         steps: batch.steps)
+        defer {
+            covers = []
+            nextLayerBatchID += 2
+        }
+        return LayerBatch(key: key, id: nextLayerBatchID, paintID: nextLayerBatchID + 1, covers: covers,
+                          isExact: !usedOtherTolerance, vertices: batch.vertices, steps: batch.steps)
     }
 
     /// Adds the shapes at `indices` of `layer` (drawn as `arts`), leaving out clipped
@@ -568,7 +681,7 @@ public struct ArtBuilder: Sendable {
             let fade = ghostFocus.map { $0.contains(shape.id) ? 1 : Self.ghostOpacity } ?? 1
             let clear = role == .base ? clipArea(of: index, in: layer, arts: arts, clips: clips, drawn: drawn) : nil
             // A clipped shape in the group needs no mask: its base only drew inside it.
-            append(arts[index], geometry, role: role, clipArea: clear, masked: mask != nil && role != .clipped, fade: fade,
+            append(arts[index], index: index, baked: arts[index].baked, geometry, role: role, clipArea: clear, masked: mask != nil && role != .clipped, fade: fade,
                    to: &batch)
         }
         if masking != nil { batch.steps.append(.stencilView(state: ArtStencil.restoreClip, reference: ArtStencil.clipBit)) }
@@ -689,8 +802,9 @@ public struct ArtBuilder: Sendable {
 
     /// `clipArea` bounds the clip clear before a base (see `clipArea(of:in:arts:clips:drawn:)`),
     /// in the layer's space.
-    private mutating func append(_ art: ArtShape, _ geometry: Tessellation, role: ClipRole, clipArea: Rect?,
-                                 masked: Bool, fade: Double, to batch: inout ArtBatch) {
+    /// `index` is the shape's in its layer and `baked` what its points took (see `artShape`).
+    private mutating func append(_ art: ArtShape, index: Int, baked: Affine2D?, _ geometry: Tessellation, role: ClipRole,
+                                 clipArea: Rect?, masked: Bool, fade: Double, to batch: inout ArtBatch) {
         let shape = art.shape
         let moves = moving.contains(shape.id)
         if moves != isMoving {
@@ -710,22 +824,23 @@ public struct ArtBuilder: Sendable {
         }
         setPlace(art.place, in: &batch)
 
-        if let image = shape.image, !geometry.fan.isEmpty {
+        if shape.image != nil, !geometry.fan.isEmpty {
             // Stencilled like a fill, then covered with the picture.
             let fan = add(to: &batch, geometry.fan)
             batch.steps.append(.stencil(vertices: fan, state: ArtStencil.winding, reference: 0))
             let cover = addRect(to: &batch, geometry.fanBounds)
             let (state, reference) = Self.fillCover(role, masked: masked)
-            let placed = shape.imagePlacement?.inverted.map { ArtImage(src: image.src, worldToImage: $0) }
-            let paint = ArtPaint(color: ArtPaint.missingImage, opacity: shape.opacity * fade, image: placed)
-            batch.steps.append(.cover(vertices: cover, paint: paint, state: state, reference: reference))
-        } else if let fill = shape.visibleFill, !geometry.fan.isEmpty {
+            batch.steps.append(.cover(vertices: cover, paint: Self.coverPaint(.image, of: shape, fade: fade), state: state,
+                                      reference: reference))
+            covers.append(CoverSource(index: index, kind: .image, baked: baked, fade: fade))
+        } else if shape.visibleFill != nil, !geometry.fan.isEmpty {
             let fan = add(to: &batch, geometry.fan)
             batch.steps.append(.stencil(vertices: fan, state: ArtStencil.winding, reference: 0))
             let cover = addRect(to: &batch, geometry.fanBounds)
             let (state, reference) = Self.fillCover(role, masked: masked)
-            let paint = ArtPaint(color: fill, gradient: shape.gradient, opacity: shape.opacity * fade)
-            batch.steps.append(.cover(vertices: cover, paint: paint, state: state, reference: reference))
+            batch.steps.append(.cover(vertices: cover, paint: Self.coverPaint(.fill, of: shape, fade: fade), state: state,
+                                      reference: reference))
+            covers.append(CoverSource(index: index, kind: .fill, baked: baked, fade: fade))
         }
 
         if let stroke = shape.stroke, !geometry.outline.isEmpty {
@@ -738,8 +853,9 @@ public struct ArtBuilder: Sendable {
             }
             let cover = addRect(to: &batch, geometry.outlineBounds)
             let (state, reference) = Self.outlineCover(role, alignment, masked: masked)
-            let paint = ArtPaint(color: stroke.color, opacity: shape.opacity * fade)
-            batch.steps.append(.cover(vertices: cover, paint: paint, state: state, reference: reference))
+            batch.steps.append(.cover(vertices: cover, paint: Self.coverPaint(.outline, of: shape, fade: fade), state: state,
+                                      reference: reference))
+            covers.append(CoverSource(index: index, kind: .outline, baked: baked, fade: fade))
             if role == .base, alignment != .center || masked {
                 batch.steps.append(.stencil(vertices: cover, state: ArtStencil.cleanUp, reference: 0))
             }
@@ -855,7 +971,7 @@ extension ArtBatch {
             for step in layerSteps { steps.append(step.offset(by: base)) }
         }
         if concatenating { vertices.append(contentsOf: layer.vertices) }
-        segments.append(ArtSegment(id: layer.id, layer: id, vertices: base..<(base + layer.vertices.count / 2),
+        segments.append(ArtSegment(id: layer.id, paintID: layer.paintID, layer: id, vertices: base..<(base + layer.vertices.count / 2),
                                    steps: firstStep..<steps.count, floats: layer.vertices, transform: transform))
     }
 
@@ -878,5 +994,22 @@ extension ArtBatch {
     mutating func addRect(_ rect: Rect) -> Range<Int> {
         let c = rect.corners
         return add([c[0], c[1], c[2], c[0], c[2], c[3]])
+    }
+}
+
+extension VectorShape {
+    /// True when the art draws `other` with the same vertices and steps as this shape:
+    /// they differ in paint at most. Whether there is a fill, a gradient and an image
+    /// counts, since that decides the steps (and, for a gradient, whether a stretch is
+    /// baked into the points); their colors, stops, opacity and picture don't, nor the
+    /// outline's color, since only the covers' paint reads them. `ArtRepaintTests` lists
+    /// the shape's properties, so a new one has to be placed on one side or the other.
+    func hasSameGeometry(as other: VectorShape) -> Bool {
+        id == other.id && path == other.path && text == other.text && textFrame == other.textFrame &&
+            (fill == nil) == (other.fill == nil) && (gradient == nil) == (other.gradient == nil) &&
+            (image == nil) == (other.image == nil) &&
+            ArtBuilder.Tessellation.sameOutline(stroke, other.stroke) &&
+            isClipped == other.isClipped && isHidden == other.isHidden && isLocked == other.isLocked &&
+            group == other.group && transform == other.transform
     }
 }

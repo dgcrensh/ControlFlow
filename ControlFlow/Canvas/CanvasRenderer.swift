@@ -19,8 +19,8 @@ private struct CanvasUniforms {
 
 /// A solid color for the cover shader, for the draws outside the art (the stage, the
 /// veils). Layout must match `Paint` in ShaderSource: three float4s, then eight stop
-/// colors and eight stop offsets. The art's paints are written into each layer's buffer
-/// instead (`ArtSegment.paintFloats`).
+/// colors and eight stop offsets. The art's paints are written into each layer's paint
+/// buffer instead (`ArtSegment.paintFloats`).
 private struct PaintUniforms {
     var color: SIMD4<Float>
     var points: SIMD4<Float> = .zero
@@ -123,10 +123,12 @@ final class CanvasRenderer {
     /// The live drag drawn on the last frame, whose triangles move with the shapes when it ends.
     private var lastLive: LiveTransform?
     private var artSteps: [ArtStep] = []
-    /// One per layer. Each layer's vertices, then its cover steps' paints, live in their own
-    /// buffer, keyed by segment id, so an edit uploads only the layers it changed. A buffer
-    /// is never written after it is made, so a frame still in flight keeps reading the one
-    /// it was given (the command buffer retains it).
+    /// One per layer. Each layer's vertices live in their own buffer, keyed by segment id,
+    /// and its cover steps' paints in another, keyed by its paint id, so an edit uploads
+    /// only the layers it changed, and a fade or recolour only their paints. The two kinds
+    /// of id never collide, so one dictionary holds both. A buffer is never written after
+    /// it is made, so a frame still in flight keeps reading the one it was given (the
+    /// command buffer retains it).
     private var artSegments: [ArtSegment] = []
     private var artBuffers: [Int: any MTLBuffer] = [:]
     /// Presenting, where the art is each played frame's scene: its layers' buffers from
@@ -545,16 +547,15 @@ final class CanvasRenderer {
         defer { Signposts.canvas.endInterval("Art upload", interval, "\(floats) floats, pooled") }
         var nextBuffers: [Int: any MTLBuffer] = [:]
         var nextHandles: [Int: VertexBufferPool.Handle] = [:]
-        for id in batch.residentIDs {
+        for id in batch.residentIDs.union(batch.residentPaintIDs) {
             nextBuffers[id] = kept[id]
             nextHandles[id] = handles[id]
         }
-        for segment in batch.segmentsToUpload(resident: Set(nextBuffers.keys)) {
-            let paint = segment.paintFloats(in: batch.steps)
-            floats += segment.floats.count + paint.count
-            guard let handle = buffers.upload([segment.floats, paint], pin: true) else { continue }
-            nextBuffers[segment.id] = handle.buffer
-            nextHandles[segment.id] = handle
+        for (id, chunk) in Self.uploads(batch, resident: Set(nextBuffers.keys)) {
+            floats += chunk.count
+            guard let handle = buffers.upload([chunk], pin: true) else { continue }
+            nextBuffers[id] = handle.buffer
+            nextHandles[id] = handle
         }
         for (id, handle) in handles where nextHandles[id] == nil { buffers.release(handle) }
         kept = nextBuffers
@@ -586,19 +587,26 @@ final class CanvasRenderer {
     }
 
     /// The buffers for `batch`'s layers: those in `buffers` it still uses, and a new one
-    /// for each layer that changed, holding its vertices and then its paints.
+    /// for the vertices of each layer that changed and for the paints of each layer that
+    /// changed or was repainted.
     private func upload(_ batch: ArtBatch, keeping buffers: [Int: any MTLBuffer]) -> [Int: any MTLBuffer] {
         let interval = Signposts.canvas.beginInterval("Art upload")
         var floats = 0
         defer { Signposts.canvas.endInterval("Art upload", interval, "\(floats) floats") }
         var kept: [Int: any MTLBuffer] = [:]
-        for id in batch.residentIDs { kept[id] = buffers[id] }
-        for segment in batch.segmentsToUpload(resident: Set(kept.keys)) {
-            let paint = segment.paintFloats(in: batch.steps)
-            floats += segment.floats.count + paint.count
-            kept[segment.id] = makeBuffer([segment.floats, paint])
+        for id in batch.residentIDs.union(batch.residentPaintIDs) { kept[id] = buffers[id] }
+        for (id, chunk) in Self.uploads(batch, resident: Set(kept.keys)) {
+            floats += chunk.count
+            kept[id] = makeBuffer([chunk])
         }
         return kept
+    }
+
+    /// What `batch` needs in buffers that `resident` doesn't hold: new layers' vertices by
+    /// segment id, and new or repainted layers' paints by paint id.
+    private static func uploads(_ batch: ArtBatch, resident: Set<Int>) -> [(id: Int, floats: [Float])] {
+        batch.segmentsToUpload(resident: resident).map { ($0.id, $0.floats) } +
+            batch.segmentsToRepaint(resident: resident).map { ($0.paintID, $0.paintFloats(in: batch.steps)) }
     }
 
     /// A new shared buffer holding `chunks`, one after another.
@@ -721,7 +729,7 @@ final class CanvasRenderer {
     /// the space its `place` step names: the vertex shader takes them through the place,
     /// the layer's transform and, for shapes a drag moves, the drag's transform, before
     /// the camera. Gradients and pictures are in the vertices' own space, so they move
-    /// with them. Each cover's paint is read from its slot in the layer's buffer.
+    /// with them. Each cover's paint is read from its slot in the layer's paint buffer.
     private func drawArt(_ steps: [ArtStep], segments: [ArtSegment], buffers: [Int: any MTLBuffer],
                          encoder: any MTLRenderCommandEncoder, uniforms: CanvasUniforms, viewRect: Rect) {
         guard !steps.isEmpty else { return }
@@ -948,7 +956,7 @@ private struct MetalArtEncoder: ArtEncoder {
     func setPaint(_ segment: ArtSegment, slot: Int, rebind: Bool) {
         let offset = segment.paintByteOffset(slot: slot)
         if rebind {
-            guard let buffer = buffers[segment.id] else { return }
+            guard let buffer = buffers[segment.paintID] else { return }
             encoder.setFragmentBuffer(buffer, offset: offset, index: 0)
         } else {
             encoder.setFragmentBufferOffset(offset, index: 0)

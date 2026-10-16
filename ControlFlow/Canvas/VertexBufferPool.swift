@@ -67,7 +67,10 @@ final class VertexBufferPool {
         let completed = clock.completed
         let free = slots.indices.filter { !slots[$0].isPinned && slots[$0].lastUse <= completed }
 
-        var slot = free.first { slots[$0].buffer.length >= length }
+        // The smallest free buffer that fits, so a layer's few paints don't take the
+        // buffer a big layer's vertices need.
+        var slot = free.filter { slots[$0].buffer.length >= length }
+            .min { slots[$0].buffer.length < slots[$1].buffer.length }
         if slot == nil, let grow = free.first ?? (slots.count < Self.maxSlots ? slots.count : nil) {
             var size = Self.minimumLength
             while size < length { size *= 2 }
@@ -87,6 +90,7 @@ final class VertexBufferPool {
             slots[slot].isPinned = pin
         } else {
             // Every slot is busy: a one-off buffer, released when the GPU is done with it.
+            Signposts.canvas.emitEvent("Pool fallback", "\(length) bytes")
             guard let made = device.makeBuffer(length: length, options: .storageModeShared) else { return nil }
             buffer = made
         }

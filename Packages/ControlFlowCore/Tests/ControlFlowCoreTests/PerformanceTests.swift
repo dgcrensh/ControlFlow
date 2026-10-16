@@ -436,6 +436,9 @@ final class PerformanceTests: XCTestCase {
     /// One shape's fill changed, then a frame (10 calls).
     func testArtRebuildAfterOneEdit() { measure(.artRebuildAfterOneEdit, calls: 10) }
 
+    /// 10 recolours of one shape, each repainting its layer and uploading its paints.
+    func testArtRepaintAfterOneRecolour() { measure(.artRepaintAfterOneRecolour, calls: 10) }
+
     /// A zoom across a power-of-two bucket, then a frame.
     func testArtRebuildAtNewZoomBucket() { measure(.artRebuildAtNewZoomBucket) }
 
@@ -470,7 +473,8 @@ final class PerformanceTests: XCTestCase {
     func testPlaybackFrameTextTracking() { measure(.playbackFrameTextTracking, calls: 10) }
 
     /// What each played frame uploads, printed per transition. A slide only moves layers,
-    /// so it uploads nothing; a change of paint uploads its layers' triangles again.
+    /// so it uploads nothing; a change of paint uploads its layers' paints, one 256-byte
+    /// slot per cover, and none of their triangles.
     func testPlaybackUploadPerFrame() {
         var lines = ["Floats uploaded per playback frame", ""]
         var slide = 0
@@ -482,7 +486,12 @@ final class PerformanceTests: XCTestCase {
             frames.next()
             let kilobytes = Double(frames.uploadedFloats * MemoryLayout<Float>.size) / 1024
             lines.append("\(name): \(frames.uploadedFloats) floats (" + String(format: "%.1f", kilobytes) + " KB)")
-            if name == "Every layer slides" { slide = frames.uploadedFloats }
+            if name == "Every layer slides" {
+                slide = frames.uploadedFloats
+            } else {
+                XCTAssertGreaterThan(frames.uploadedFloats, 0, name)
+                XCTAssertEqual(frames.uploadedFloats % ArtSegment.paintSlotFloats, 0, "\(name): paint slots only")
+            }
         }
         print(lines.joined(separator: "\n"))
         XCTAssertEqual(slide, 0)
