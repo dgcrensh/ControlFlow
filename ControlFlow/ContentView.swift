@@ -259,6 +259,9 @@ private struct ToolBar: View {
                     }
                 }
                 Button("Export Web Page", systemImage: "globe") { exportWebPage() }
+                #if DEBUG
+                Button("Time Formulas", systemImage: "stopwatch") { store.timeFormulas() }
+                #endif
                 Divider()
                 Button("Clear Canvas", systemImage: "trash", role: .destructive) { store.clear() }
             } label: {

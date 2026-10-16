@@ -112,6 +112,9 @@ final class CanvasRenderer {
         return builder
     }()
     private var artRevision = -1
+    /// `MathTypesetting.generation` when the art, preview and onion were last built: a
+    /// formula's layout arriving changes how they draw, though the drawing doesn't change.
+    private var builtMathGeneration = MathTypesetting.generation
     private var artTolerance = 0.0
     private var artIsolation: Int?
     private var artGroupIsolation: Int?
@@ -273,6 +276,16 @@ final class CanvasRenderer {
         let editor = session.editor
         let w = Double(viewSize.width), h = Double(viewSize.height)
         let screen = [Vec2(0, 0), Vec2(w, 0), Vec2(w, h), Vec2(0, h)].map { session.camera.toWorld($0) }
+        // A formula's layout arrived (or was forgotten): the art, preview and onion are
+        // built again, and the builders draw the layers with formulas anew.
+        let mathGeneration = MathTypesetting.generation
+        if mathGeneration != builtMathGeneration {
+            builtMathGeneration = mathGeneration
+            artRevision = .min
+            artLive = nil
+            previewKey = nil
+            onionKey = nil
+        }
         // The outline view draws the art as a wireframe in the overlay instead.
         if !editor.outlineView {
             updateArt(editor: editor, zoom: session.camera.zoom, navigating: session.isNavigating,
@@ -497,6 +510,7 @@ final class CanvasRenderer {
         artDrawing = drawing
         let interval = Signposts.canvas.beginInterval("Art rebuild")
         defer { Signposts.canvas.endInterval("Art rebuild", interval, "\(reason, privacy: .public)") }
+        requestFormulas(in: drawing)
         // While a refine is under way, unchanged shapes keep whatever tessellation they
         // have; only new and edited ones are tessellated, at the art's tolerance. Until
         // the first refine is done, layers with a shape not yet tessellated wait for it.
@@ -526,6 +540,7 @@ final class CanvasRenderer {
         previewKey = (editor.displayRevision, refineMerges, editor.isolatedLayer, editor.isolatedGroup, ghost)
         let interval = Signposts.canvas.beginInterval("Art rebuild")
         defer { Signposts.canvas.endInterval("Art rebuild", interval, "preview") }
+        requestFormulas(in: preview)
         guard let batch = previewBuilder?.build(preview, isolatedLayer: editor.isolatedLayer,
                                                 isolatedGroup: editor.isolatedGroup, tolerance: artTolerance,
                                                 ghostFocus: ghost,
@@ -630,6 +645,7 @@ final class CanvasRenderer {
     private func updateOnion(_ onion: Drawing, revision: Int) {
         guard onionKey?.revision != revision || onionKey?.tolerance != artTolerance, artTolerance > 0 else { return }
         onionKey = (revision, artTolerance)
+        requestFormulas(in: onion)
         // The keyframe before mostly shares its shapes' geometry with this one, so the
         // onion starts from the art's tessellations rather than flattening every shape.
         onionBuilder.tessellations = artBuilder.tessellations
@@ -816,6 +832,17 @@ final class CanvasRenderer {
             encoder.setFragmentTexture(texture, index: 0)
             encoder.setFragmentBytes(&opacity, length: MemoryLayout<Float>.stride, index: 0)
             encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6)
+        }
+    }
+
+    // MARK: Formulas
+
+    /// Starts typesetting the formulas in `drawing` that have no layout yet; meanwhile
+    /// the art draws their placeholder boxes, and each one that arrives asks for a frame,
+    /// which builds the art again (see `builtMathGeneration`).
+    private func requestFormulas(in drawing: Drawing) {
+        MathTypesetting.requestMissing(in: drawing) { [weak self] in
+            Task { @MainActor [weak self] in self?.onNeedsRender?() }
         }
     }
 

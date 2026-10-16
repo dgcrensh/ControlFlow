@@ -323,6 +323,9 @@ public struct ArtBuilder: Sendable {
         /// `LayerPlacement.baked` and `detail`.
         var bakedLayer: Affine2D?
         var detail: Double
+        /// `MathTypesetting.generation` when it was built: a formula's layout arriving
+        /// changes how it draws, though the shape doesn't change.
+        var mathGeneration = 0
 
         /// How a layer built for this key differs from one built for `next`, found in one
         /// walk over the shapes (an `==` that is cheap where their storage is shared).
@@ -344,7 +347,12 @@ public struct ArtBuilder: Sendable {
             var a = self, b = next
             a.shapes = []
             b.shapes = []
+            a.mathGeneration = 0
+            b.mathGeneration = 0
             guard a == b else { return .other }
+            // Layouts arrived or were forgotten since: a layer with a formula draws anew.
+            // (Only looked for then, so the walk is rare.)
+            if mathGeneration != next.mathGeneration, next.shapes.contains(where: { $0.math != nil }) { return .other }
             // An untouched layer's shapes share storage with the last ones: a pointer compare.
             if shapes == next.shapes { return .none }
             guard shapes.count == next.shapes.count else { return .other }
@@ -513,6 +521,7 @@ public struct ArtBuilder: Sendable {
             layers = layers.filter { $0.id != isolatedLayer } + layers.filter { $0.id == isolatedLayer }
         }
         var seen: Set<Int> = []
+        let mathGeneration = MathTypesetting.generation
         // The shapes of layers rebuilt or gone, and of the rebuilt layers as they are now:
         // the difference has left the drawing, so its tessellations can go.
         var retired: Set<Int> = [], fresh: Set<Int> = []
@@ -532,11 +541,12 @@ public struct ArtBuilder: Sendable {
                               isolatedGroup: isolated ? isolatedGroup.flatMap { layer.group($0) == nil ? nil : $0 } : nil,
                               ghostFocus: ghostFocus.map { Self.restrict($0, to: layer) },
                               moving: Self.restrict(moving, to: layer),
-                              bakedLayer: placement.baked, detail: placement.detail)
+                              bakedLayer: placement.baked, detail: placement.detail, mathGeneration: mathGeneration)
             var reshaped: Set<Int> = [], splitting: Set<Int> = []
             if let cached = layerCache[slot], cached.isExact {
                 switch cached.key.change(to: key) {
                 case .none:
+                    if cached.key.mathGeneration != mathGeneration { layerCache[slot]?.key.mathGeneration = mathGeneration }
                     batch.append(cached, layer: layer.id, transform: placement.segment, concatenating: concatenatesVertices)
                     continue
                 case .paint(let changed):
@@ -610,12 +620,19 @@ public struct ArtBuilder: Sendable {
         if !shape.transform.isIdentity { inner = inner * shape.transform.matrix }
         let r = placement.baked.map { $0 * inner } ?? inner
         if r == .identity {
-            return ArtShape(shape: shape.resolvingLayout(), place: .identity, tolerance: tolerance / placement.detail)
+            return ArtShape(shape: drawn(shape.resolvingLayout()), place: .identity, tolerance: tolerance / placement.detail)
         }
         if r.isSimilarity || !stretchesUnlikeItsPoints(shape) {
-            return ArtShape(shape: shape.resolvingLayout(), place: r, tolerance: tolerance / detail(of: placement.segment * r))
+            return ArtShape(shape: drawn(shape.resolvingLayout()), place: r, tolerance: tolerance / detail(of: placement.segment * r))
         }
-        return ArtShape(shape: shape.baked(r), place: .identity, tolerance: tolerance / placement.detail, baked: r)
+        return ArtShape(shape: drawn(shape.baked(r)), place: .identity, tolerance: tolerance / placement.detail, baked: r)
+    }
+
+    /// A resolved shape as the art draws it: a formula still being typeset as its
+    /// placeholder box (see `VectorShape.placeholderForMissingLayout`).
+    private static func drawn(_ resolved: VectorShape) -> VectorShape {
+        guard resolved.math != nil else { return resolved }
+        return resolved.placeholderForMissingLayout ?? resolved
     }
 
     /// Every shape of `layer` as the art draws it at `tolerance` (see `artShape`), and

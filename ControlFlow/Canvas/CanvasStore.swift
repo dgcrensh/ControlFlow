@@ -207,6 +207,7 @@ final class CanvasStore {
         sentDocuments = [package]
         refresh()
         noteMissingFonts(package.presentation)
+        requestFormulas(package.presentation)
     }
 
     /// The encoded bytes of a reference image, which the renderer decodes off the main thread.
@@ -278,6 +279,26 @@ final class CanvasStore {
         }
         edit { $0.editor.replacePresentation(presentation) }
         noteMissingFonts(presentation)
+        requestFormulas(presentation)
+    }
+
+    /// Starts typesetting every formula the presentation shows that has no layout (one
+    /// added to the file by hand, or a file from before its `math.json`), so the chips,
+    /// playback and the presenter have them. The canvas asks for the ones it draws itself.
+    private func requestFormulas(_ presentation: Presentation) {
+        guard MathTypesetting.typesetter != nil else { return }
+        for math in presentation.mathContents where MathTypesetting.layout(math) == nil && MathTypesetting.error(math) == nil {
+            MathTypesetting.request(math) { [weak self] in
+                Task { @MainActor [weak self] in self?.formulasArrived() }
+            }
+        }
+    }
+
+    /// A formula's layout arrived: the chips that show formulas are drawn again.
+    private func formulasArrived() {
+        thumbnailScenes = thumbnailScenes.filter { !$0.value.hasMath }
+        scheduleThumbnails()
+        onChange?()
     }
 
     /// Copies editor state into `ui` and redraws. The values read from the whole
@@ -456,6 +477,26 @@ final class CanvasStore {
         toastCount += 1
         ui.toast = (text, toastCount)
     }
+
+    #if DEBUG
+    /// More › Time Formulas: the checkpoint before the Math tool. Typesets the 200-formula
+    /// benchmark with MathJax and shows how long loading and typesetting took.
+    func timeFormulas() {
+        showToast("Timing formulas…")
+        Task { [weak self] in
+            let text: String
+            do {
+                let result = try await MathJaxEngine.shared.benchmark()
+                let load = result.load.map { "load \(Int($0.rounded())) ms, " } ?? ""
+                text = "MathJax: \(load)first \(Int(result.first.rounded())) ms, then " +
+                    String(format: "%.1f ms per formula", result.average)
+            } catch {
+                text = "MathJax failed: " + ((error as? MathError)?.message ?? "\(error)")
+            }
+            self?.showToast(text)
+        }
+    }
+    #endif
 
     private func update<T: Equatable>(_ keyPath: ReferenceWritableKeyPath<EditorUIState, T>, _ value: T) {
         if ui[keyPath: keyPath] != value { ui[keyPath: keyPath] = value }
