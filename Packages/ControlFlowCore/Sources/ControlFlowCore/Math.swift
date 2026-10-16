@@ -149,6 +149,24 @@ public struct MathLayout: Hashable, Sendable {
     }
 }
 
+extension VectorShape {
+    /// What the canvas and thumbnails draw for a resolved formula whose layout isn't
+    /// known yet (being typeset, or failed): its placeholder box, lightly filled with the
+    /// formula's color and outlined with a hairline. Nil for any other shape, and for
+    /// exports, which leave such a formula out.
+    public var placeholderForMissingLayout: VectorShape? {
+        guard let math, let frame = layoutFrame, frame.count >= 3, MathTypesetting.layout(math) == nil else { return nil }
+        var copy = self
+        copy.path = BezierPath(points: frame.map { PathPoint($0, smooth: false) }, closed: true)
+        let color = fill ?? gradient?.stops.first?.color ?? .black
+        copy.fill = color.withAlpha(color.a * 0.12)
+        copy.fillGlobal = nil
+        copy.gradient = nil
+        copy.stroke = StrokeStyle(color: color.withAlpha(color.a * 0.35), width: max(math.size / 72, 0.5), join: .miter)
+        return copy
+    }
+}
+
 extension Drawing {
     /// True when any shape is a formula.
     public var hasMath: Bool { layers.contains { $0.shapes.contains { $0.math != nil } } }

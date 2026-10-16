@@ -18,6 +18,8 @@ public enum Tool: String, Hashable, Sendable, CaseIterable {
     case scissors
     /// Tap to type a text, drag to make a text box that wraps, or tap a text to edit it.
     case text
+    /// Tap to start a formula (LaTeX), or tap a formula to edit it.
+    case math
 }
 
 /// Live symmetry: new strokes, shapes and pen paths get a mirrored copy across a
@@ -168,8 +170,10 @@ public struct DrawingEditor: Sendable {
             customPivot = nil
             if let selected = selectionStyle { style = selected }
             if let text = selectedText { textStyle = text.style }
-            // Editing a text ends when it is no longer the selection.
+            if let math = selectedMath { mathStyle = math.style }
+            // Editing a text or formula ends when it is no longer the selection.
             if let edit = textEdit, selection != .shape(layer: edit.ref.layer, shape: edit.ref.shape) { endTextEdit() }
+            if let edit = mathEdit, selection != .shape(layer: edit.ref.layer, shape: edit.ref.shape) { endMathEdit() }
         }
     }
     /// Increments whenever `selection` changes, so a run of edits to one selection can be
@@ -188,6 +192,7 @@ public struct DrawingEditor: Sendable {
             cancelGesture()
             if oldValue == .pen { penFinish() }
             if textEdit != nil, !textEditKeepsTool { endTextEdit() }
+            if mathEdit != nil, !textEditKeepsTool { endMathEdit() }
             penCursor = nil
             previousTool = oldValue
             lastTap = nil
@@ -204,11 +209,15 @@ public struct DrawingEditor: Sendable {
     public var textStyle = TextContent()
     /// The text being typed into, if any (see `beginTextEdit`).
     public internal(set) var textEdit: TextEditState?
-    /// Numbers the editing sessions, so each is one undo step.
+    /// Numbers the editing sessions (of text and formulas), so each is one undo step.
     var textEditCount = 0
-    /// Set while a select-tool double tap switches to the text tool to edit, so the
-    /// switch doesn't end the edit it starts.
+    /// Set while a select-tool double tap switches to the text or Math tool to edit, so
+    /// the switch doesn't end the edit it starts.
     var textEditKeepsTool = false
+    /// The size and style new formulas are set in (its `source` is unused).
+    public var mathStyle = MathContent(source: "")
+    /// The formula being edited, if any (see `beginMathEdit`).
+    public internal(set) var mathEdit: MathEditState?
     /// What the shape tool draws, and its settings.
     public var shapeKind: ShapeKind = .rectangle
     public var shapeOptions = ShapeToolOptions()
@@ -257,7 +266,7 @@ public struct DrawingEditor: Sendable {
     }
     /// Increments whenever what the canvas shows (`shownDrawing`) changes. Unlike
     /// `revision`, a preview changes it but not the document.
-    public private(set) var displayRevision = 0
+    public internal(set) var displayRevision = 0
     /// Onion skin: the keyframe before the current one shows as a faint ghost under the art.
     public var showsOnionSkin = false {
         didSet { if showsOnionSkin != oldValue { updateOnionSkin() } }
@@ -398,6 +407,8 @@ public struct DrawingEditor: Sendable {
         case textCaret(ShapeRef)
         /// The text tool on empty canvas: a tap starts a text, a drag a text box.
         case textNew
+        /// The Math tool on a formula (to edit it) or on empty canvas (nil: a new one).
+        case math(ShapeRef?)
         case empty
     }
 
@@ -460,6 +471,9 @@ public struct DrawingEditor: Sendable {
             }
         case .text:
             gesture = beginText(at: p, px: px)
+        case .math:
+            let hit = hitShape(at: p, tolerance: EditorMetrics.shapeHit * px)
+            gesture = .pending(.math(hit.flatMap { drawing.shape($0)?.math != nil ? $0 : nil }), start: p)
         }
     }
 
@@ -476,7 +490,7 @@ public struct DrawingEditor: Sendable {
         hoverZoom = max(zoom, 1e-9)
         if p != nil, gesture == nil, tool.usesShapeIndex { refreshShapeIndex() }
         let shown: HoverShown? = switch tool {
-        case .select, .directSelect, .text: HoverShown(tool: tool, revision: revision, target: hoverTarget)
+        case .select, .directSelect, .text, .math: HoverShown(tool: tool, revision: revision, target: hoverTarget)
         case .shape: HoverShown(tool: tool, revision: revision, target: nil)
         case .pencil, .pen, .eraser, .scissors: nil
         }
@@ -496,6 +510,10 @@ public struct DrawingEditor: Sendable {
         case .text:
             guard let hit = hitShape(at: p, tolerance: EditorMetrics.shapeHit / hoverZoom),
                   drawing.shape(hit)?.text != nil, hit != textEdit?.ref else { return nil }
+            return hit
+        case .math:
+            guard let hit = hitShape(at: p, tolerance: EditorMetrics.shapeHit / hoverZoom),
+                  drawing.shape(hit)?.math != nil, hit != mathEdit?.ref else { return nil }
             return hit
         case .pencil, .pen, .shape:
             return nil
@@ -761,6 +779,8 @@ public struct DrawingEditor: Sendable {
             if drawing.shape(ref)?.text != nil, tapGroup(of: ref) == nil {
                 // Double-tapping a text edits it, with the caret where it was tapped.
                 editText(ref, at: p)
+            } else if drawing.shape(ref)?.math != nil, tapGroup(of: ref) == nil {
+                editMath(ref)
             } else if let group = tapGroup(of: ref) {
                 isolate(group: group, inLayer: hit.layer)
                 selection = .shape(layer: hit.layer, shape: hit.shape)
@@ -1143,7 +1163,7 @@ public struct DrawingEditor: Sendable {
             marquee = Rect(from: start, to: start)
             return .marquee(start: start, additive: addToSelection,
                             baseShapes: Set(drawing.shapeRefs(in: selection)), baseAnchors: selectedAnchors)
-        case .penFinish, .penClose, .penJoin:
+        case .penFinish, .penClose, .penJoin, .math:
             return .idle
         case .textNew:
             marquee = Rect(from: start, to: start)
@@ -1210,7 +1230,7 @@ public struct DrawingEditor: Sendable {
                 }
             case .handle:
                 break
-            case .empty, .selectionBody, .pivot, .penFinish, .penClose, .penJoin, .cut, .textCaret, .textNew:
+            case .empty, .selectionBody, .pivot, .penFinish, .penClose, .penJoin, .cut, .textCaret, .textNew, .math:
                 if !selectedAnchors.isEmpty {
                     selectedAnchors = []
                 } else if !addToSelection {
@@ -1221,6 +1241,8 @@ public struct DrawingEditor: Sendable {
             if case .cut(let ref, let segment, let t) = pending { cut(ref, segment: segment, t: t) }
         case .text:
             tapText(pending, at: p)
+        case .math:
+            if case .math(let ref) = pending { tapMath(on: ref, at: p) }
         case .shape, .eraser:
             break
         }
@@ -1902,6 +1924,7 @@ public struct DrawingEditor: Sendable {
 
     mutating func validateSelection() {
         if let edit = textEdit, drawing.shape(edit.ref)?.text == nil { textEdit = nil }
+        if let edit = mathEdit, drawing.shape(edit.ref)?.math == nil { mathEdit = nil }
         if !drawing.exists(selection) { selection = .none }
         let count = activeShape.flatMap { drawing.shape($0)?.path.points.count } ?? 0
         let valid = selectedAnchors.filter { $0 < count }

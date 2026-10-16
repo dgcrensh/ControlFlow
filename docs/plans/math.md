@@ -7,8 +7,8 @@ Formulas typeset from LaTeX with MathJax, drawn as shapes, saved with their layo
 | PR | What | State |
 | --- | --- | --- |
 | 1 | Formulas in the core and the file (format 1.3) | Shipped |
-| 2 | MathJax in the app | Planned |
-| 3 | The Math tool | Planned |
+| 2 | MathJax in the app | Shipped; the iPad measurement (More › Time Formulas) is to do |
+| 3 | The Math tool | Shipped |
 | 4 | The morph | Shipped |
 
 Where PR 1 differs from the plan below:
@@ -18,6 +18,21 @@ Where PR 1 differs from the plan below:
 - MathJax cuts a stretched extender (the middle of a tall parenthesis) to length with a nested `<svg>` window. `MathLayout.parse` squeezes such a glyph into its window, which draws the same thing because an extender is the same all along, so a layout stays glyphs and rules with no clipping.
 - The fixtures live in `Packages/ControlFlowCore/Tests/ControlFlowCoreTests/Fixtures/math/`, named by an FNV-1a hash of the style and source, and `Schema/typeset_math.mjs` builds the bundle with `MathJax/build.sh` into a temporary folder rather than needing `ControlFlow/Resources/cf-mathjax.js` (which PR 2 adds).
 - The test vectors carry `math` (the export's `math.json`) and `mathOutlines` (each formula's outline) once per file, rather than outlines per sample, since a formula's outline doesn't change during a transition until the morph.
+
+Where PR 2 differs from the plan below:
+
+- The canvas asks for missing layouts itself rather than `CanvasStore`: `CanvasRenderer` calls `MathTypesetting.requestMissing(in:)` whenever it builds the art, a preview or the onion skin, so the editor, the presenter view and an external display each ask for what they draw. `CanvasStore` asks for every formula the presentation shows when a document opens or changes, for the chips and playback, and draws the chips with formulas again when layouts arrive.
+- A formula's shape doesn't change when its layout arrives, so the core tells the art: `MathTypesetting.generation` is bumped whenever layouts are stored or forgotten, `ArtBuilder` builds a layer with a formula again when it changed (other layers are reused), and the renderer rebuilds its art, preview and onion on the next frame.
+- The placeholder is made in the core (`VectorShape.placeholderForMissingLayout`: the box filled with the formula's color at 12% and outlined at 35%), and `ArtBuilder` draws it for a formula without a layout. `ThumbnailRenderer` draws nothing there instead (thumbnails and exports leave such a formula out), and draws the document's thumbnail again once layouts arrive.
+- CI's app build also checks that `cf-mathjax.js` is in the built app, since a resource left out would only show on the iPad.
+
+Where PR 3 differs from the plan below:
+
+- `MathEditState` also carries a `session` (one undo step per edit, numbered with the text sessions) and a `revision` the app watches to copy a draft it didn't type into its field (a pasted formula). `mathDraftContent` is the formula the draft would make; the store typesets it 120 ms after it last changed and hands it to `mathDraftTypeset(_:)`, which takes the content rather than a result, since `MathTypesetting` already holds the layout or the error. A draft whose layout or error is already known applies as it is typed.
+- A new formula starts with an empty source, drawn as the placeholder box until its first draft typesets, and is deleted if the edit ends with the field empty or before anything typeset. Its box's left middle is where the tap was.
+- Pasting plain text with the Math tool starts a new edit with the text as its draft, so a pasted formula that doesn't typeset is never kept. With the source panel open, Cut, Copy and Paste act on its field.
+- Retypeset All Formulas is `forgetFormulaLayouts()` (forget and list them), then `formulaLayoutsChanged()` once the app has typeset them, which marks the document changed so `math.json` is written again.
+- The context bar's Edit is `editSelectedMath()`. The source panel takes the timeline bar's place while it is open.
 
 Where PR 4 differs from the plan below:
 

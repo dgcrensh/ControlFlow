@@ -36,9 +36,15 @@ struct ContentView: View {
             }
             .overlay(alignment: .bottom) {
                 VStack(spacing: 10) {
-                    TimelineBar(store: store, ui: store.ui)
-                        // Clear of the tool strip and the modifier strip.
-                        .padding(.horizontal, 84)
+                    // The formula's source panel takes the timeline's place while it is edited.
+                    if let edit = store.ui.mathEdit {
+                        MathEditorPanel(store: store, edit: edit)
+                            .padding(.horizontal, 84)
+                    } else {
+                        TimelineBar(store: store, ui: store.ui)
+                            // Clear of the tool strip and the modifier strip.
+                            .padding(.horizontal, 84)
+                    }
                     StyleBar(store: store, ui: store.ui)
                 }
             }
@@ -259,6 +265,11 @@ private struct ToolBar: View {
                     }
                 }
                 Button("Export Web Page", systemImage: "globe") { exportWebPage() }
+                #if DEBUG
+                Button("Time Formulas", systemImage: "stopwatch") { store.timeFormulas() }
+                #endif
+                Divider()
+                Button("Retypeset All Formulas", systemImage: "sum") { store.retypesetAllFormulas() }
                 Divider()
                 Button("Clear Canvas", systemImage: "trash", role: .destructive) { store.clear() }
             } label: {
@@ -426,6 +437,7 @@ private struct ToolButton: View {
         (.pen, "Pen", "pencil.and.outline"),
         (.shape, "Shapes", "square.on.circle"),
         (.text, "Text", "textformat"),
+        (.math, "Math", "sum"),
         (.select, "Select", "cursorarrow"),
         (.directSelect, "Direct Select", "point.topleft.down.to.point.bottomright.curvepath"),
         (.eraser, "Eraser", "eraser"),
@@ -533,10 +545,21 @@ private struct ContextBar: View {
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
+            case .math:
+                MathStyleControls(store: store, ui: ui)
+                if !ui.isEditingMath {
+                    Text("Tap to write a formula in LaTeX, or tap one to edit it")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
             }
             if ui.tool == .select, ui.selectionHasText {
                 Divider().frame(height: 24)
                 TextStyleControls(store: store, ui: ui)
+            }
+            if ui.tool == .select, ui.selectionHasMath {
+                Divider().frame(height: 24)
+                MathStyleControls(store: store, ui: ui)
             }
 
             if [Tool.pen, .shape, .select, .directSelect].contains(ui.tool) { snapMenu }

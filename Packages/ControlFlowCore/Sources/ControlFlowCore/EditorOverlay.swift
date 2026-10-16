@@ -375,7 +375,7 @@ private struct Builder {
                 ring(hover, radius: EditorMetrics.eraserRadius * px, color: Overlay.eraserColor)
             case .scissors:
                 if let point = cut?.point { ringDot(point, radius: 6) }
-            case .pen, .select, .directSelect, .shape, .text:
+            case .pen, .select, .directSelect, .shape, .text, .math:
                 break
             }
         }
@@ -408,6 +408,15 @@ private struct Builder {
         if let caret = edit.caret { line(caret.top, caret.bottom, width: 2) }
     }
 
+    /// The formula being edited: its box, dashed, and red while the draft doesn't
+    /// typeset (the canvas keeps showing the last version that did).
+    mutating func mathEdit() {
+        guard let edit = editor.mathEditGeometry else { return }
+        let f = edit.frame
+        let color = edit.failed ? Overlay.eraserColor : accent
+        for i in 0..<4 { dashedLine(f[i], f[(i + 1) % 4], dash: 4 * px, width: edit.failed ? 2 : 1, color: color) }
+    }
+
     /// The selection's outlines (scissors) or outlines, anchors and handles (direct select).
     mutating func selection() {
         switch editor.tool {
@@ -421,7 +430,7 @@ private struct Builder {
                 if drawing.shape(ref)?.hasEditablePath == false { outline(of: ref, color: accent); continue }
                 drawAnchors(of: ref, showHandles: true, active: active)
             }
-        case .pencil, .shape, .eraser, .pen, .select, .text:
+        case .pencil, .shape, .eraser, .pen, .select, .text, .math:
             break
         }
     }
@@ -482,6 +491,9 @@ private struct Builder {
 
         case .text:
             textEdit()
+
+        case .math:
+            mathEdit()
 
         case .pencil, .shape, .eraser, .scissors:
             break

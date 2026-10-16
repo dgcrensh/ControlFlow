@@ -432,7 +432,7 @@ public struct CanvasSession: Sendable {
             }
             liveStroke = stroke
             nextStrokeID += 1
-        case .pen, .select, .directSelect, .shape, .eraser, .scissors, .text:
+        case .pen, .select, .directSelect, .shape, .eraser, .scissors, .text, .math:
             editor.pencilBegan(at: world, zoom: camera.zoom)
         }
     }

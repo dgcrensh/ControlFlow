@@ -144,6 +144,16 @@ final class EditorUIState {
     /// Text is being typed into on the canvas.
     var isEditingText = false
     var canConvertToOutlines = false
+    /// The size and style new formulas are set in, or the selected formula's.
+    var mathStyle = MathContent(source: "")
+    /// The selection holds a formula, so the context bar shows its style.
+    var selectionHasMath = false
+    /// The formula being edited in the source panel, if any.
+    var mathEdit: MathEditState?
+    /// A formula's source is being typed in the source panel.
+    var isEditingMath: Bool { mathEdit != nil }
+    /// Single keys are typing, not commands.
+    var isTyping: Bool { isEditingText || isEditingMath }
 }
 
 /// Owns the canvas session and connects SwiftUI controls to the Metal view.
@@ -207,6 +217,7 @@ final class CanvasStore {
         sentDocuments = [package]
         refresh()
         noteMissingFonts(package.presentation)
+        requestFormulas(package.presentation)
     }
 
     /// The encoded bytes of a reference image, which the renderer decodes off the main thread.
@@ -278,6 +289,26 @@ final class CanvasStore {
         }
         edit { $0.editor.replacePresentation(presentation) }
         noteMissingFonts(presentation)
+        requestFormulas(presentation)
+    }
+
+    /// Starts typesetting every formula the presentation shows that has no layout (one
+    /// added to the file by hand, or a file from before its `math.json`), so the chips,
+    /// playback and the presenter have them. The canvas asks for the ones it draws itself.
+    private func requestFormulas(_ presentation: Presentation) {
+        guard MathTypesetting.typesetter != nil else { return }
+        for math in presentation.mathContents where MathTypesetting.layout(math) == nil && MathTypesetting.error(math) == nil {
+            MathTypesetting.request(math) { [weak self] in
+                Task { @MainActor [weak self] in self?.formulasArrived() }
+            }
+        }
+    }
+
+    /// A formula's layout arrived: the chips that show formulas are drawn again.
+    private func formulasArrived() {
+        thumbnailScenes = thumbnailScenes.filter { !$0.value.hasMath }
+        scheduleThumbnails()
+        onChange?()
     }
 
     /// Copies editor state into `ui` and redraws. The values read from the whole
@@ -355,6 +386,9 @@ final class CanvasStore {
         }
         update(\.textStyle, editor.textStyle)
         update(\.isEditingText, editor.textEdit != nil)
+        update(\.mathStyle, editor.mathStyle)
+        update(\.mathEdit, editor.mathEdit)
+        scheduleMathTypeset()
         update(\.isAtKeyframe, editor.currentKeyframe != nil)
         update(\.showsOnionSkin, editor.showsOnionSkin)
         update(\.activeLayer, editor.activeLayer)
@@ -411,6 +445,7 @@ final class CanvasStore {
         update(\.selectedLayers, editor.selectedLayers)
         update(\.keyedProperties, session.editor.keyedProperties())
         update(\.selectionHasText, editor.selectionHasText)
+        update(\.selectionHasMath, editor.selectionHasMath)
         update(\.selectionHasImage, editor.selectionHasImage)
         update(\.canConvertToOutlines, editor.canConvertToOutlines)
         if case .layer(let id) = editor.selection {
@@ -456,6 +491,26 @@ final class CanvasStore {
         toastCount += 1
         ui.toast = (text, toastCount)
     }
+
+    #if DEBUG
+    /// More › Time Formulas: the checkpoint before the Math tool. Typesets the 200-formula
+    /// benchmark with MathJax and shows how long loading and typesetting took.
+    func timeFormulas() {
+        showToast("Timing formulas…")
+        Task { [weak self] in
+            let text: String
+            do {
+                let result = try await MathJaxEngine.shared.benchmark()
+                let load = result.load.map { "load \(Int($0.rounded())) ms, " } ?? ""
+                text = "MathJax: \(load)first \(Int(result.first.rounded())) ms, then " +
+                    String(format: "%.1f ms per formula", result.average)
+            } catch {
+                text = "MathJax failed: " + ((error as? MathError)?.message ?? "\(error)")
+            }
+            self?.showToast(text)
+        }
+    }
+    #endif
 
     private func update<T: Equatable>(_ keyPath: ReferenceWritableKeyPath<EditorUIState, T>, _ value: T) {
         if ui[keyPath: keyPath] != value { ui[keyPath: keyPath] = value }
@@ -507,6 +562,75 @@ final class CanvasStore {
     func setTextLineHeight(_ lineHeight: Double) { edit(continuous: true) { $0.editor.setTextLineHeight(lineHeight) } }
     func setTextTracking(_ tracking: Double) { edit(continuous: true) { $0.editor.setTextTracking(tracking) } }
     func convertTextToOutlines() { edit { $0.editor.convertTextToOutlines() } }
+
+    // MARK: Math
+
+    /// The formula draft last asked to be typeset, and the pause in typing before it is.
+    private var requestedMathDraft: MathContent?
+    private var mathTypesetTimer: Task<Void, Never>?
+
+    /// Typesets the draft being edited once typing pauses for 120 ms, and hands the
+    /// result to the editor. A result for a draft that has since changed is dropped there.
+    private func scheduleMathTypeset() {
+        let content = session.editor.mathDraftContent
+        guard content != requestedMathDraft else { return }
+        requestedMathDraft = content
+        mathTypesetTimer?.cancel()
+        guard let content else { return }
+        mathTypesetTimer = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(120))
+            guard !Task.isCancelled else { return }
+            _ = await MathTypesetting.typeset(content)
+            self?.mathDraftTypeset(content)
+        }
+    }
+
+    private func mathDraftTypeset(_ content: MathContent) {
+        edit(continuous: true) { $0.editor.mathDraftTypeset(content) }
+    }
+
+    /// The source panel's text after the user typed, pasted or inserted.
+    func setMathDraft(_ draft: String) { edit(continuous: true) { $0.editor.setMathDraft(draft) } }
+    func endMathEdit() { edit { $0.editor.endMathEdit() } }
+    func editSelectedMath() { edit { $0.editor.editSelectedMath() } }
+    func setMathSize(_ size: Double) { edit { $0.editor.setMathSize(size) } }
+    func setMathDisplay(_ display: Bool) { edit { $0.editor.setMathDisplay(display) } }
+
+    /// Typesets every formula again with this app's MathJax (they keep the look they were
+    /// saved with otherwise), then saves the new layouts.
+    func retypesetAllFormulas() {
+        var formulas: [MathContent] = []
+        edit { formulas = $0.editor.forgetFormulaLayouts() }
+        guard !formulas.isEmpty else {
+            showToast("No formulas")
+            return
+        }
+        let all = formulas
+        Task { [weak self] in
+            for math in all { _ = await MathTypesetting.typeset(math) }
+            guard let self else { return }
+            let failed = all.filter { MathTypesetting.error($0) != nil }.count
+            edit { $0.editor.formulaLayoutsChanged() }
+            showToast(failed == 0 ? "Formulas retypeset" : "\(failed) formulas didn't typeset")
+        }
+    }
+
+    /// The middle of the view, in world space.
+    private var viewCenter: Vec2 {
+        let view = viewSize.width > 0 ? Vec2(viewSize) : Vec2(1024, 768)
+        return session.camera.toWorld(view / 2)
+    }
+
+    /// Sends a standard edit action (copy, cut, paste) to the source panel's field,
+    /// which is the first responder while a formula is edited.
+    private func sendToMathField(_ action: Selector) {
+        guard !forwardingEditAction else { return }
+        forwardingEditAction = true
+        UIApplication.shared.sendAction(action, to: nil, from: nil, for: nil)
+        forwardingEditAction = false
+    }
+
+    private var forwardingEditAction = false
 
     /// The text shapes on the canvas with their boxes in world space (four corners), for
     /// Scribble.
@@ -899,6 +1023,7 @@ final class CanvasStore {
     /// and as plain JSON, so it pastes into any document (and reads anywhere). The JSON
     /// is written only when something reads it, off the main thread (see `provider`).
     func copy() {
+        if session.editor.mathEdit != nil { return sendToMathField(#selector(UIResponder.copy(_:))) }
         if session.editor.textEdit != nil {
             if let words = selectedWords { UIPasteboard.general.string = words }
             return
@@ -908,6 +1033,7 @@ final class CanvasStore {
     }
 
     func cut() {
+        if session.editor.mathEdit != nil { return sendToMathField(#selector(UIResponder.cut(_:))) }
         if session.editor.textEdit != nil {
             guard let words = selectedWords else { return }
             UIPasteboard.general.string = words
@@ -930,6 +1056,7 @@ final class CanvasStore {
 
     func paste() {
         let board = UIPasteboard.general
+        if session.editor.mathEdit != nil { return sendToMathField(#selector(UIResponder.paste(_:))) }
         if session.editor.textEdit != nil {
             // Into the text being typed into, as words.
             if let words = board.string { edit { $0.editor.typeText(words) } }
@@ -937,6 +1064,13 @@ final class CanvasStore {
         }
         if let last = Self.lastCopy, last.changeCount == board.changeCount {
             edit { _ = $0.editor.paste(last.clip) }
+            return
+        }
+        // Plain text with the Math tool is a formula's LaTeX.
+        if session.editor.tool == .math, !board.contains(pasteboardTypes: [DrawingEditor.clipboardType]),
+           let source = board.string, !source.hasPrefix("{") {
+            let center = viewCenter
+            edit { _ = $0.editor.pasteMath(source, at: center) }
             return
         }
         let data = board.data(forPasteboardType: DrawingEditor.clipboardType)
@@ -964,6 +1098,13 @@ final class CanvasStore {
         for type in [DrawingEditor.clipboardType, UTType.json.identifier] {
             provider.registerDataRepresentation(forTypeIdentifier: type, visibility: .all) { completion in
                 completion(Data(clip.text.utf8), nil)
+                return nil
+            }
+        }
+        // Copied formulas paste into a LaTeX document or Notes as their source.
+        if let source = clip.mathSource {
+            provider.registerDataRepresentation(forTypeIdentifier: UTType.utf8PlainText.identifier, visibility: .all) { completion in
+                completion(Data(source.utf8), nil)
                 return nil
             }
         }
