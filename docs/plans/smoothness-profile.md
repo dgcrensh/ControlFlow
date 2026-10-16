@@ -206,8 +206,8 @@ From reading the code:
    - #7;
    - #4's caching.
 3. **#3 (shipped):** keep the timeline's states across undo, and make `SceneLookup` lighter.
-4. **#1 properly:** local-space tessellation with transforms applied at draw time. This also removes #6.
-5. **#8, #9, #10, #11.**
+4. **#1 properly (shipped):** local-space tessellation with transforms applied at draw time. This also removes #6.
+5. **#8, #9, #10, #11 (shipped, but for #8's shared work between two displays).**
 
 ## On-device follow-up
 
@@ -294,3 +294,13 @@ Before and after, full size, `-c release`, per call, on one cloud container:
 | `artRebuildAfterOneEdit` | 7.6 ms | 7.6 ms |
 
 What is left of the slide frame is interpolating the scene and comparing each layer's shapes for its cache key; nothing is flattened or rebuilt. The app can't be built here, so the renderer change is checked by CI's app build only; an on-device check of a whole-stage slide, a dragged shape with a gradient and a scaled outlined layer is worth doing.
+
+### Step 5: presenting, pictures, text caches and playback buffers (shipped)
+
+- **#8, shaders and the first slide.** `CanvasGPU.shared` (`Canvas/CanvasGPU.swift`) compiles `ShaderSource` and builds the pipelines, the plain depth-stencil state and the sampler once, for the first canvas; every `CanvasRenderer` takes them from it, so pressing Present (with or without an external display) compiles nothing. A renderer made with `presenting: true` doesn't start cold: its first frame flattens the whole opening scene before it shows, so the first slide appears whole rather than filling in over a few frames.
+- **#8, two displays: not done.** The presenter view and an external display still each interpolate and build their own frame. After step 4 a played frame is mostly the interpolation and each layer's cache-key compare (`playbackFrameAllLayersSlide` is 7.4 ms here, about 1.5 ms on a Mac), so doubling it costs little; only path morphs still tessellate per display. Sharing the batch needs one builder for two displays that run on different clocks and, usually, at different tolerances, so it waits for the on-device pass to show it matters.
+- **#9.** `CanvasGPU.imageTexture` decodes (`ImageLibrary.image`), redraws and uploads a picture, with its mipmaps, in a detached task, and asks every renderer waiting on it for a frame when it is ready; until then the art paints its placeholder, as it did while a picture loaded. Textures are shared by `src`, so a picture is uploaded once for the editor, the presenter view and an external display. `insertImage` decodes, scales and re-encodes off the main thread too, with ImageIO in place of UIKit.
+- **#10.** `TextShaping`'s layout and outline caches drop the least recently used quarter when full (`TextCache`) instead of emptying, and texts with `held` metrics (a tracking or line-height tween, new every frame) go in their own caches of 32, so a tween can't push the static texts out. Tested by `TextLayoutTests.testTextCacheDropsTheLeastRecentlyUsed` and `testTweenedTextsDoNotPushStaticTextsOut`: 1,024 tweened frames leave a title laid out once.
+- **#11.** The editor's preview builds, and presenting's art (each played frame), put each changed layer in a pinned buffer from `VertexBufferPool` (now 64 slots) rather than a new `MTLBuffer`; a buffer goes back to the pool when a later frame replaces its layer or the preview ends. The editor's own art keeps making a buffer per changed layer, since it changes only on an edit.
+
+The app can't be built here, so these are checked by CI's app build only. Worth checking on a device: Present with an external display (no shader compile, the first slide whole), inserting and first showing a large photo, and a long playback of a deck with moving layers (buffer counts in the Metal System Trace).

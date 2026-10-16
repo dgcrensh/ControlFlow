@@ -1,4 +1,5 @@
 import ControlFlowCore
+import ImageIO
 import Observation
 import QuartzCore
 import SwiftUI
@@ -1045,8 +1046,7 @@ final class CanvasStore {
 
     /// Adds a reference image under the art, fitted to the middle of the view.
     func importReference(data: Data, name: String) {
-        guard let image = UIImage(data: data), let cgImage = Self.normalized(image),
-              let encoded = Self.encoded(cgImage) else { return }
+        guard let cgImage = Self.normalized(data), let encoded = Self.encoded(cgImage) else { return }
         let size = Vec2(Double(cgImage.width), Double(cgImage.height))
         let view = viewSize.width > 0 ? Vec2(viewSize) : Vec2(1024, 768)
         let camera = session.camera
@@ -1085,50 +1085,72 @@ final class CanvasStore {
     /// view and the viewport if it is larger, and selects it with Select so it can be
     /// placed at once. Its opacity, place and size animate like any shape's.
     func insertImage(data: Data) {
-        guard let image = UIImage(data: data), let cgImage = Self.normalized(image),
-              let encoded = Self.encoded(cgImage) else {
-            showToast("Couldn't read that image")
-            return
+        // Decoding, scaling and re-encoding a photo takes tens of milliseconds, so it
+        // happens off the main thread and the image lands when it is ready.
+        Task {
+            let prepared = await Task.detached(priority: .userInitiated) { Self.prepared(data) }.value
+            guard let prepared else {
+                showToast("Couldn't read that image")
+                return
+            }
+            let src = ImageLibrary.shared.add(prepared.encoded)
+            let pixels = prepared.pixels
+            let view = viewSize.width > 0 ? Vec2(viewSize) : Vec2(1024, 768)
+            let camera = session.camera
+            let stage = session.editor.drawing.viewport
+            // A pixel is a point, unless that is more than most of the view or the viewport.
+            let fit = min(view.x * 0.7 / camera.zoom / pixels.x, view.y * 0.7 / camera.zoom / pixels.y,
+                          stage.width * 0.8 / pixels.x, stage.height * 0.8 / pixels.y, 1)
+            let center = camera.toWorld(view / 2)
+            edit { $0.editor.addImage(ShapeImage(src: src), size: pixels * fit, center: center) }
         }
-        let src = ImageLibrary.shared.add(encoded)
-        let pixels = Vec2(Double(cgImage.width), Double(cgImage.height))
-        let view = viewSize.width > 0 ? Vec2(viewSize) : Vec2(1024, 768)
-        let camera = session.camera
-        let stage = session.editor.drawing.viewport
-        // A pixel is a point, unless that is more than most of the view or the viewport.
-        let fit = min(view.x * 0.7 / camera.zoom / pixels.x, view.y * 0.7 / camera.zoom / pixels.y,
-                      stage.width * 0.8 / pixels.x, stage.height * 0.8 / pixels.y, 1)
-        let center = camera.toWorld(view / 2)
-        edit { $0.editor.addImage(ShapeImage(src: src), size: pixels * fit, center: center) }
     }
 
-    /// Bakes orientation and caps the size at 4096 pixels on the long side.
-    private static func normalized(_ image: UIImage) -> CGImage? {
-        let pixelWidth = image.size.width * image.scale
-        let pixelHeight = image.size.height * image.scale
-        guard pixelWidth > 0, pixelHeight > 0 else { return nil }
-        let k = min(1, 4096 / max(pixelWidth, pixelHeight))
-        let size = CGSize(width: (pixelWidth * k).rounded(), height: (pixelHeight * k).rounded())
-        let format = UIGraphicsImageRendererFormat()
-        format.scale = 1
-        format.opaque = !hasAlpha(image.cgImage)
-        let rendered = UIGraphicsImageRenderer(size: size, format: format).image { _ in
-            image.draw(in: CGRect(origin: .zero, size: size))
-        }
-        return rendered.cgImage
+    /// An image's bytes as the document keeps them (see `encoded`), and its size in pixels.
+    private struct PreparedImage: Sendable {
+        var encoded: Data
+        var pixels: Vec2
     }
 
-    private static func hasAlpha(_ image: CGImage?) -> Bool {
-        switch image?.alphaInfo {
-        case .none?, .noneSkipFirst?, .noneSkipLast?: false
+    /// Made with ImageIO rather than UIKit, so it is safe off the main thread.
+    nonisolated private static func prepared(_ data: Data) -> PreparedImage? {
+        guard let cgImage = Self.normalized(data), let bytes = Self.encoded(cgImage) else { return nil }
+        return PreparedImage(encoded: bytes, pixels: Vec2(Double(cgImage.width), Double(cgImage.height)))
+    }
+
+    /// Decodes the image with its orientation baked in and its size capped at 4096
+    /// pixels on the long side.
+    nonisolated private static func normalized(_ data: Data) -> CGImage? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: 4096,
+            kCGImageSourceShouldCacheImmediately: true,
+        ]
+        guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary),
+              image.width > 0, image.height > 0
+        else { return nil }
+        return image
+    }
+
+    nonisolated private static func hasAlpha(_ image: CGImage) -> Bool {
+        switch image.alphaInfo {
+        case .none, .noneSkipFirst, .noneSkipLast: false
         default: true
         }
     }
 
     /// PNG for images with transparency, otherwise JPEG to keep photos small.
-    private static func encoded(_ image: CGImage) -> Data? {
-        let ui = UIImage(cgImage: image)
-        return hasAlpha(image) ? ui.pngData() : ui.jpegData(compressionQuality: 0.9)
+    nonisolated private static func encoded(_ image: CGImage) -> Data? {
+        let png = hasAlpha(image)
+        let type = (png ? UTType.png : UTType.jpeg).identifier as CFString
+        let data = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(data as CFMutableData, type, 1, nil) else { return nil }
+        let options: [CFString: Any] = png ? [:] : [kCGImageDestinationLossyCompressionQuality: 0.9]
+        CGImageDestinationAddImage(destination, image, options as CFDictionary)
+        guard CGImageDestinationFinalize(destination) else { return nil }
+        return data as Data
     }
 }
 
