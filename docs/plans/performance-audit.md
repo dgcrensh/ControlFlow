@@ -615,6 +615,9 @@ By default it uses 60, 120 and 240 shapes in debug, as CI runs it; with `STRESS_
 uses 300 to 4,800. The growth column is the exponent k in time ∝ shapes^k between the smallest and
 largest size. The same workloads at the audit's size (2,400 shapes) are also `PerformanceTests`
 (`testArtRebuildAfterOneEdit`, `testPencilStroke`, `testOpenDocument` and so on).
+Since step 1 of [smoothness-profile-round2.md](smoothness-profile-round2.md), every art build in them
+uses the renderer's settings (`ArtBuilder.likeRenderer()`, no concatenated vertex array), so the art
+rows in the tables below, measured with a default builder, are not comparable with newer runs.
 
 ```sh
 STRESS_DRAWING=full swift test -c release --package-path Packages/ControlFlowCore --filter ScalingTests

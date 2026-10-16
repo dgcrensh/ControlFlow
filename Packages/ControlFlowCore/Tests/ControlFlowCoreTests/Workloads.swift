@@ -5,8 +5,9 @@ import Foundation
 /// size, with XCTest's `measure`) and by `ScalingTests` (at several sizes, to see how its
 /// cost grows with the drawing). `prepare` does the setup outside the timing and returns
 /// a closure that performs the operation once; calling it again repeats it from an
-/// equivalent state. (Unchecked `Sendable` so the workloads can be static: the tests
-/// run them one at a time.)
+/// equivalent state. Every art build uses `ArtBuilder.likeRenderer()`, so it costs what
+/// the app's does. (Unchecked `Sendable` so the workloads can be static: the tests run
+/// them one at a time.)
 struct Workload: @unchecked Sendable {
     var name: String
     var prepare: (Drawing) -> () -> Void
@@ -18,7 +19,7 @@ struct Workload: @unchecked Sendable {
     static let artRebuildAfterOneEdit = Workload(name: "Art rebuild after one edit") { drawing in
         var edited = drawing
         edited.layers[0].shapes[0].fill = RGBAColor(r: 1, g: 0, b: 0)
-        var builder = ArtBuilder()
+        var builder = ArtBuilder.likeRenderer()
         _ = builder.build(drawing, isolatedLayer: nil, tolerance: 0.5)
         var flip = false
         return {
@@ -32,7 +33,7 @@ struct Workload: @unchecked Sendable {
     static let artRebuildAfterOneEditWalkOnly = Workload(name: "Art rebuild after one edit, no vertices") { drawing in
         var edited = drawing
         edited.layers[0].shapes[0].fill = RGBAColor(r: 1, g: 0, b: 0)
-        var builder = ArtBuilder()
+        var builder = ArtBuilder.likeRenderer()
         builder.skipsVertices = true
         _ = builder.build(drawing, isolatedLayer: nil, tolerance: 0.5)
         var flip = false
@@ -42,27 +43,17 @@ struct Workload: @unchecked Sendable {
         }
     }
 
-    /// The rebuild after one edit as the renderer does it (plan step 2.3): no concatenated
-    /// vertex array, and only the segments that changed copied out, as `uploadArt` copies
-    /// them into new GPU buffers (here into a buffer allocated once).
+    /// The rebuild after one edit plus the upload (plan step 2.3): only the segments that
+    /// changed copied out, as `uploadArt` copies them into new GPU buffers.
     static let artRebuildAfterOneEditAndUpload = Workload(name: "Art rebuild after one edit, with upload") { drawing in
         var edited = drawing
         edited.layers[0].shapes[0].fill = RGBAColor(r: 1, g: 0, b: 0)
-        var builder = ArtBuilder()
-        builder.concatenatesVertices = false
-        let first = builder.build(drawing, isolatedLayer: nil, tolerance: 0.5)
-        var resident = first.residentIDs
-        var gpu = [Float](repeating: 0, count: first.segments.reduce(0) { $0 + $1.floats.count })
+        var builder = ArtBuilder.likeRenderer()
+        var upload = SegmentUpload(builder.build(drawing, isolatedLayer: nil, tolerance: 0.5))
         var flip = false
         return {
             flip.toggle()
-            let batch = builder.build(flip ? edited : drawing, isolatedLayer: nil, tolerance: 0.5)
-            gpu.withUnsafeMutableBytes { target in
-                for segment in batch.segmentsToUpload(resident: resident) {
-                    segment.floats.withUnsafeBytes { target.baseAddress!.copyMemory(from: $0.baseAddress!, byteCount: $0.count) }
-                }
-            }
-            resident = batch.residentIDs
+            upload.copy(builder.build(flip ? edited : drawing, isolatedLayer: nil, tolerance: 0.5))
         }
     }
 
@@ -72,7 +63,7 @@ struct Workload: @unchecked Sendable {
     /// the total work of a refine and for comparison with earlier tables. With no second
     /// tier, since that would turn this back-and-forth into warm builds.
     static let artRebuildAtNewZoomBucket = Workload(name: "Art rebuild, new zoom bucket") { drawing in
-        var builder = ArtBuilder()
+        var builder = ArtBuilder.likeRenderer()
         builder.tessellations.secondTierLimit = 0
         _ = builder.build(drawing, isolatedLayer: nil, tolerance: 0.2)
         var flip = false
@@ -88,7 +79,7 @@ struct Workload: @unchecked Sendable {
     /// (1,180 × 820 points) at 4x around the busy point, plus the quarter-screen margin.
     /// The renderer keeps drawing meanwhile; this is how long the coarse art shows.
     static let zoomInRefineVisible = Workload(name: "Zoom-in refine, visible shapes") { drawing in
-        var builder = ArtBuilder()
+        var builder = ArtBuilder.likeRenderer()
         _ = builder.build(drawing, isolatedLayer: nil, tolerance: 0.2)
         let cache = builder.tessellations
         let center = StressDrawing.busyPoint(layers: drawing.layers.count)
@@ -261,7 +252,7 @@ struct Workload: @unchecked Sendable {
         let live = LiveTransform(id: 1, base: drawing, shapes: LiveTransform.shapes(of: selection, in: drawing)!,
                                  transform: t)
         let after = drawing.applying(t, to: selection)
-        var during = ArtBuilder()
+        var during = ArtBuilder.likeRenderer()
         _ = during.build(drawing, isolatedLayer: nil, tolerance: 0.5)
         _ = during.build(drawing, isolatedLayer: nil, tolerance: 0.5, moving: live.shapes)
         return {
@@ -277,7 +268,7 @@ struct Workload: @unchecked Sendable {
     /// an empty cache, about what `PerformanceTests.testArtBuildCold` times.
     static let openFirstFrame = Workload(name: "Open: first frame's art") { drawing in
         {
-            var builder = ArtBuilder()
+            var builder = ArtBuilder.likeRenderer()
             _ = builder.build(drawing, isolatedLayer: nil, tolerance: 0.2, reusingOtherTolerances: true,
                               leavingOutUncached: true)
         }
@@ -292,7 +283,7 @@ struct Workload: @unchecked Sendable {
         let half = Vec2(1180, 820) / 2
         let view = Rect(minPoint: center - half, maxPoint: center + half)
         return {
-            var builder = ArtBuilder()
+            var builder = ArtBuilder.likeRenderer()
             let plan = builder.tessellations.refinePlan(for: drawing, tolerance: 0.2, viewRect: view, wholeLayers: true)
             precondition(!plan.visible.isEmpty)
             builder.tessellations.merge(TessellationCache.tessellate(plan.visible, tolerance: 0.2)!, for: drawing)
@@ -315,39 +306,105 @@ struct Workload: @unchecked Sendable {
     // MARK: Keyframes
 
     /// One playback or scrub frame of a transition in which every layer slides (a layer
-    /// transform): the scene interpolated and the art rebuilt from a warm builder.
+    /// transform): the scene interpolated, the art rebuilt from a warm builder and the
+    /// layers it rebuilt uploaded.
     static let playbackFrameAllLayersSlide = Workload(name: "Playback frame, every layer slides") { drawing in
-        var end = drawing
-        for l in end.layers.indices { end.layers[l].transform.position = Vec2(200, 0) }
-        return playbackFrame(StressDrawing.transition(from: drawing, to: end))
+        playbackFrame(StressDrawing.transition(from: drawing, to: everyLayerSlid(drawing)))
     }
 
     /// The same with every shape changing fill and nothing moving.
     static let playbackFrameEveryFillChanges = Workload(name: "Playback frame, every fill changes") { drawing in
-        var end = drawing
-        for l in end.layers.indices {
-            for s in end.layers[l].shapes.indices { end.layers[l].shapes[s].fill = RGBAColor(r: 0.2, g: 0.5, b: 0.9) }
-        }
-        return playbackFrame(StressDrawing.transition(from: drawing, to: end))
+        playbackFrame(StressDrawing.transition(from: drawing, to: everyFillChanged(drawing)))
     }
 
     /// The same with one layer's shapes fading out.
     static let playbackFrameOneLayerFades = Workload(name: "Playback frame, one layer fades") { drawing in
+        playbackFrame(StressDrawing.transition(from: drawing, to: firstLayerFaded(drawing)))
+    }
+
+    /// The same with a text on every layer tweening its tracking: each frame lays out,
+    /// outlines and tessellates every text again.
+    static let playbackFrameTextTracking = Workload(name: "Playback frame, a text per layer tweens tracking") { drawing in
+        let start = StressDrawing.withText(drawing)
+        var end = start
+        for l in end.layers.indices {
+            for s in end.layers[l].shapes.indices where end.layers[l].shapes[s].text != nil {
+                end.layers[l].shapes[s].text!.tracking = 8
+            }
+        }
+        return playbackFrame(StressDrawing.transition(from: start, to: end))
+    }
+
+    static func everyLayerSlid(_ drawing: Drawing) -> Drawing {
+        var end = drawing
+        for l in end.layers.indices { end.layers[l].transform.position = Vec2(200, 0) }
+        return end
+    }
+
+    static func everyFillChanged(_ drawing: Drawing) -> Drawing {
+        var end = drawing
+        for l in end.layers.indices {
+            for s in end.layers[l].shapes.indices { end.layers[l].shapes[s].fill = RGBAColor(r: 0.2, g: 0.5, b: 0.9) }
+        }
+        return end
+    }
+
+    static func firstLayerFaded(_ drawing: Drawing) -> Drawing {
         var end = drawing
         for s in end.layers[0].shapes.indices { end.layers[0].shapes[s].opacity = 0 }
-        return playbackFrame(StressDrawing.transition(from: drawing, to: end))
+        return end
     }
 
     /// 120 Hz frames through the transition into keyframe 1, wrapping before the end.
     private static func playbackFrame(_ timeline: Timeline) -> () -> Void {
-        var timeline = timeline
-        var builder = ArtBuilder()
-        _ = builder.build(timeline.state(at: 0), isolatedLayer: nil, tolerance: 0.5)
-        var frame = 0
+        var frames = PlaybackFrames(timeline)
+        return { frames.next() }
+    }
+
+    /// The onion skin's first build at keyframe 10 of 20, after turning it on or zooming
+    /// into a new bucket: the previous keyframe built by a fresh builder at the art's
+    /// tolerance with every shape ghosted, as `CanvasRenderer.updateOnion` does.
+    static let onionSkinBuild = Workload(name: "Onion skin build, keyframe 10 of 20") { drawing in
+        let presentation = StressDrawing.presentation(drawing, keyframes: 20)
+        var editor = DrawingEditor(presentation: presentation)
+        editor.selectKeyframe(presentation.keyframe(atChainIndex: 10)!.id)
+        editor.showsOnionSkin = true
+        let onion = editor.onionSkin!
+        var art = ArtBuilder.likeRenderer()
+        _ = art.build(editor.drawing, isolatedLayer: nil, tolerance: 0.5)
         return {
-            frame += 1
-            let scene = timeline.transition(into: 1, elapsed: Double(frame % 110 + 1) / 120)
-            _ = builder.build(scene, isolatedLayer: nil, tolerance: 0.5)
+            var builder = ArtBuilder.likeRenderer()
+            _ = builder.build(onion, isolatedLayer: nil, tolerance: 0.5, ghostFocus: [])
+        }
+    }
+
+    /// A nudge of one shape at keyframe 10 of 20 once that keyframe keys every shape (a
+    /// "build everything in" slide): the commit diffs the keyframe again.
+    static let nudgeAtKeyframeKeyingEverything = Workload(name: "Nudge at a keyframe that keys every shape") { drawing in
+        let presentation = StressDrawing.presentation(drawing, keyframes: 20)
+        var editor = DrawingEditor(presentation: presentation)
+        editor.selectKeyframe(presentation.keyframe(atChainIndex: 10)!.id)
+        editor.tool = .select
+        editor.selection = everything(in: editor.drawing)
+        editor.nudge(by: Vec2(1, 0))
+        let layer = editor.drawing.layers[min(3, editor.drawing.layers.count - 1)]
+        editor.selection = .shape(layer: layer.id, shape: layer.shapes[min(2, layer.shapes.count - 1)].id)
+        return { editor.nudge(by: Vec2(1, 0)) }
+    }
+
+    /// Deleting one shape at keyframe 1 of 20, then undoing it, in a deck whose keyframes
+    /// each reorder shapes: the delete prunes every later keyframe.
+    static let deleteAndUndoWithReorders = Workload(name: "Delete and undo at keyframe 1, keyframes reorder") { drawing in
+        let presentation = StressDrawing.reorderingPresentation(drawing, keyframes: 20)
+        var editor = DrawingEditor(presentation: presentation)
+        editor.selectKeyframe(presentation.keyframe(atChainIndex: 1)!.id)
+        editor.tool = .select
+        let layer = editor.drawing.layers[min(2, editor.drawing.layers.count - 1)]
+        let shape = Selection.shape(layer: layer.id, shape: layer.shapes[min(5, layer.shapes.count - 1)].id)
+        return {
+            editor.selection = shape
+            editor.deleteSelection()
+            editor.undo()
         }
     }
 
@@ -359,7 +416,7 @@ struct Workload: @unchecked Sendable {
         for l in end.layers.indices { end.layers[l].transform.position = Vec2(200, 0) }
         var timeline = StressDrawing.transition(from: drawing, to: end)
         let state = timeline.state(at: 1)
-        var art = ArtBuilder()
+        var art = ArtBuilder.likeRenderer()
         _ = art.build(state, isolatedLayer: nil, tolerance: 0.5)
         var preview = art
         _ = preview.build(timeline.state(at: 0), isolatedLayer: nil, tolerance: 0.5)
@@ -409,6 +466,66 @@ struct Workload: @unchecked Sendable {
         return { precondition(!timeline.changedObjects(inKeyframe: id).isEmpty) }
     }
 
+    // MARK: Big selections
+
+    /// One hover frame in the select tool with everything selected: the hit test and the
+    /// overlay, which draws the selection's frame.
+    static let hoverFrameEverythingSelected = Workload(name: "Hover frame, everything selected") { drawing in
+        var editor = DrawingEditor(drawing: drawing)
+        editor.tool = .select
+        editor.selection = everything(in: drawing)
+        var cache = OverlayCache()
+        _ = EditorOverlay.layers(for: editor, zoom: 1, cache: &cache)
+        let start = StressDrawing.busyPoint(layers: drawing.layers.count)
+        var i = 0
+        return {
+            i += 1
+            editor.pencilHovered(at: start + Vec2(Double(i % 20) * 2, 0), zoom: 1)
+            _ = EditorOverlay.layers(for: editor, zoom: 1, cache: &cache)
+        }
+    }
+
+    /// One nudge of everything (an arrow key), one undo step each.
+    static let nudgeEverything = Workload(name: "Nudge everything") { drawing in
+        var editor = DrawingEditor(drawing: drawing)
+        editor.tool = .select
+        editor.selection = everything(in: drawing)
+        return { editor.nudge(by: Vec2(1, 0)) }
+    }
+
+    /// One tick of the fill color picker with everything selected at keyframe 10 of 20,
+    /// and what `CanvasStore.refreshStyle()` reads after it.
+    static let colorTickEverythingAtKeyframe = Workload(name: "Color picker tick, everything selected, keyframe 10") { drawing in
+        let presentation = StressDrawing.presentation(drawing, keyframes: 20)
+        var editor = DrawingEditor(presentation: presentation)
+        editor.selectKeyframe(presentation.keyframe(atChainIndex: 10)!.id)
+        editor.selection = everything(in: editor.drawing)
+        var i = 0
+        return {
+            i += 1
+            editor.setFill(RGBAColor(r: Double(i % 100) / 100, g: 0.3, b: 0.3), continuous: true)
+            PerformanceTests.readStyleRefreshQueries(editor)
+        }
+    }
+
+    /// A marquee over the whole drawing and the lift, in the select tool, with every shape
+    /// in a group of two.
+    static let marqueeOverGroupedArt = Workload(name: "Marquee over everything, shapes grouped in pairs") { drawing in
+        let grouped = StressDrawing.pairGrouped(drawing)
+        var editor = DrawingEditor(drawing: grouped)
+        editor.tool = .select
+        let box = grouped.geometryBounds(of: everything(in: grouped))!
+        let start = box.minPoint - Vec2(50, 50), end = box.maxPoint + Vec2(50, 50)
+        return {
+            editor.selection = .none
+            editor.pencilBegan(at: start, zoom: 1)
+            editor.pencilMoved(to: (start + end) / 2)
+            editor.pencilMoved(to: end)
+            editor.pencilEnded(at: end)
+            precondition(editor.selection != .none)
+        }
+    }
+
     // MARK: Navigating
 
     /// A two-finger pan, zoom and rotate of 60 samples through `CanvasSession`, plus the
@@ -437,6 +554,16 @@ struct Workload: @unchecked Sendable {
         var editor = DrawingEditor(drawing: drawing)
         editor.tool = .select
         editor.selection = everything(in: drawing)
+        return { PerformanceTests.readRefreshQueries(editor) }
+    }
+
+    /// The same at keyframe 10 of 20, where the keyed properties have changes to look at.
+    static let refreshQueriesAtKeyframe = Workload(name: "Refresh queries, everything selected, keyframe 10") { drawing in
+        let presentation = StressDrawing.presentation(drawing, keyframes: 20)
+        var editor = DrawingEditor(presentation: presentation)
+        editor.selectKeyframe(presentation.keyframe(atChainIndex: 10)!.id)
+        editor.tool = .select
+        editor.selection = everything(in: editor.drawing)
         return { PerformanceTests.readRefreshQueries(editor) }
     }
 
@@ -489,11 +616,76 @@ struct Workload: @unchecked Sendable {
          scissorsHover, pencilStroke, quickShapeCheck, eraserSample, dragSampleEverything, dragEndOneLayer,
          dragEndEverything, undoRedo, twoFingerNavigation, refreshQueries, layerTree, save, open, openParse,
          openDecode, openFirstFrame, openFirstArtInView, svgExport, svgImport, playbackFrameAllLayersSlide,
-         playbackFrameEveryFillChanges, playbackFrameOneLayerFades, frameAfterPlayback, undoRedoAtKeyframe,
-         resolveLastKeyframeCold, changedObjectsAtKeyframe]
+         playbackFrameEveryFillChanges, playbackFrameOneLayerFades, playbackFrameTextTracking, frameAfterPlayback,
+         undoRedoAtKeyframe, resolveLastKeyframeCold, changedObjectsAtKeyframe, onionSkinBuild,
+         nudgeAtKeyframeKeyingEverything, deleteAndUndoWithReorders, hoverFrameEverythingSelected, nudgeEverything,
+         colorTickEverythingAtKeyframe, marqueeOverGroupedArt, refreshQueriesAtKeyframe]
     }
 
     static func everything(in drawing: Drawing) -> Selection {
         .covering(Set(drawing.layers.flatMap { layer in layer.shapes.map { ShapeRef(layer: layer.id, shape: $0.id) } }))
+    }
+}
+
+extension ArtBuilder {
+    /// A builder set up as `CanvasRenderer` sets up its own. The renderer uploads each
+    /// layer's segment on its own, so it doesn't concatenate them: a default builder copies
+    /// every layer's floats into one array on every build, which would be most of the time
+    /// measured.
+    static func likeRenderer() -> ArtBuilder {
+        var builder = ArtBuilder()
+        builder.concatenatesVertices = false
+        return builder
+    }
+}
+
+/// The floats a renderer uploads after each build: the segments it doesn't hold yet,
+/// copied into a buffer kept from build to build, as the playback pool's are.
+struct SegmentUpload {
+    private var resident: Set<Int>
+    private var buffer: [Float] = []
+    /// What the last `copy` uploaded.
+    private(set) var floats = 0
+
+    init(_ first: ArtBatch) { resident = first.residentIDs }
+
+    mutating func copy(_ batch: ArtBatch) {
+        let segments = batch.segmentsToUpload(resident: resident)
+        floats = segments.reduce(0) { $0 + $1.floats.count }
+        if buffer.count < floats { buffer = [Float](repeating: 0, count: floats) }
+        buffer.withUnsafeMutableBufferPointer { target in
+            var offset = 0
+            for segment in segments {
+                segment.floats.withUnsafeBufferPointer { source in
+                    guard let base = source.baseAddress else { return }
+                    (target.baseAddress! + offset).update(from: base, count: source.count)
+                }
+                offset += segment.floats.count
+            }
+        }
+        resident = batch.residentIDs
+    }
+}
+
+/// 120 Hz frames through the transition into keyframe 1 of `timeline`, wrapping before
+/// the end: each interpolates the scene, rebuilds the art from a warm builder and uploads
+/// the layers it rebuilt.
+struct PlaybackFrames {
+    private var timeline: Timeline
+    private var builder = ArtBuilder.likeRenderer()
+    private var upload: SegmentUpload
+    private var frame = 0
+    /// The floats the last frame uploaded.
+    var uploadedFloats: Int { upload.floats }
+
+    init(_ timeline: Timeline) {
+        self.timeline = timeline
+        upload = SegmentUpload(builder.build(self.timeline.state(at: 0), isolatedLayer: nil, tolerance: 0.5))
+    }
+
+    mutating func next() {
+        frame += 1
+        let scene = timeline.transition(into: 1, elapsed: Double(frame % 110 + 1) / 120)
+        upload.copy(builder.build(scene, isolatedLayer: nil, tolerance: 0.5))
     }
 }
