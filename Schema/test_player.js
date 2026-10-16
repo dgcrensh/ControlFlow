@@ -1,7 +1,7 @@
 // Checks the HTML export's player against the test vectors: each sample's scene, played
-// by player.js, must match the one the app recorded, and so must its text outlines where
-// the sample has them, and each formula's outline drawn from the vectors' math.json (see
-// README.md, "Test vectors").
+// by player.js, must match the one the app recorded, and so must its text and morphing
+// formula outlines where the sample has them, and each formula's outline drawn from the
+// vectors' math.json (see README.md, "Test vectors").
 //
 //   node Schema/test_player.js
 //
@@ -49,15 +49,19 @@ function difference(a, b, at) {
 }
 
 /// Each text shape's glyph outline in its own space, drawn from the file's `texts` (the
-/// HTML export's text.json) as the vectors write it: `[{ shape, points }]`, each point's
-/// x, y, inX, inY, outX, outY in one flat list.
-function outlines(scene, texts) {
+/// HTML export's text.json), and each morphing formula's, drawn from its `math`, as the
+/// vectors write it: `[{ shape, points }]`, each point's x, y, inX, inY, outX, outY in
+/// one flat list.
+function outlines(scene, texts, math) {
   const out = [];
   for (const layer of scene.layers) {
     for (const shape of layer.shapes) {
-      if (!shape.text) continue;
+      let outline;
+      if (shape.text) outline = player.textOutline(shape.text, texts);
+      else if (shape.math && shape.math.morph) outline = player.formulaOutline(shape.math, math);
+      else continue;
       const points = [];
-      for (const p of player.textOutline(shape.text, texts)) points.push(p.p[0], p.p[1], p.in[0], p.in[1], p.out[0], p.out[1]);
+      for (const p of outline) points.push(p.p[0], p.p[1], p.in[0], p.in[1], p.out[0], p.out[1]);
       out.push({ shape: shape.id, points });
     }
   }
@@ -86,7 +90,7 @@ for (const name of fs.readdirSync(folder).filter((n) => n.endsWith('.json')).sor
   for (const sample of vectors.samples) {
     const scene = timeline.playing(sample.sequence, sample.time).scene;
     let d = difference(rounded(player.sceneJSON(scene)), sample.scene, 'scene');
-    if (!d && sample.outlines) d = difference(rounded(outlines(scene, texts)), sample.outlines, 'outlines');
+    if (!d && sample.outlines) d = difference(rounded(outlines(scene, texts, math)), sample.outlines, 'outlines');
     checked++;
     if (d) {
       failures++;

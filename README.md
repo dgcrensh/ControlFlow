@@ -185,7 +185,7 @@ The plan is [docs/plans/images.md](docs/plans/images.md).
 
 ## Math notes
 
-The plan is [docs/plans/math.md](docs/plans/math.md). Formulas are being built in four steps: the core and the file, MathJax in the app, the Math tool (below), and the morph between keyframes.
+The plan is [docs/plans/math.md](docs/plans/math.md). Formulas were built in four steps: the core and the file, MathJax in the app, the Math tool and the morph between keyframes.
 
 **Using it**
 
@@ -198,7 +198,7 @@ The plan is [docs/plans/math.md](docs/plans/math.md). Formulas are being built i
 - **More > Retypeset All Formulas** typesets every formula again with this app's MathJax. Formulas otherwise keep the look they were saved with, so an update can't shift a rehearsed slide.
 
 - A document with formulas (made by hand or by the tests) opens, plays, presents and exports: each formula draws in the shape's fill, at its place, turn and scale, from the layout saved with the document, so opening it typesets nothing. Select, Arrange, Align, copy and paste, the Layers panel and undo treat a formula like a text, picked anywhere in its box. Direct Select and the scissors leave it alone.
-- **Keyframes:** a formula's place, turn, scale, opacity and fill animate as any shape's; a change to its LaTeX, size or style happens at the start of the transition (the morph comes later).
+- **Keyframes:** a formula's place, turn, scale, opacity and fill animate as any shape's. A change to its LaTeX, size or style **morphs**: symbols in both versions glide to their new places and sizes (the k-th `b` before to the k-th `b` after), symbols only in the old one shrink away about their centers and new ones grow in, fraction bars stretch, and a parenthesis that changes size moves and swaps to its new outline halfway. Wrap parts in `\class{name}{…}` in both versions to say which go together when the order would pick wrong. The web page morphs exactly as the iPad does.
 - Exports draw formulas as outlines: SVG, PNG, thumbnails and the web page look as the iPad does.
 - **Typesetting:** a formula whose layout isn't saved in the document (one added to the file by hand) is typeset with MathJax on the iPad when the document opens. Until it arrives the canvas shows a light box in the formula's color where it goes, and exports leave it out. The first formula loads MathJax, which takes a moment; the rest are quick. A formula MathJax can't typeset keeps its box.
 - **Debug builds** have More › Time Formulas, which typesets 200 formulas and shows how long MathJax took to load and the time per formula.
@@ -209,6 +209,7 @@ The plan is [docs/plans/math.md](docs/plans/math.md). Formulas are being built i
 - **Core** (`Math.swift`, `MathLayout.swift`, `MathTypesetting.swift`): a formula is a `VectorShape` with a `MathContent` (its LaTeX, size and display style) and an empty path. `MathLayout.parse(svg:content:)` reads MathJax's SVG into glyphs (each outline once, by key, with where it goes, its `\class` tags and its LaTeX) and rules, in points. `MathTypesetting` keeps every layout known, with the engine that made it, and typesets in the background through the `MathTypesetter` in use; `VectorShape.resolvingLayout()` draws a formula from it, or a placeholder box until it is known. `Presentation.mathContents` lists the formulas every keyframe shows, and `MathFile` writes and reads their layouts as `math.json`, which the package and the HTML export save. Tests are in `MathLayoutTests.swift`, `MathTests.swift` and `MathPackageTests.swift`, against MathJax's real output in `Tests/ControlFlowCoreTests/Fixtures/math`.
 - **MathJax:** `MathJax/` pins MathJax 4.1.3 and its New Computer Modern font and bundles them into one script that typesets synchronously with no DOM (`MathJax/build.sh`), committed as `ControlFlow/Resources/cf-mathjax.js`. `node Schema/typeset_math.mjs` runs that bundle in a bare Node context, as the app runs it in JavaScriptCore, to write the test fixtures listed in `sources.json`.
 - **App:** `MathJaxTypesetter` (`Canvas/`) runs the bundle in one `JSContext`, owned by an actor and loaded on the first formula; a JavaScript exception becomes the formula's `MathError`. `CanvasRenderer` asks `MathTypesetting` for the layouts of the formulas it draws and builds the art again when they arrive (`MathTypesetting.generation`); until then `ArtBuilder` draws `VectorShape.placeholderForMissingLayout`. Instruments shows "MathJax load" and "MathJax typeset" intervals. Tests are in `MathDrawingTests.swift`.
+- **Morph** (`MathMorph.swift`): `Interpolation` gives a changing formula a `morph` (the old formula and the progress), and `resolvingLayout()` draws the frame `MathMorph` makes from the two layouts, with its pairing cached. `player.js` ports it (`pairMath`, `morphMath`), checked by the test vectors' morphing outlines. Tests are in `MathMorphTests.swift`, and `PerformanceTests` times ten formulas morphing at once.
 - **Format 1.3** adds `math` to shapes and `math.json` to the package (`Schema/README.md`, "Math"). `player.js` reads both and draws formulas from `math.json`, checked against the test vectors.
 
 ## Arranging and aligning notes

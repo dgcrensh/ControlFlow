@@ -100,8 +100,8 @@ final class TestVectorTests: XCTestCase {
                     (key: "time", value: .number(time)),
                     (key: "scene", value: Self.scene(scene)),
                 ]
-                // Text outlines where a text's spacing is moving.
-                let moving = scene.layers.contains { $0.shapes.contains { $0.text?.held != nil } }
+                // Outlines where a text's spacing is moving or a formula morphing.
+                let moving = scene.layers.contains { $0.shapes.contains { $0.text?.held != nil || $0.math?.morph != nil } }
                 if moving {
                     sample.append((key: "outlines", value: Self.outlines(scene)))
                 }
@@ -151,14 +151,21 @@ final class TestVectorTests: XCTestCase {
         ]).rounded()
     }
 
-    /// Each text shape's glyph outline in its own space, as `[{ "shape", "points" }]` with
-    /// each point's `x, y, inX, inY, outX, outY` in one flat list.
+    /// Each text shape's glyph outline, and each morphing formula's, in its own space, as
+    /// `[{ "shape", "points" }]` with each point's `x, y, inX, inY, outX, outY` in one flat list.
     static func outlines(_ d: Drawing) -> JSONValue {
         var out: [JSONValue] = []
         for layer in d.layers {
             for shape in layer.shapes {
-                guard let text = shape.text else { continue }
-                let points = TextShaping.outline(text).points.flatMap { p in
+                let path: BezierPath
+                if let text = shape.text {
+                    path = TextShaping.outline(text)
+                } else if shape.math?.morph != nil {
+                    path = shape.resolvingLayout().path
+                } else {
+                    continue
+                }
+                let points = path.points.flatMap { p in
                     [p.position.x, p.position.y, p.inHandle.x, p.inHandle.y, p.outHandle.x, p.outHandle.y]
                 }
                 out.append(.object([(key: "shape", value: .number(Double(shape.id))),

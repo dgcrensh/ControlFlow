@@ -64,17 +64,20 @@ public enum MathTypesetting {
 
     /// The layout of `math` if it is known; never typesets.
     public static func layout(_ math: MathContent) -> MathLayout? {
-        locked { $0.entries[math]?.layout }
+        let math = math.unmorphed
+        return locked { $0.entries[math]?.layout }
     }
 
     /// The layout of `math` and the engine that made it, if known.
     static func entry(_ math: MathContent) -> Entry? {
-        locked { $0.entries[math] }
+        let math = math.unmorphed
+        return locked { $0.entries[math] }
     }
 
     /// The error from typesetting `math`, if it failed.
     public static func error(_ math: MathContent) -> MathError? {
-        locked { $0.errors[math] }
+        let math = math.unmorphed
+        return locked { $0.errors[math] }
     }
 
     /// Typesets `math` unless its layout is known, it failed, or it is being typeset
@@ -83,6 +86,7 @@ public enum MathTypesetting {
     /// formula (one just started with the Math tool) is never typeset, so it keeps its
     /// placeholder box until something is typed.
     public static func request(_ math: MathContent, done: @Sendable @escaping () -> Void = {}) {
+        let math = math.unmorphed
         enum Next { case now, later, start(any MathTypesetter) }
         let next: Next = locked { s in
             if math.source.allSatisfy(\.isWhitespace) { return .now }
@@ -122,7 +126,12 @@ public enum MathTypesetting {
     public static func requestMissing(in drawing: Drawing, done: @Sendable @escaping () -> Void) -> Int {
         var maths = Set<MathContent>()
         for layer in drawing.layers {
-            for shape in layer.shapes { if let math = shape.math, !math.source.allSatisfy(\.isWhitespace) { maths.insert(math) } }
+            for shape in layer.shapes {
+                guard let math = shape.math else { continue }
+                // A morphing formula needs both ends.
+                for end in [math.unmorphed, math.morph?.from].compactMap({ $0 })
+                where !end.source.allSatisfy(\.isWhitespace) { maths.insert(end) }
+            }
         }
         guard !maths.isEmpty else { return 0 }
         let missing: [MathContent] = locked { s in
@@ -157,8 +166,8 @@ public enum MathTypesetting {
     public static func insert(_ layouts: [MathContent: MathLayout], engine: String) {
         locked { s in
             for (math, layout) in layouts {
-                s.entries[math] = Entry(layout: layout, engine: engine)
-                s.errors[math] = nil
+                s.entries[math.unmorphed] = Entry(layout: layout, engine: engine)
+                s.errors[math.unmorphed] = nil
             }
             s.generation += 1
         }
@@ -167,8 +176,8 @@ public enum MathTypesetting {
     static func insert(_ entries: [MathContent: Entry]) {
         locked { s in
             for (math, entry) in entries {
-                s.entries[math] = entry
-                s.errors[math] = nil
+                s.entries[math.unmorphed] = entry
+                s.errors[math.unmorphed] = nil
             }
             s.generation += 1
         }
@@ -179,8 +188,8 @@ public enum MathTypesetting {
     public static func forget(_ maths: [MathContent]) {
         locked { s in
             for math in maths {
-                s.entries[math] = nil
-                s.errors[math] = nil
+                s.entries[math.unmorphed] = nil
+                s.errors[math.unmorphed] = nil
             }
             s.generation += 1
         }

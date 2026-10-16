@@ -1208,6 +1208,11 @@
       });
       if (sa.dash.length === sb.dash.length) out.stroke.dash = sa.dash.map((d, i) => Math.max(lerpNumber(d, sb.dash[i], p), 0));
     }
+    const ma = a.math, mb = b.math;
+    if (ma && mb && (ma.source !== mb.source || ma.size !== mb.size || ma.display !== mb.display)) {
+      // The formula morphs from the old one (MathMorph.swift, morphMath).
+      out.math = Object.assign({}, mb, { morph: { from: { source: ma.source, size: ma.size, display: ma.display }, progress: p } });
+    }
     const ta = a.text, tb = b.text;
     if (ta && tb && (ta.tracking !== tb.tracking || ta.lineHeight !== tb.lineHeight)) {
       // Lines stay broken as they are at the end (TextContent.held).
@@ -1595,7 +1600,7 @@
   function r_mathKey(math) { return JSON.stringify(mathJSON(math)); }
 
   /// Reads math.json (already parsed) into the layouts `renderScene` takes as
-  /// `options.math`: each formula's glyphs `{ contours, place }` and rules, in points.
+  /// `options.math`: each formula's glyphs `{ key, tags, contours, place }` and rules, in points.
   /// Entries that don't read are left out (MathFile.read).
   function readMathLayouts(json) {
     const out = new Map();
@@ -1613,7 +1618,8 @@
           const contours = isObject(g) ? table[g.key] : null;
           if (!Array.isArray(contours) || !finite(g.place, 6)) throw new Error('a glyph does not read');
           const m = g.place.map((x) => x * k);
-          glyphs.push({ contours, place: { a: m[0], b: m[1], c: m[2], d: m[3], tx: m[4], ty: m[5] } });
+          const tags = Array.isArray(g.tags) ? g.tags.filter((t) => typeof t === 'string') : [];
+          glyphs.push({ key: g.key, tags, contours, place: { a: m[0], b: m[1], c: m[2], d: m[3], tx: m[4], ty: m[5] } });
         }
         const rules = [];
         for (const r of entry.rules) {
@@ -1630,12 +1636,26 @@
 
   /// A formula's glyphs and rules as one path's points `{ p, in, out }`, in the shape's
   /// space (MathLayout.outline, bridged as BezierPath.bridging does, rules wound as the
-  /// glyphs are). Empty when math.json has no layout for it.
+  /// glyphs are). Empty when math.json has no layout for it. A formula partway through a
+  /// morph draws its frame (morphMath), or the formula it goes to while either layout is
+  /// missing.
   function r_mathOutline(math) {
     if (!r_math) return [];
+    if (math.morph) {
+      const frame = morphMath(math);
+      if (frame) return frame;
+    }
     const key = r_mathKey(math);
     if (r_mathCache.has(key)) return r_mathCache.get(key);
     const layout = r_math.get(key);
+    const out = layout ? r_placedOutline(layout.glyphs, layout.rules) : [];
+    r_mathCache.set(key, out);
+    return out;
+  }
+
+  /// MathLayout.outline(placed:rules:): `glyphs` as `{ contours, place }` (contours in
+  /// glyph units, place to points), rules as `[x, y, w, h]` in points.
+  function r_placedOutline(glyphs, rules) {
     const rings = [];
     let area = 0;
     const signedArea = (ring) => {
@@ -1646,30 +1666,28 @@
       }
       return ring.length >= 3 ? sum / 2 : 0;
     };
-    if (layout) {
-      for (const glyph of layout.glyphs) {
-        const m = glyph.place;
-        for (const c of glyph.contours) {
-          if (!Array.isArray(c) || c.length < 12) continue;
-          const ring = [];
-          for (let i = 0; i + 5 < c.length; i += 6) {
-            const x = c[i], y = c[i + 1];
-            ring.push({
-              p: [m.a * x + m.c * y + m.tx, m.b * x + m.d * y + m.ty],
-              in: [m.a * c[i + 2] + m.c * c[i + 3], m.b * c[i + 2] + m.d * c[i + 3]],
-              out: [m.a * c[i + 4] + m.c * c[i + 5], m.b * c[i + 4] + m.d * c[i + 5]],
-            });
-          }
-          area += signedArea(ring);
-          rings.push(ring);
+    for (const glyph of glyphs) {
+      const m = glyph.place;
+      for (const c of glyph.contours) {
+        if (!Array.isArray(c) || c.length < 12) continue;
+        const ring = [];
+        for (let i = 0; i + 5 < c.length; i += 6) {
+          const x = c[i], y = c[i + 1];
+          ring.push({
+            p: [m.a * x + m.c * y + m.tx, m.b * x + m.d * y + m.ty],
+            in: [m.a * c[i + 2] + m.c * c[i + 3], m.b * c[i + 2] + m.d * c[i + 3]],
+            out: [m.a * c[i + 4] + m.c * c[i + 5], m.b * c[i + 4] + m.d * c[i + 5]],
+          });
         }
-      }
-      for (const [x, y, w, h] of layout.rules) {
-        if (!(w > 0 && h > 0)) continue;
-        let ring = [[x, y], [x + w, y], [x + w, y + h], [x, y + h]].map((p) => ({ p, in: [0, 0], out: [0, 0] }));
-        if (area !== 0 && (signedArea(ring) > 0) !== (area > 0)) ring = ring.reverse();
+        area += signedArea(ring);
         rings.push(ring);
       }
+    }
+    for (const [x, y, w, h] of rules) {
+      if (!(w > 0 && h > 0)) continue;
+      let ring = [[x, y], [x + w, y], [x + w, y + h], [x, y + h]].map((p) => ({ p, in: [0, 0], out: [0, 0] }));
+      if (area !== 0 && (signedArea(ring) > 0) !== (area > 0)) ring = ring.reverse();
+      rings.push(ring);
     }
     const out = [];
     let hub = null;
@@ -1681,14 +1699,125 @@
       out.push(back);
       if (hub) out.push(hub); else hub = { p: ring[0].p, in: [0, 0], out: [0, 0] };
     }
-    r_mathCache.set(key, out);
     return out;
+  }
+
+  // MARK: The morph (MathMorph.swift)
+
+  let r_pairings = new Map();
+
+  /// MathMorph.symbol: a glyph key without its variant.
+  function mathSymbol(key) {
+    const parts = key.split('-');
+    return parts.length >= 3 ? `${parts[0]}-${parts[parts.length - 1]}` : key;
+  }
+
+  /// MathMorph.pair: `{ glyphs, rules }`, each a list of `[from, to]` index pairs (null
+  /// for a side that has none), matched and new ones in `b`'s order, then those leaving.
+  function pairMath(a, b) {
+    const fromOf = b.glyphs.map(() => null);
+    const paired = a.glyphs.map(() => false);
+    const last = (g) => (g.tags.length ? g.tags[g.tags.length - 1] : null);
+    const tagsB = new Set(b.glyphs.map(last).filter((t) => t !== null));
+    const shared = new Set(a.glyphs.map(last).filter((t) => t !== null && tagsB.has(t)));
+    const tagged = (g) => last(g) !== null && shared.has(last(g));
+    const match = (name) => {
+      const queues = new Map();
+      b.glyphs.forEach((g, j) => {
+        if (fromOf[j] !== null) return;
+        const n = name(g);
+        if (n === null) return;
+        if (!queues.has(n)) queues.set(n, []);
+        queues.get(n).push(j);
+      });
+      const next = new Map();
+      a.glyphs.forEach((g, i) => {
+        if (paired[i]) return;
+        const n = name(g);
+        if (n === null || !queues.has(n)) return;
+        const queue = queues.get(n), k = next.get(n) || 0;
+        if (k >= queue.length) return;
+        next.set(n, k + 1);
+        fromOf[queue[k]] = i;
+        paired[i] = true;
+      });
+    };
+    match((g) => (tagged(g) ? `${last(g)}\u0000${g.key}` : null));
+    match((g) => (tagged(g) ? null : g.key));
+    match((g) => (tagged(g) ? null : mathSymbol(g.key)));
+    const glyphs = b.glyphs.map((g, j) => [fromOf[j], j]);
+    a.glyphs.forEach((g, i) => { if (!paired[i]) glyphs.push([i, null]); });
+    const rules = b.rules.map((r, j) => [j < a.rules.length ? j : null, j]);
+    for (let i = Math.min(a.rules.length, b.rules.length); i < a.rules.length; i++) rules.push([i, null]);
+    return { glyphs, rules };
+  }
+
+  /// MathMorph.scaled: `place` scaled by `s` about the center of the glyph's control points.
+  function scaledPlace(m, contours, s) {
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const c of contours) {
+      if (!Array.isArray(c)) continue;
+      for (let i = 0; i + 5 < c.length; i += 6) {
+        for (const [x, y] of [[c[i], c[i + 1]], [c[i] + c[i + 2], c[i + 1] + c[i + 3]], [c[i] + c[i + 4], c[i + 1] + c[i + 5]]]) {
+          minX = Math.min(minX, x); minY = Math.min(minY, y);
+          maxX = Math.max(maxX, x); maxY = Math.max(maxY, y);
+        }
+      }
+    }
+    const cx = minX > maxX ? 0 : (minX + maxX) / 2, cy = minY > maxY ? 0 : (minY + maxY) / 2;
+    const px = m.a * cx + m.c * cy + m.tx, py = m.b * cx + m.d * cy + m.ty;
+    return { a: m.a * s, b: m.b * s, c: m.c * s, d: m.d * s, tx: m.tx * s + px * (1 - s), ty: m.ty * s + py * (1 - s) };
+  }
+
+  /// MathMorph.scaled: a rule `[x, y, w, h]` scaled by `s` about its center.
+  function scaledRule([x, y, w, h], s) {
+    const sw = w * s, sh = h * s;
+    return [x + w / 2 - sw / 2, y + h / 2 - sh / 2, sw, sh];
+  }
+
+  /// MathMorph.outline: the frame of `math`, a formula with `morph`, as one path's
+  /// points, or null when either layout is missing.
+  function morphMath(math) {
+    const fromKey = r_mathKey(math.morph.from), toKey = r_mathKey(math);
+    const a = r_math.get(fromKey), b = r_math.get(toKey);
+    if (!a || !b) return null;
+    const p = math.morph.progress;
+    if (p === 0) return r_placedOutline(a.glyphs, a.rules);
+    if (p === 1) return r_placedOutline(b.glyphs, b.rules);
+    const pairKey = `${fromKey}\n${toKey}`;
+    if (!r_pairings.has(pairKey)) r_pairings.set(pairKey, pairMath(a, b));
+    const pairing = r_pairings.get(pairKey);
+    const grow = clamp01(p), shrink = clamp01(1 - p);
+    const placed = [];
+    for (const [i, j] of pairing.glyphs) {
+      if (i !== null && j !== null) {
+        const ga = a.glyphs[i], gb = b.glyphs[j];
+        const contours = ga.key === gb.key || p >= 0.5 ? gb.contours : ga.contours;
+        const m = ga.place, n = gb.place;
+        placed.push({ contours, place: { a: lerpNumber(m.a, n.a, p), b: lerpNumber(m.b, n.b, p), c: lerpNumber(m.c, n.c, p),
+          d: lerpNumber(m.d, n.d, p), tx: lerpNumber(m.tx, n.tx, p), ty: lerpNumber(m.ty, n.ty, p) } });
+      } else if (i !== null) {
+        const g = a.glyphs[i];
+        if (shrink > 0) placed.push({ contours: g.contours, place: scaledPlace(g.place, g.contours, shrink) });
+      } else if (j !== null) {
+        const g = b.glyphs[j];
+        if (grow > 0) placed.push({ contours: g.contours, place: scaledPlace(g.place, g.contours, grow) });
+      }
+    }
+    const rules = [];
+    for (const [i, j] of pairing.rules) {
+      if (i !== null && j !== null) rules.push(a.rules[i].map((v, k) => lerpNumber(v, b.rules[j][k], p)));
+      else if (i !== null) rules.push(scaledRule(a.rules[i], shrink));
+      else if (j !== null) rules.push(scaledRule(b.rules[j], grow));
+    }
+    return r_placedOutline(placed, rules);
   }
 
   function r_useMath(math) {
     if ((math || null) !== r_math) {
       r_math = math || null;
       r_mathCache = new Map();
+      r_pairings = new Map();
     }
   }
 
@@ -2412,6 +2541,12 @@
       r_useMath(layouts);
       return r_mathOutline(readMath(math));
     },
+    /// A played formula's outline points (`shape.math` of a scene, morph and all).
+    formulaOutline(math, layouts) {
+      r_useMath(layouts);
+      return r_mathOutline(math);
+    },
+    pairMath,
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.ControlFlowPlayer = api;

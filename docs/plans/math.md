@@ -9,7 +9,7 @@ Formulas typeset from LaTeX with MathJax, drawn as shapes, saved with their layo
 | 1 | Formulas in the core and the file (format 1.3) | Shipped |
 | 2 | MathJax in the app | Shipped; the iPad measurement (More › Time Formulas) is to do |
 | 3 | The Math tool | Shipped |
-| 4 | The morph | Planned |
+| 4 | The morph | Shipped |
 
 Where PR 1 differs from the plan below:
 
@@ -33,6 +33,15 @@ Where PR 3 differs from the plan below:
 - Pasting plain text with the Math tool starts a new edit with the text as its draft, so a pasted formula that doesn't typeset is never kept. With the source panel open, Cut, Copy and Paste act on its field.
 - Retypeset All Formulas is `forgetFormulaLayouts()` (forget and list them), then `formulaLayoutsChanged()` once the app has typeset them, which marks the document changed so `math.json` is written again.
 - The context bar's Edit is `editSelectedMath()`. The source panel takes the timeline bar's place while it is open.
+
+Where PR 4 differs from the plan below:
+
+- `Interpolation` sets `morph` whenever a formula changes, whether or not its layouts are known; `VectorShape.resolvingLayout()` (and `player.js`) draw the new formula while either layout is missing, which is the snap. So playing never depends on the typesetting cache, and the web player needs no layouts to play.
+- `MathMorphState` holds `from` in a one-element array, since a struct can't contain its own type. `MathTypesetting` strips `morph` from every key and bumps a `generation` whenever its layouts change, which clears `MathMorph`'s caches of pairings and frames (32 frames, as for text tweens).
+- Matching: a `\class` tag counts by the glyph's innermost name, and glyphs under a name both formulas have pair only with each other. The last pass pairs leftovers by font and code point whatever the variant (not only `S1`…`S6`), so `NCM-N-28` grows into `NCM-S3-28` and a sum switching between inline and display (`SO`, `LO`) moves too.
+- An unmatched glyph scales about the center of its contours' control points (exact and the same in Swift and JavaScript), and a glyph at scale 0 is left out, so progress 0 and 1 give exactly the two static outlines.
+- `ArtBatch` needed no change: a morphing formula keeps its steps, so its layer is patched per frame like a text tween's (`.points`), and its path is flattened directly.
+- Samples where a formula is morphing carry its outline in `outlines` (keyed by shape), beside the texts', so `test_player.js` checks `morphMath` frame by frame.
 
 ## Design
 

@@ -10,9 +10,12 @@ import Foundation
 ///   move componentwise in sRGB with straight alpha, as CSS does.
 /// - A text's tracking and line height move linearly too, its lines broken as they are
 ///   at the end (see `TextContent.held`), so no word jumps between lines midway.
+/// - A formula that changes morphs (see `MathMorph`): the output holds the new one with
+///   the old one and `p` in its `morph`. Where either layout isn't known it draws as the
+///   new one from the start.
 /// - Everything else (`closed`, handle modes, ends, corners, outline position, gradient
 ///   kind, clipping, fill or outline on or off, bare edges, group membership, draw order,
-///   a text's words, font, weight, size, alignment and width, a formula) takes its new value at the
+///   a text's words, font, weight, size, alignment and width) takes its new value at the
 ///   start.
 /// - Objects that are created appear at the start; objects that are deleted stay, as they
 ///   were, until the end. A shape's vertices line up as `VertexMerge` describes.
@@ -109,6 +112,9 @@ enum Interpolation {
             out.text!.tracking = lerp(ta.tracking, tb.tracking, p)
             out.text!.lineHeight = max(lerp(ta.lineHeight, tb.lineHeight, p), 0)
             out.text!.held = TextMetrics(tracking: tb.tracking, lineHeight: tb.lineHeight)
+        }
+        if let ma = a.math?.unmorphed, let mb = b.math, ma != mb.unmorphed {
+            out.math!.morph = MathMorphState(from: ma, progress: p)
         }
         if a.path != b.path {
             let pairs: (from: [PathPoint], to: [PathPoint])
