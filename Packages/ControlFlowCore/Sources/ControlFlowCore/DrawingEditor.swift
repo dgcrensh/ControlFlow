@@ -108,6 +108,21 @@ struct ChangedObjectsKey: Hashable, Sendable {
     var documentRevision: Int
 }
 
+/// What `DrawingEditor.keyedProperties()` depends on.
+struct KeyedPropertiesKey: Hashable, Sendable {
+    var keyframe: Int
+    var revision: Int
+    var documentRevision: Int
+    var selection: Int
+}
+
+/// What the overlay shows for the hover with a tool that only highlights a shape.
+struct HoverShown: Equatable, Sendable {
+    var tool: Tool
+    var revision: Int
+    var target: ShapeRef?
+}
+
 /// The open path the Pen tool is extending. The active end is the last point, except
 /// right after continuing a path from its start, when the path is reversed on the
 /// next placement.
@@ -148,6 +163,7 @@ public struct DrawingEditor: Sendable {
     public var selection: Selection = .none {
         didSet {
             guard selection != oldValue else { return }
+            selectionGeneration &+= 1
             selectedAnchors = []
             customPivot = nil
             if let selected = selectionStyle { style = selected }
@@ -156,6 +172,9 @@ public struct DrawingEditor: Sendable {
             if let edit = textEdit, selection != .shape(layer: edit.ref.layer, shape: edit.ref.shape) { endTextEdit() }
         }
     }
+    /// Increments whenever `selection` changes, so a run of edits to one selection can be
+    /// told apart from the next without comparing (or formatting) the selection itself.
+    public private(set) var selectionGeneration = 0
     /// The selected anchor indices of the one shape the direct-select tool is editing.
     public var selectedAnchors: Set<Int> = []
     /// The selected anchor when exactly one is selected.
@@ -252,6 +271,9 @@ public struct DrawingEditor: Sendable {
     public private(set) var onionRevision = 0
     /// The last `changedObjects()`, and what it was worked out for.
     var changedObjectsCache: (key: ChangedObjectsKey, ids: Set<Int>)?
+    var keyedPropertiesCache: (key: KeyedPropertiesKey, keys: Set<String>)?
+    /// What the last hover showed, with a tool that only highlights a shape.
+    var lastHoverShown: HoverShown?
 
     /// A pivot the user dragged for a selection that is not a layer. Layers keep theirs in `Layer.pivot`.
     public internal(set) var customPivot: Vec2?
@@ -443,11 +465,23 @@ public struct DrawingEditor: Sendable {
 
     /// The Pencil hovering above the screen (or `nil` once it leaves), at `zoom`. The pen
     /// draws its rubber band to it; other tools highlight what a touch there would hit.
-    public mutating func pencilHovered(at p: Vec2?, zoom: Double = 1) {
+    ///
+    /// Returns false when the overlay shows the same as after the last hover: with the
+    /// select, direct select and text tools only the shape a touch would hit shows, so
+    /// moving within (or between misses of) it changes nothing to draw.
+    @discardableResult
+    public mutating func pencilHovered(at p: Vec2?, zoom: Double = 1) -> Bool {
         penCursor = tool == .pen ? p : nil
         hoverPoint = p
         hoverZoom = max(zoom, 1e-9)
         if p != nil, gesture == nil, tool.usesShapeIndex { refreshShapeIndex() }
+        let shown: HoverShown? = switch tool {
+        case .select, .directSelect, .text: HoverShown(tool: tool, revision: revision, target: hoverTarget)
+        case .shape: HoverShown(tool: tool, revision: revision, target: nil)
+        case .pencil, .pen, .eraser, .scissors: nil
+        }
+        defer { lastHoverShown = shown }
+        return shown == nil || shown != lastHoverShown
     }
 
     /// The shape a Pencil touch at the hover point would select, erase or cut.
@@ -809,8 +843,19 @@ public struct DrawingEditor: Sendable {
         var refs = Set(shapes(meeting: rect) { Self.marqueeTouches($0, rect) })
         if additive { refs.formUnion(baseShapes) }
         if tool == .select {
-            // A marquee touching a grouped shape takes its whole group.
-            for ref in refs { refs.formUnion(drawing.shapeRefs(in: tapTarget(ref))) }
+            // A marquee touching a grouped shape takes its whole group (as `tapTarget`
+            // does), each group found in one walk of the drawing and added once.
+            for layer in drawing.layers {
+                var groups: Set<Int> = []
+                for shape in layer.shapes {
+                    if let g = shape.group, g != isolatedGroup, !groups.contains(g),
+                       refs.contains(ShapeRef(layer: layer.id, shape: shape.id)) { groups.insert(g) }
+                }
+                guard !groups.isEmpty else { continue }
+                for (s, shape) in layer.shapes.enumerated() where shape.group.map(groups.contains) == true && layer.isEditable(s) {
+                    refs.insert(ShapeRef(layer: layer.id, shape: shape.id))
+                }
+            }
             selection = promotedToLayer(refs)
         } else {
             selection = Selection.covering(refs)
@@ -1808,8 +1853,12 @@ public struct DrawingEditor: Sendable {
         guard !targets.isEmpty else { return }
         let before = drawing
         for (p, s) in targets { change(&drawing.layers[p].shapes[s]) }
-        commit(from: before, key: "\(key)-\(selection)")
+        commit(from: before, key: selectionKey(key))
     }
+
+    /// An undo coalescing key for a run of `key` edits to the current selection: changing
+    /// the selection starts a new run.
+    func selectionKey(_ key: String) -> String { "\(key)-sel\(selectionGeneration)" }
 
     /// Records the change since `before` as an undo step.
     mutating func commit(from before: Drawing, key: String? = nil) {

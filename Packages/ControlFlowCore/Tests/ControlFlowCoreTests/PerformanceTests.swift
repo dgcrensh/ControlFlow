@@ -171,9 +171,7 @@ final class PerformanceTests: XCTestCase {
         read(editor.canDuplicateMirrored)
         read(editor.drawing.exportArea())
         read(LayerTree(drawing: editor.drawing))
-        read(editor.canAlign)
-        read(editor.canDistribute)
-        read(editor.alignsToViewportOnly)
+        read(editor.alignAvailability)
         read(editor.canApplyTransform)
         read(editor.isolatedGroupInfo)
         read(editor.selectionCrumbs)
@@ -187,7 +185,7 @@ final class PerformanceTests: XCTestCase {
         read(editor.selectionHasText)
         read(editor.selectionHasImage)
         read(editor.canConvertToOutlines)
-        XCTAssertEqual(n, 34)
+        XCTAssertEqual(n, 32)
     }
 
     /// What `CanvasStore.refreshStyle()` reads after each tick of a color or opacity

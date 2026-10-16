@@ -1,6 +1,7 @@
 import ControlFlowCore
 import CoreGraphics
 import Foundation
+import ImageIO
 import Metal
 
 /// The Metal objects every canvas shares: the device, the shaders (compiled from
@@ -138,6 +139,23 @@ final class CanvasGPU {
             self?.imageLoaded(src, texture: made?.value)
         }
         return nil
+    }
+
+    /// Decodes encoded image bytes (a reference image's PNG or JPEG) and uploads them
+    /// with mipmaps, off the main thread. Nil when the bytes don't decode.
+    func texture(decoding data: Data) async -> (any MTLTexture)? {
+        let deviceBox = UncheckedSendable(device)
+        let queueBox = uploadQueue.map { UncheckedSendable($0) }
+        let made = await Task.detached(priority: .userInitiated) { () -> UncheckedSendable<any MTLTexture>? in
+            let interval = Signposts.canvas.beginInterval("Reference texture")
+            defer { Signposts.canvas.endInterval("Reference texture", interval) }
+            guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+                  let image = CGImageSourceCreateImageAtIndex(source, 0, nil),
+                  let texture = CanvasGPU.makeTexture(image, device: deviceBox.value, queue: queueBox?.value)
+            else { return nil }
+            return UncheckedSendable(texture)
+        }.value
+        return made?.value
     }
 
     private func imageLoaded(_ src: String, texture: (any MTLTexture)?) {

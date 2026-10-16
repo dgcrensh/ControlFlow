@@ -377,7 +377,7 @@ public struct Timeline: Sendable {
     /// Finds the parents of the ids in `wanted` in `drawing` (a group's or shape's layer,
     /// a vertex's shape and its layer) and removes each id found, parent or not. The
     /// points are searched only while vertices may be left.
-    private static func findParents(of wanted: inout Set<Int>, in drawing: Drawing, into parents: inout [Int: Int]) {
+    static func findParents(of wanted: inout Set<Int>, in drawing: Drawing, into parents: inout [Int: Int]) {
         wanted.remove(drawing.viewport.id)
         for global in drawing.globalColors { wanted.remove(global.id) }
         for layer in drawing.layers where !wanted.isEmpty {

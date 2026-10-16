@@ -101,6 +101,12 @@ public struct VectorShape: Hashable, Sendable, Codable, Identifiable {
         return path.controlBounds.outset(by: outlineReach)
     }
 
+    /// True when `geometryBounds` isn't null, found without measuring the path. A
+    /// transform never changes it, so it holds for the shape in world space too.
+    public var hasGeometry: Bool {
+        !path.points.isEmpty || !(textBounds?.isNull ?? true)
+    }
+
     /// The bounds of the geometry, without outline width: the path's, or a text's box.
     public var geometryBounds: Rect {
         if let box = textBounds { return box.union(path.bounds()) }

@@ -166,8 +166,6 @@ final class CanvasStore {
     /// Encoded pixels (PNG or JPEG, as saved) for reference images, by id. Kept for
     /// the session so undo can bring a deleted reference back.
     private var referenceData: [Int: Data]
-    /// Decoded pixels, filled on first use.
-    private var decodedImages: [Int: CGImage] = [:]
     /// When to hand changes to the document, and the contents last handed to it.
     private var handOff: DocumentHandOff
     private var document: PresentationPackage
@@ -181,6 +179,8 @@ final class CanvasStore {
     /// The drawing revision `ui`'s drawing-wide values (layers, hidden and locked art,
     /// the viewport) were last read at.
     private var refreshedRevision: Int?
+    /// What the selection's values in `ui` were last read for.
+    private var refreshedSelectionQueries: SelectionQueriesKey?
     private var toastCount = 0
     /// Play Sequence or a transition preview: the chain indices playing, and the time it
     /// started (from its first frame).
@@ -209,15 +209,8 @@ final class CanvasStore {
         noteMissingFonts(package.presentation)
     }
 
-    /// The pixels for a reference image, decoded on first use.
-    func referenceImage(_ id: Int) -> CGImage? {
-        if let image = decodedImages[id] { return image }
-        guard let data = referenceData[id] else { return nil }
-        let decoded = Signposts.canvas.withIntervalSignpost("Reference decode") { UIImage(data: data)?.cgImage }
-        guard let image = decoded else { return nil }
-        decodedImages[id] = image
-        return image
-    }
+    /// The encoded bytes of a reference image, which the renderer decodes off the main thread.
+    func referenceBytes(_ id: Int) -> Data? { referenceData[id] }
 
     // MARK: Document
 
@@ -329,27 +322,72 @@ final class CanvasStore {
         update(\.anchorMode, editingPoints ? editor.selectedAnchorMode : nil)
         update(\.edgesStroked, editingPoints ? editor.selectedEdgesStroked : nil)
         update(\.canSplit, editingPoints && editor.canSplitAtSelectedAnchor)
-        update(\.canJoin, editor.canJoinSelection)
-        update(\.canTransform, editor.canTransformSelection)
-        update(\.canAlign, editor.canAlign)
-        update(\.canDistribute, editor.canDistribute)
-        update(\.alignsToViewportOnly, editor.alignsToViewportOnly)
-        update(\.canApplyTransform, editor.canApplyTransform)
+        // The selection's queries scale with the selection, so they are read again only
+        // when something they depend on changed: not after a pan, a zoom or a tool option.
+        let queriesKey = editor.selectionQueriesKey
+        if queriesKey != refreshedSelectionQueries {
+            refreshedSelectionQueries = queriesKey
+            refreshSelectionQueries()
+        }
         update(\.penActive, editor.isPenActive)
         update(\.addToSelection, editor.addToSelection)
         update(\.autoJoin, editor.autoJoinSelectedLayer)
         update(\.snap, editor.snap)
-        update(\.selectionBounds, editor.selectionGeometry)
         update(\.anchorPosition, editingPoints ? editor.selectedAnchorsCentroid : nil)
         update(\.style, editor.style)
         update(\.smoothing, editor.smoothing)
-        update(\.appearance, editor.selectionAppearance)
-        update(\.canClip, editor.canClipSelection)
         update(\.anchorWidth, editingPoints ? editor.selectedAnchorsWidth : nil)
         update(\.pressureWidth, editor.pressureWidth)
         update(\.shapeKind, editor.shapeKind)
         update(\.shapeOptions, editor.shapeOptions)
         update(\.isolatedLayer, editor.isolatedLayer)
+        update(\.recentColors, editor.recentColors)
+        update(\.symmetry, editor.symmetry)
+        update(\.canDuplicateMirrored, editor.canDuplicateMirrored)
+        update(\.outlineView, editor.outlineView)
+        update(\.ghostsUnselected, editor.ghostsUnselected)
+        let strip = editor.timelineStrip
+        let stripChanged = strip != ui.timeline
+        update(\.timeline, strip)
+        if revisionChanged || stripChanged {
+            update(\.changedObjects, session.editor.changedObjects())
+            scheduleThumbnails()
+        }
+        update(\.textStyle, editor.textStyle)
+        update(\.isEditingText, editor.textEdit != nil)
+        update(\.isAtKeyframe, editor.currentKeyframe != nil)
+        update(\.showsOnionSkin, editor.showsOnionSkin)
+        update(\.activeLayer, editor.activeLayer)
+        update(\.activeLayerName, editor.activeLayer.flatMap { editor.drawing.layer($0)?.name } ?? "")
+        update(\.activeLayerIsChosen, editor.activeLayer != nil && editor.activeLayer == editor.targetLayer &&
+            editor.isolatedLayer == nil)
+        if session.tapCommandCount != seenTapCommands {
+            seenTapCommands = session.tapCommandCount
+            showToast(session.lastTapCommand == .redo ? "Redo" : "Undo")
+        }
+        // An edit the editor refused says why, once.
+        if let notice = editor.notice {
+            session.editor.clearNotice()
+            showToast(notice)
+        }
+        updateDocument(continuous: continuous)
+        onChange?()
+    }
+
+    /// The values `refresh()` reads from the selection (see `refreshedSelectionQueries`).
+    private func refreshSelectionQueries() {
+        let editor = session.editor
+        update(\.canJoin, editor.canJoinSelection)
+        update(\.canTransform, editor.canTransformSelection)
+        // One count of the units for all three.
+        let align = editor.alignAvailability
+        update(\.canAlign, align.canAlign)
+        update(\.canDistribute, align.canDistribute)
+        update(\.alignsToViewportOnly, align.alignsToViewportOnly)
+        update(\.canApplyTransform, editor.canApplyTransform)
+        update(\.selectionBounds, editor.selectionGeometry)
+        update(\.appearance, editor.selectionAppearance)
+        update(\.canClip, editor.canClipSelection)
         let isolatedName = editor.isolatedGroupInfo?.name ??
             editor.isolatedLayer.flatMap { id in editor.drawing.layers.first { $0.id == id }?.name } ?? ""
         update(\.isolatedLayerName, isolatedName)
@@ -370,31 +408,11 @@ final class CanvasStore {
         update(\.canArrange, editor.canArrange)
         update(\.canHideOrLock, editor.canHideOrLockSelection)
         update(\.canMoveShapes, editor.canMoveSelectedShapes)
-        update(\.recentColors, editor.recentColors)
-        update(\.symmetry, editor.symmetry)
-        update(\.canDuplicateMirrored, editor.canDuplicateMirrored)
-        update(\.outlineView, editor.outlineView)
-        update(\.ghostsUnselected, editor.ghostsUnselected)
         update(\.selectedLayers, editor.selectedLayers)
-        let strip = editor.timelineStrip
-        let stripChanged = strip != ui.timeline
-        update(\.timeline, strip)
-        if revisionChanged || stripChanged {
-            update(\.changedObjects, session.editor.changedObjects())
-            scheduleThumbnails()
-        }
         update(\.keyedProperties, session.editor.keyedProperties())
-        update(\.textStyle, editor.textStyle)
         update(\.selectionHasText, editor.selectionHasText)
         update(\.selectionHasImage, editor.selectionHasImage)
-        update(\.isEditingText, editor.textEdit != nil)
         update(\.canConvertToOutlines, editor.canConvertToOutlines)
-        update(\.isAtKeyframe, editor.currentKeyframe != nil)
-        update(\.showsOnionSkin, editor.showsOnionSkin)
-        update(\.activeLayer, editor.activeLayer)
-        update(\.activeLayerName, editor.activeLayer.flatMap { editor.drawing.layer($0)?.name } ?? "")
-        update(\.activeLayerIsChosen, editor.activeLayer != nil && editor.activeLayer == editor.targetLayer &&
-            editor.isolatedLayer == nil)
         if case .layer(let id) = editor.selection {
             update(\.selectedLayer, id)
         } else if case .shape(let id, _) = editor.selection {
@@ -404,17 +422,6 @@ final class CanvasStore {
         } else {
             update(\.selectedLayer, nil)
         }
-        if session.tapCommandCount != seenTapCommands {
-            seenTapCommands = session.tapCommandCount
-            showToast(session.lastTapCommand == .redo ? "Redo" : "Undo")
-        }
-        // An edit the editor refused says why, once.
-        if let notice = editor.notice {
-            session.editor.clearNotice()
-            showToast(notice)
-        }
-        updateDocument(continuous: continuous)
-        onChange?()
     }
 
     /// After a change to colors, opacity or outline width only, which a color picker or
@@ -485,7 +492,9 @@ final class CanvasStore {
         edit(continuous: true) { $0.editor.setEditedText(string, selection: selection) }
     }
 
-    func setTextSelection(_ range: Range<Int>) { edit { $0.editor.setTextSelection(range) } }
+    /// Continuous, so a selection change UIKit reports after each keystroke doesn't hand
+    /// off the typing held so far.
+    func setTextSelection(_ range: Range<Int>) { edit(continuous: true) { $0.editor.setTextSelection(range) } }
     func endTextEdit() { edit { $0.editor.endTextEdit() } }
     /// Starts typing into text `ref` (Scribble writing into it).
     func beginTextEdit(_ ref: ShapeRef) { edit { $0.editor.beginTextEdit(ref) } }
@@ -494,8 +503,9 @@ final class CanvasStore {
     func setTextWeight(_ weight: Int) { edit { $0.editor.setTextWeight(weight) } }
     func setTextItalic(_ italic: Bool) { edit { $0.editor.setTextItalic(italic) } }
     func setTextAlignment(_ align: ControlFlowCore.TextAlignment) { edit { $0.editor.setTextAlignment(align) } }
-    func setTextLineHeight(_ lineHeight: Double) { edit { $0.editor.setTextLineHeight(lineHeight) } }
-    func setTextTracking(_ tracking: Double) { edit { $0.editor.setTextTracking(tracking) } }
+    /// Slider ticks: continuous, so a drag is handed to the document once it goes quiet.
+    func setTextLineHeight(_ lineHeight: Double) { edit(continuous: true) { $0.editor.setTextLineHeight(lineHeight) } }
+    func setTextTracking(_ tracking: Double) { edit(continuous: true) { $0.editor.setTextTracking(tracking) } }
     func convertTextToOutlines() { edit { $0.editor.convertTextToOutlines() } }
 
     /// The text shapes on the canvas with their boxes in world space (four corners), for
@@ -688,7 +698,7 @@ final class CanvasStore {
     /// Sets a keyframe's transition. Changes with `continuous` in a row (a slider or a
     /// curve handle drag) are one undo step.
     func setTransition(_ transition: ControlFlowCore.Transition, ofKeyframe id: Int, continuous: Bool = false) {
-        edit { $0.editor.setTransition(transition, ofKeyframe: id, continuous: continuous) }
+        edit(continuous: continuous) { $0.editor.setTransition(transition, ofKeyframe: id, continuous: continuous) }
     }
 
     var isPlaying: Bool { playback != nil }
@@ -783,12 +793,26 @@ final class CanvasStore {
             let scene = session.editor.state(atKeyframe: id == 0 ? nil : id)
             if thumbnailScenes[id] != scene { pending.append((id, scene)) }
         }
-        for (id, scene) in pending {
-            let png = await Task.detached(priority: .utility) { Self.thumbnail(of: scene) }.value
-            guard !Task.isCancelled else { return }
-            thumbnailScenes[id] = scene
-            ui.thumbnails[id] = png.flatMap { UIImage(data: $0) }
+        guard !pending.isEmpty else { return }
+        let scenes = pending
+        // Drawn and decoded together off the main thread, then shown in one change, so
+        // the strip updates once rather than once per chip. A newer edit cancels it.
+        let job = Task.detached(priority: .utility) { () -> [Int: UIImage] in
+            var images: [Int: UIImage] = [:]
+            for (id, scene) in scenes {
+                guard !Task.isCancelled else { break }
+                images[id] = Self.thumbnail(of: scene).flatMap { UIImage(data: $0)?.preparingForDisplay() }
+            }
+            return images
         }
+        let images = await withTaskCancellationHandler { await job.value } onCancel: { job.cancel() }
+        guard !Task.isCancelled else { return }
+        var thumbnails = ui.thumbnails
+        for (id, scene) in pending {
+            thumbnailScenes[id] = scene
+            thumbnails[id] = images[id]
+        }
+        ui.thumbnails = thumbnails
     }
 
     /// A chip's picture of the viewport, 160 pixels on its long side (a chip is at most
@@ -1056,14 +1080,14 @@ final class CanvasStore {
         var id = 0
         edit { id = $0.editor.addReference(name: name, size: size, center: center, scale: scale) }
         referenceData[id] = encoded
-        decodedImages[id] = cgImage
         // The reference was added before its pixels were stored, so save again.
         handOff = DocumentHandOff(revision: -1)
         refresh()
     }
 
+    /// Slider ticks: continuous, as above.
     func setReferenceOpacity(_ id: Int, _ opacity: Double) {
-        edit { $0.editor.updateReference(id, coalescingKey: "opacity") { $0.opacity = opacity } }
+        edit(continuous: true) { $0.editor.updateReference(id, coalescingKey: "opacity") { $0.opacity = opacity } }
     }
 
     func setReferenceHidden(_ id: Int, _ hidden: Bool) {

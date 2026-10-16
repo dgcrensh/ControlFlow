@@ -212,14 +212,20 @@ final class CanvasRenderer {
     // The overlay's kept layers (the outline view's wireframe and the selection's
     // outlines and anchors), in one pinned buffer uploaded when they change.
     private var overlayCache = OverlayCache()
+    /// The ghost view's focus, kept between frames.
+    private var ghostCache = GhostFocusCache()
     private var overlayGeneration = -1
     private var overlayBuffer: VertexBufferPool.Handle?
     private var overlayKept: (wireframe: Range<Int>, selection: Range<Int>) = (0..<0, 0..<0)
 
+    /// Reference images' textures by id (ids are never reused in a session), the ones
+    /// being decoded, and the ones whose bytes didn't decode.
     private var textures: [Int: any MTLTexture] = [:]
+    private var loadingReferences: Set<Int> = []
+    private var failedReferences: Set<Int> = []
 
-    /// Supplies the pixels for a reference image id.
-    var referenceImage: (@MainActor (Int) -> CGImage?)?
+    /// Supplies the encoded bytes (PNG or JPEG) of a reference image id.
+    var referenceData: (@MainActor (Int) -> Data?)?
 
     /// Nil when the device has no Metal. The shaders are compiled once, for the first
     /// canvas (`CanvasGPU`), so a second one, such as presenting's, starts at once.
@@ -265,12 +271,7 @@ final class CanvasRenderer {
         guard let layer, viewSize.width > 0, viewSize.height > 0 else { return true }
         let frameInterval = Signposts.canvas.beginInterval("Frame")
         defer { Signposts.canvas.endInterval("Frame", frameInterval) }
-        // Waiting here means the GPU or the display still holds both drawables.
-        let next = Signposts.canvas.withIntervalSignpost("Next drawable") { layer.nextDrawable() }
-        guard let drawable = next, let commandBuffer = queue.makeCommandBuffer() else {
-            Signposts.canvas.emitEvent("No drawable")
-            return false
-        }
+        guard let commandBuffer = queue.makeCommandBuffer() else { return false }
         let frame = clock.beginFrame()
         let clock = clock
         commandBuffer.addCompletedHandler { buffer in
@@ -279,9 +280,9 @@ final class CanvasRenderer {
             Signposts.canvas.emitEvent("GPU frame", "\(ms, format: .fixed(precision: 2)) ms")
         }
 
-        ensureTargets(width: drawable.texture.width, height: drawable.texture.height)
-        guard let msaaTexture, let stencilTexture else { return true }
-
+        // The CPU work comes first, and the drawable is taken only once there is something
+        // to encode, so a slow GPU frame doesn't hold the main thread (and touches) while
+        // the art, the onion skin and the overlay are built.
         let editor = session.editor
         let w = Double(viewSize.width), h = Double(viewSize.height)
         let screen = [Vec2(0, 0), Vec2(w, 0), Vec2(w, h), Vec2(0, h)].map { session.camera.toWorld($0) }
@@ -292,14 +293,48 @@ final class CanvasRenderer {
         }
         // A preview (scrubbing or playing) shows its scene in place of the drawing.
         let shown = editor.shownDrawing
-        loadMissingTextures(for: shown.references, commandBuffer: commandBuffer)
+        if !presenting { loadMissingTextures(for: shown.references) }
+        let showsOnion = !editor.outlineView && !presenting && editor.preview == nil && editor.onionSkin != nil
+        if showsOnion, let onion = editor.onionSkin {
+            updateOnion(onion, revision: editor.onionRevision)
+        } else if editor.onionSkin == nil, onionKey != nil {
+            // Turned off; during a preview it is only hidden.
+            releaseOnion()
+        }
+        let overlay: OverlayLayers? = presenting ? nil : Signposts.canvas.withIntervalSignpost("Overlay build") {
+            EditorOverlay.layers(for: editor, zoom: session.camera.zoom, viewRect: Rect(points: screen),
+                                 darkMode: darkMode, cache: &overlayCache)
+        }
+        if let overlay, overlayCache.generation != overlayGeneration {
+            overlayGeneration = overlayCache.generation
+            if let overlayBuffer { buffers.release(overlayBuffer) }
+            overlayBuffer = buffers.upload([overlay.wireframe, overlay.selection], pin: true)
+            let wire = overlay.wireframe.count
+            overlayKept = (0..<wire, wire..<(wire + overlay.selection.count))
+        }
+
+        // Waiting here means the GPU or the display still holds both drawables.
+        let next = Signposts.canvas.withIntervalSignpost("Next drawable") { layer.nextDrawable() }
+        guard let drawable = next else {
+            Signposts.canvas.emitEvent("No drawable")
+            // Any texture uploads still go to the GPU, and the frame completes.
+            commandBuffer.commit()
+            return false
+        }
+        ensureTargets(width: drawable.texture.width, height: drawable.texture.height)
+        guard let msaaTexture, let stencilTexture else {
+            commandBuffer.commit()
+            return true
+        }
 
         var uniforms = makeUniforms(camera: session.camera, viewSize: viewSize, scale: scale, darkMode: darkMode)
 
         let pass = MTLRenderPassDescriptor()
         pass.colorAttachments[0].texture = msaaTexture
         pass.colorAttachments[0].resolveTexture = drawable.texture
-        pass.colorAttachments[0].loadAction = .dontCare // the grid covers every pixel
+        // The grid covers every pixel; presenting, which draws no grid, starts from black.
+        pass.colorAttachments[0].loadAction = presenting ? .clear : .dontCare
+        pass.colorAttachments[0].clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 1)
         pass.colorAttachments[0].storeAction = .multisampleResolve
         pass.stencilAttachment.texture = stencilTexture
         pass.stencilAttachment.loadAction = .clear
@@ -310,9 +345,13 @@ final class CanvasRenderer {
         let encodeInterval = Signposts.canvas.beginInterval("Encode")
         encoder.setDepthStencilState(plainState)
 
-        encoder.setRenderPipelineState(gridPipeline)
-        encoder.setFragmentBytes(&uniforms, length: MemoryLayout<CanvasUniforms>.stride, index: 0)
-        encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
+        // Presenting covers the canvas with the stage and the black around it, so the grid
+        // would never show.
+        if !presenting {
+            encoder.setRenderPipelineState(gridPipeline)
+            encoder.setFragmentBytes(&uniforms, length: MemoryLayout<CanvasUniforms>.stride, index: 0)
+            encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
+        }
 
         let viewport = shown.viewport
         let stage = viewport.bounds.corners
@@ -320,15 +359,11 @@ final class CanvasRenderer {
                   color: PaintUniforms.vector(viewport.background), encoder: encoder, uniforms: &uniforms)
         if !presenting { drawReferences(of: shown, encoder: encoder, uniforms: &uniforms) }
         if !editor.outlineView {
-            if !presenting, editor.preview == nil, let onion = editor.onionSkin {
-                updateOnion(onion, revision: editor.onionRevision)
+            if showsOnion {
                 Signposts.canvas.withIntervalSignpost("Onion draw") {
                     drawArt(onionSteps, segments: onionSegments, buffers: onionBuffers, encoder: encoder, uniforms: &uniforms,
                             viewRect: Rect(points: screen))
                 }
-            } else if editor.onionSkin == nil, onionKey != nil {
-                // Turned off; during a preview it is only hidden.
-                releaseOnion()
             }
             Signposts.canvas.withIntervalSignpost("Art draw") {
                 if editor.preview != nil, previewBuilder != nil {
@@ -374,21 +409,10 @@ final class CanvasRenderer {
             }
             Signposts.canvas.endInterval("Live stroke", interval)
         }
-        let overlay = Signposts.canvas.withIntervalSignpost("Overlay build") {
-            EditorOverlay.layers(for: editor, zoom: session.camera.zoom, viewRect: Rect(points: screen),
-                                 darkMode: darkMode, cache: &overlayCache)
-        }
-        if overlayCache.generation != overlayGeneration {
-            overlayGeneration = overlayCache.generation
-            if let overlayBuffer { buffers.release(overlayBuffer) }
-            overlayBuffer = buffers.upload([overlay.wireframe, overlay.selection], pin: true)
-            let wire = overlay.wireframe.count
-            overlayKept = (0..<wire, wire..<(wire + overlay.selection.count))
-        }
         drawKeptOverlay(overlayKept.wireframe, encoder: encoder)
-        drawCapsules(overlay.guides, encoder: encoder)
+        drawCapsules(overlay?.guides ?? [], encoder: encoder)
         drawKeptOverlay(overlayKept.selection, encoder: encoder)
-        drawCapsules(overlay.top, encoder: encoder)
+        drawCapsules(overlay?.top ?? [], encoder: encoder)
 
         encoder.endEncoding()
         commandBuffer.present(drawable)
@@ -463,7 +487,7 @@ final class CanvasRenderer {
         }
         scheduleRefine(to: wanted, drawing: drawing, navigating: navigating, viewRect: viewRect)
 
-        let ghost = editor.ghostFocus
+        let ghost = ghostCache.focus(of: editor)
         if previewsApart, live == nil, let preview = editor.preview {
             updatePreviewArt(preview, editor: editor, ghost: ghost)
             return
@@ -598,8 +622,12 @@ final class CanvasRenderer {
     private func updateOnion(_ onion: Drawing, revision: Int) {
         guard onionKey?.revision != revision || onionKey?.tolerance != artTolerance, artTolerance > 0 else { return }
         onionKey = (revision, artTolerance)
+        // The keyframe before mostly shares its shapes' geometry with this one, so the
+        // onion starts from the art's tessellations rather than flattening every shape.
+        onionBuilder.tessellations = artBuilder.tessellations
         let batch = Signposts.canvas.withIntervalSignpost("Onion rebuild") {
-            onionBuilder.build(onion, isolatedLayer: nil, tolerance: artTolerance, ghostFocus: [])
+            onionBuilder.build(onion, isolatedLayer: nil, tolerance: artTolerance, ghostFocus: [],
+                               reusingOtherTolerances: true)
         }
         onionSteps = batch.steps
         onionSegments = batch.segments
@@ -895,14 +923,22 @@ final class CanvasRenderer {
         onNeedsRender?()
     }
 
-    private func loadMissingTextures(for references: [ReferenceImage], commandBuffer: any MTLCommandBuffer) {
-        for ref in references where textures[ref.id] == nil {
-            let interval = Signposts.canvas.beginInterval("Reference texture")
-            defer { Signposts.canvas.endInterval("Reference texture", interval) }
-            guard let image = referenceImage?(ref.id),
-                  let texture = CanvasGPU.makeTexture(image, device: device, queue: nil, commandBuffer: commandBuffer)
-            else { continue }
-            textures[ref.id] = texture
+    /// Starts decoding and uploading each reference image that has no texture yet, off
+    /// the main thread (see `CanvasGPU.texture(decoding:)`); it shows from the frame after
+    /// it is ready. Bytes that don't decode are not tried again.
+    private func loadMissingTextures(for references: [ReferenceImage]) {
+        for ref in references where textures[ref.id] == nil && !loadingReferences.contains(ref.id) &&
+            !failedReferences.contains(ref.id) {
+            guard let data = referenceData?(ref.id) else { continue }
+            loadingReferences.insert(ref.id)
+            let id = ref.id, gpu = gpu
+            Task { [weak self] in
+                let texture = await gpu.texture(decoding: data)
+                guard let self else { return }
+                loadingReferences.remove(id)
+                if let texture { textures[id] = texture } else { failedReferences.insert(id) }
+                onNeedsRender?()
+            }
         }
     }
 
