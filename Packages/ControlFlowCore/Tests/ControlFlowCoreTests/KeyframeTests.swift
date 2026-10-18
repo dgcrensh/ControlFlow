@@ -60,14 +60,78 @@ final class KeyframeEditingTests: XCTestCase {
         var t = Timeline(Presentation(opening: d))
         t.insertKeyframe(after: 0)
         t.insertKeyframe(after: 1)
-        t.edit(2) { $0.withShape(square) { $0.opacity = 0.3 } }
+        let blue = RGBAColor(hex: "#0000FFFF")!, green = RGBAColor(hex: "#00FF00FF")!, gray = RGBAColor(hex: "#808080FF")!
+        t.edit(2) { $0.withShape(square) { $0.fill = blue } }
         t.edit(1) { s in
-            s.withShape(square) { $0.opacity = 0.7 }
-            s.withShape(triangle) { $0.opacity = 0.5 }
+            s.withShape(square) { $0.fill = green }
+            s.withShape(triangle) { $0.fill = gray }
         }
-        XCTAssertEqual(t.state(at: 1).shape(square)?.opacity, 0.7)
-        XCTAssertEqual(t.state(at: 2).shape(square)?.opacity, 0.3, "the later keyframe keeps its own value")
-        XCTAssertEqual(t.state(at: 2).shape(triangle)?.opacity, 0.5, "and inherits the rest")
+        XCTAssertEqual(t.state(at: 1).shape(square)?.fill, green)
+        XCTAssertEqual(t.state(at: 2).shape(square)?.fill, blue, "the later keyframe keeps its own value")
+        XCTAssertEqual(t.state(at: 2).shape(triangle)?.fill, gray, "and inherits the rest")
+    }
+
+    func testAMoveOrOpacityChangeStopsAtTheNextKeyframe() {
+        let (d, layer, square, triangle) = scene()
+        var t = Timeline(Presentation(opening: d))
+        t.insertKeyframe(after: 0)
+        t.insertKeyframe(after: 1)
+        t.insertKeyframe(after: 2)
+        let points = t.state(at: 2).shape(square)!.path.points
+        t.edit(1) { s in
+            s.withShape(square) { $0.apply(.translation(Vec2(50, 0))) }
+            s.withShape(triangle) { $0.opacity = 0.4 }
+            s.layers[0].transform.rotation = 30
+        }
+        XCTAssertEqual(t.state(at: 1).shape(square)?.path.points.first?.position, points[0].position + Vec2(50, 0))
+        XCTAssertEqual(t.state(at: 1).shape(triangle)?.opacity, 0.4)
+        XCTAssertEqual(t.state(at: 1).layers[0].transform.rotation, 30)
+        for i in 2...3 {
+            XCTAssertEqual(t.state(at: i).shape(square)?.path.points, points, "keyframe \(i) keeps its points")
+            XCTAssertEqual(t.state(at: i).shape(triangle)?.opacity, 1, "keyframe \(i) keeps its opacity")
+            XCTAssertEqual(t.state(at: i).layers[0].transform.rotation, 0, "keyframe \(i) keeps its transform")
+        }
+        let next = t.presentation.keyframes[1].changes
+        XCTAssertTrue(next.contains(.set(id: triangle, props: [PropertyChange("opacity", 1)])))
+        XCTAssertTrue(next.contains(.set(id: layer, props: [PropertyChange("transform.rotation", 0)])))
+        XCTAssertEqual(next.count, 2 + points.count, "one set per moved vertex")
+        XCTAssertEqual(t.presentation.keyframes[2].changes, [], "keyframes after the next are untouched")
+
+        // Putting it back drops the next keyframe's changes, which have nothing to do.
+        t.edit(1) { s in
+            s.withShape(square) { $0.apply(.translation(Vec2(-50, 0))) }
+            s.withShape(triangle) { $0.opacity = 1 }
+            s.layers[0].transform.rotation = 0
+        }
+        XCTAssertEqual(t.presentation.keyframes[0].changes, [])
+        XCTAssertEqual(t.presentation.keyframes[1].changes, [])
+        XCTAssertEqual(t.state(at: 2).shape(square)?.path.points, points)
+    }
+
+    func testAHeldPropertyMergesIntoTheNextKeyframesOwnChange() {
+        let (d, _, square, _) = scene()
+        var t = Timeline(Presentation(opening: d))
+        t.insertKeyframe(after: 0)
+        t.insertKeyframe(after: 1)
+        let blue = RGBAColor(hex: "#0000FFFF")!
+        t.edit(2) { $0.withShape(square) { $0.fill = blue } }
+        t.edit(1) { s in s.withShape(square) { $0.opacity = 0.5; $0.transform.rotation = 45 } }
+        XCTAssertEqual(t.presentation.keyframes[1].changes, [.set(id: square, props: [
+            PropertyChange("fill", .string("#0000FFFF")), PropertyChange("opacity", 1), PropertyChange("transform", .null),
+        ])])
+        XCTAssertEqual(t.state(at: 2).shape(square)?.opacity, 1)
+        XCTAssertEqual(t.state(at: 2).shape(square)?.transform, .identity)
+        XCTAssertEqual(t.state(at: 2).shape(square)?.fill, blue)
+    }
+
+    func testAnEditAtTheOpeningStateStopsAtTheFirstKeyframe() {
+        let (d, _, _, triangle) = scene()
+        var t = Timeline(Presentation(opening: d))
+        t.insertKeyframe(after: 0)
+        t.edit(0) { $0.withShape(triangle) { $0.opacity = 0.2 } }
+        XCTAssertEqual(t.state(at: 0).shape(triangle)?.opacity, 0.2)
+        XCTAssertEqual(t.state(at: 1).shape(triangle)?.opacity, 1)
+        XCTAssertEqual(t.presentation.keyframes[0].changes, [.set(id: triangle, props: [PropertyChange("opacity", 1)])])
     }
 
     func testDeletingAnObjectDropsLaterChangesToIt() {
