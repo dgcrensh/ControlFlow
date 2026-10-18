@@ -85,12 +85,8 @@ struct ExportFile: FileDocument {
 
     func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
         guard let folder else { return FileWrapper(regularFileWithContents: data) }
-        var children: [String: FileWrapper] = [:]
-        for (name, contents) in folder {
-            let file = FileWrapper(regularFileWithContents: contents)
-            file.preferredFilename = name
-            children[name] = file
-        }
-        return FileWrapper(directoryWithFileWrappers: children)
+        // Paths such as `images/a.png` need real subfolders: a file wrapper's name can't
+        // hold a slash, and writing one fails before the save dialog shows.
+        return PresentationDocument.folder(from: folder)
     }
 }

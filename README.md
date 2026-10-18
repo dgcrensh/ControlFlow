@@ -120,6 +120,7 @@ From [the plan](docs/plans/animation-app.md#11-milestones):
 **Using it**
 
 - **More > Export Web Page** saves a folder named after the presentation, holding `index.html`, `player.js` and `presentation.json` (the same file the app saves, without reference images), plus `text.json` with the glyph outlines when there is text, so the page doesn't depend on the viewer's fonts, and an `images/` folder with the pictures of image shapes. Put the folder on GitHub Pages or any web server and open `index.html`; it needs no build step and uses only relative paths. Opened straight from disk (`file://`), browsers won't let the page read `presentation.json`, so it says to serve the folder instead (`python3 -m http.server` in the folder works).
+- If the export can't be written, an alert says why instead of the save dialog quietly not appearing.
 - It plays as presentation mode does: the opening state, then one sequence per Advance, letterboxed in black. Click or tap the right half, swipe left, or press Space, →, ↓, Page Down or Return to advance; click or tap the left half, swipe right, or press ←, ↑, Page Up or Backspace to go back. Home and End jump to the start and the end, and F toggles full screen.
 - The address's hash is the number of sequences played (`index.html#3` opens with three played), and it follows along as you present, so a reload or a shared link opens on the same step.
 - Hidden art is left out, as in presentation mode. Translucent gradient stops may blend slightly differently, since browsers mix gradient colors premultiplied.
