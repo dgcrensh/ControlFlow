@@ -144,6 +144,7 @@ private struct ToolBar: View {
     @State private var exporting = false
     @State private var exportFile = ExportFile()
     @State private var importError: String?
+    @State private var exportError: String?
 
     var body: some View {
         // On a short screen (landscape) the strip scrolls rather than running off the edge.
@@ -189,12 +190,19 @@ private struct ToolBar: View {
             Color.clear
                 .allowsHitTesting(false)
                 .fileExporter(isPresented: $exporting, document: exportFile, contentType: exportFile.type,
-                              defaultFilename: exportFile.name) { _ in }
+                              defaultFilename: exportFile.name) { result in
+                    if case .failure(let error) = result { exportError = error.localizedDescription }
+                }
         }
         .alert("Couldn't Import SVG", isPresented: Binding(get: { importError != nil }, set: { if !$0 { importError = nil } })) {
             Button("OK", role: .cancel) {}
         } message: {
             Text(importError ?? "")
+        }
+        .alert("Couldn't Export", isPresented: Binding(get: { exportError != nil }, set: { if !$0 { exportError = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(exportError ?? "")
         }
         .padding(.vertical, 16)
     }
@@ -226,7 +234,10 @@ private struct ToolBar: View {
 
     /// Offers the web page's folder to save in Files.
     private func exportWebPage() {
-        guard let files = store.htmlFiles() else { return }
+        guard let files = store.htmlFiles() else {
+            exportError = "The web page's player is missing from this build."
+            return
+        }
         exportFile = ExportFile(folder: files, name: exportName)
         exporting = true
     }

@@ -51,7 +51,7 @@ struct PresentationDocument: FileDocument {
     }
 
     /// Builds a folder wrapper, with subfolders, from package-relative paths.
-    private static func folder(from files: [String: Data]) -> FileWrapper {
+    static func folder(from files: [String: Data]) -> FileWrapper {
         var children: [String: FileWrapper] = [:]
         var subfolders: [String: [String: Data]] = [:]
         for (path, data) in files {
