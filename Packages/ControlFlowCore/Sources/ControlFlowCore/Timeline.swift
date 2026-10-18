@@ -83,8 +83,9 @@ public struct Timeline: Sendable {
     /// become what turns the state before it into `edited`: properties set back to their
     /// earlier values drop out. Later keyframes keep their own changes, so an edit carries
     /// forward until a keyframe that sets the same property, and changes that refer to
-    /// objects this edit deleted are dropped. What isn't keyed (see `Presentation`) is
-    /// changed for every state.
+    /// objects this edit deleted are dropped. A move or an opacity change doesn't carry:
+    /// the next keyframe gets a change back to how it looked (see `holdNext`). What isn't
+    /// keyed (see `Presentation`) is changed for every state.
     public mutating func record(_ edited: Drawing, at index: Int) {
         let index = min(max(index, 0), states.count - 1)
         var edited = edited
@@ -94,6 +95,7 @@ public struct Timeline: Sendable {
         presentation.opening.nextID = edited.nextID
         guard old.layers != edited.layers || old.withNextID(edited.nextID) != edited else { return }
         let removed = old.idsMissing(from: edited)
+        let next = index + 1 < states.count ? state(at: index + 1) : nil
         if index == 0 {
             presentation.opening = edited
             presentation.opening.syncGlobalColors()
@@ -116,6 +118,68 @@ public struct Timeline: Sendable {
         }
         presentation.opening.nextID = max(presentation.opening.nextID, edited.nextID)
         if !removed.isEmpty { prune(after: index) }
+        if let next { holdNext(after: index, editing: old, as: next) }
+    }
+
+    /// Keeps the keyframe after `index` where it was, `next`, for what an edit at `index`
+    /// (from `old`) moved or faded: the keyframe gets a change back to its own value, so it
+    /// animates there rather than taking the edit on. Its changes are diffed again against
+    /// the edited state, so ones the edit made redundant (a move put back) drop out.
+    private mutating func holdNext(after index: Int, editing old: Drawing, as next: Drawing) {
+        let edited = state(at: index)
+        guard !Timeline.heldChanges(from: old, to: edited).isEmpty,
+              let keyframe = presentation.keyframe(atChainIndex: index + 1) else { return }
+        var target = state(at: index + 1)
+        let held = Timeline.heldChanges(from: target, to: next)
+        if !held.isEmpty { _ = target.apply(held) }
+        let changes = SceneDiff.changes(from: edited, to: target)
+        guard changes != keyframe.changes else { return }
+        presentation.updateKeyframe(atChainIndex: index + 1) { $0.changes = changes }
+        invalidate(after: index)
+        states[index + 1] = target
+    }
+
+    /// True for the keys an edit doesn't carry past the next keyframe: transforms and
+    /// opacity, and what a move of untransformed art changes, vertices' points and handles
+    /// and gradients' ends.
+    static func isHeld(_ key: String, vertex: Bool) -> Bool {
+        let root = PropertyPath.root(of: key)
+        if vertex { return root == "p" || root == "in" || root == "out" }
+        return root == "transform" || root == "opacity" || key == "gradient.start" || key == "gradient.end"
+    }
+
+    /// The sets of held keys (see `isHeld`) that turn `state` back into `target`, for
+    /// layers, groups, shapes and vertices in both.
+    static func heldChanges(from state: Drawing, to target: Drawing) -> [SceneChange] {
+        let changed = state.changedLayerIDs(comparedTo: target)
+        guard !changed.isEmpty else { return [] }
+        let targets = Dictionary(target.layers.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        var out: [SceneChange] = []
+        func hold(_ id: Int, _ a: [(key: String, value: JSONValue)], _ b: [(key: String, value: JSONValue)], vertex: Bool = false) {
+            let props = PropertyPath.changes(from: .object(a), to: .object(b)).filter { isHeld($0.key, vertex: vertex) }
+            if !props.isEmpty { out.append(.set(id: id, props: props.map { PropertyChange($0.key, $0.value) })) }
+        }
+        for layer in state.layers where changed.contains(layer.id) {
+            guard let old = targets[layer.id] else { continue }
+            hold(layer.id, SceneJSON.layerProps(layer), SceneJSON.layerProps(old))
+            let groups = Dictionary(old.groups.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+            for group in layer.groups {
+                if let o = groups[group.id], o != group { hold(group.id, SceneJSON.groupProps(group), SceneJSON.groupProps(o)) }
+            }
+            let shapes = Dictionary(old.shapes.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+            for shape in layer.shapes {
+                guard let o = shapes[shape.id], o != shape else { continue }
+                hold(shape.id, SceneJSON.shapeProps(shape), SceneJSON.shapeProps(o))
+                guard o.path.points != shape.path.points else { continue }
+                let points = Dictionary(o.path.points.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+                for point in shape.path.points {
+                    if let p = points[point.id], p != point {
+                        hold(point.id, SceneJSON.vertexProps(point), SceneJSON.vertexProps(p), vertex: true)
+                    }
+                }
+            }
+        }
+        return out
     }
 
     /// Drops the changes of keyframes after `index` that no longer apply, resolving each

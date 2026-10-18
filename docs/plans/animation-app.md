@@ -104,6 +104,7 @@ In memory the core keeps a resolved snapshot per keyframe, built lazily. Snapsho
 There is always a **current keyframe**, the selected chip. You edit the scene as it stands at that keyframe, and the core turns the edit into a change in that keyframe's delta, against the state at *k−1*:
 - A property set back to its value at *k−1* is dropped from the delta.
 - An edit **carries forward** to later keyframes until one that sets the same property, which keeps its own value.
+- A **move or opacity change** doesn't carry forward: the next keyframe gets a change back to the value it had, so it still looks as it did and animates there. A move is a change to a transform, to vertices' points and handles (moving untransformed art moves its points) or to a gradient's ends. The next keyframe's changes are diffed again, so putting the edit back drops them.
 - Deleting an object at *k* drops later changes that refer to it, in the same undo step. Undo restores them.
 - Undo is unchanged in spirit: one gesture or command is one step, and the undoable state is the whole document (opening state and all deltas).
 
